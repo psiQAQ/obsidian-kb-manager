@@ -1,11 +1,9 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "knowledge-base-manager",
+	"name": "Knowledge Base Manager",
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"description": "Create knowledge bases from templates and manage their local version history.",
+	"author": "Knowledge Base Manager contributors",
+	"isDesktopOnly": true
 }

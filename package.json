@@ -1,14 +1,16 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "knowledge-base-manager",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Manage independent local knowledge bases in a desktop vault.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"lint": "eslint ."
+		"lint": "eslint .",
+		"test": "node --experimental-strip-types --test tests/*.test.mjs",
+		"typecheck": "tsc --noEmit"
 	},
 	"keywords": [],
 	"license": "0-BSD",
@@ -23,5 +25,10 @@
 		"obsidian": "latest",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1"
+	},
+	"dependencies": {
+		"isomorphic-git": "1.44.17",
+		"smol-toml": "1.9.1",
+		"yaml": "2.9.1"
 	}
 }
