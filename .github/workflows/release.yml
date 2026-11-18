@@ -24,7 +24,10 @@ jobs:
             - name: Build plugin
               run: |
                   npm ci
+                  npm test
+                  npm run lint
                   npm run build
+                  python scripts/package_plugin.py
 
             - name: Check for optional styles
               id: styles
@@ -44,7 +47,8 @@ jobs:
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
 
+                  test "$tag" = "$(node -p 'require("./manifest.json").version')" || exit 1
                   gh release create "$tag" \
                     --title="$tag" \
                     --draft \
-                    main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
+                    main.js manifest.json dist/knowledge-base-manager.zip ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}

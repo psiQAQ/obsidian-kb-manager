@@ -1,6 +1,6 @@
 import esbuild from 'esbuild';
 import process from 'process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 
 const banner = `/*
@@ -11,7 +11,7 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === 'production';
 
-const skeleton = [
+const skeletonPaths = [
   ".gitignore",
   "AGENTS.md",
   "Clippings/.gitkeep",
@@ -32,7 +32,21 @@ const skeleton = [
   "wiki/index.md",
   "wiki/log.md",
   "wiki/overview.md"
-].map(name => [name, readFileSync(new URL('./assets/llm-wiki/' + name, import.meta.url), 'utf8')]);
+];
+
+function inspectSkeleton(relative = '') {
+	const dir = new URL('./assets/llm-wiki/' + relative, import.meta.url);
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const name = relative + entry.name;
+		if (entry.isDirectory() && skeletonPaths.some(file => file.startsWith(name + '/'))) {
+			inspectSkeleton(name + '/');
+		} else if (!entry.isFile() || !skeletonPaths.includes(name)) {
+			throw new Error('Unexpected built-in template resource: ' + name);
+		}
+	}
+}
+inspectSkeleton();
+const skeleton = skeletonPaths.map(name => [name, readFileSync(new URL('./assets/llm-wiki/' + name, import.meta.url), 'utf8')]);
 
 const context = await esbuild.context({
 	banner: {
@@ -41,6 +55,7 @@ const context = await esbuild.context({
 	entryPoints: ['src/main.ts'],
 	bundle: true,
 	platform: 'node',
+	metafile: prod,
 	define: { KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)) },
 	external: [
 		'obsidian',
@@ -68,7 +83,9 @@ const context = await esbuild.context({
 });
 
 if (prod) {
-	await context.rebuild();
+	const result = await context.rebuild();
+	mkdirSync('dist', { recursive: true });
+	writeFileSync('dist/build-inputs.json', JSON.stringify(result.metafile));
 	process.exit(0);
 } else {
 	await context.watch();

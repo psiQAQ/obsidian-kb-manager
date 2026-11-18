@@ -1,92 +1,53 @@
-# Obsidian Sample Plugin
+# Knowledge Base Manager
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+在一个 Obsidian Vault 中为不同研究方向建立独立知识库。每个库有自己的首页、资料、人工笔记、身份清单和本地 Git 历史。支持桌面版，最低版本为 1.15.1。插件随包提供 Git 和内置模板，最终用户只需 Obsidian。版本保存到本机，插件没有远端推拉、遥测或账户登录功能。
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## 离线安装
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
+1. 将 `knowledge-base-manager.zip` 解压到目标 Vault 的插件目录。默认位置是 `.obsidian/plugins/`；若自定义了 Vault 配置目录，使用相应的 `plugins/`。
+2. 确认文件层级是 `plugins/knowledge-base-manager/manifest.json`，同层还有 `main.js` 和许可文件。
+3. 重新加载 Obsidian，在 **设置 → 第三方插件** 中启用 **Knowledge Base Manager**。打开左侧书架图标，或运行命令 **打开知识库管理器**。
 
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and outputs a Notice on click.
-- Registers a global interval which logs 'setInterval' to the console.
+## 创建和保存第一个版本
 
-## First time developing plugins?
+在管理器选择 **新建**，将物理目录名填为「光学研究」，保留内置 LLM Wiki 模板，填写简介后选择 **预览**。核对目标 `knowledge-base/光学研究`、文件列表和父仓库提示，再选择 **创建**。管理器出现该库后，选择 **打开** 进入知识索引。新库的 `main` 分支此时没有提交。
 
-Quick starting guide for new plugin devs:
+在 `光学研究/Notes/` 写一条笔记。回到管理器该库所在行，选择 **保存版本**，核对库路径、增删改、提交说明、作者和邮箱。保存后会显示 SHA，可在 **历史** 中查看。若已有暂存内容，按钮改为 **提交已暂存内容**。同一个文件在暂存后继续编辑时，本次提交保留原暂存版本，其余编辑留在工作区。
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `src/main.ts` to `main.js`.
-- Make changes to `src/main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+管理器中的动作以当前行确定目标。命令面板中的 **保存本库版本**、**查看本库历史** 从当前笔记确定所属库，找不到时显示选择器。在插件设置中可保存本地作者和邮箱、登记多个父目录，首行为默认创建位置。
 
-## Releasing new releases
+## 使用自己的目录模板
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+在 Vault 中建立一个普通文件夹，例如 `样板/项目资料夹`，在设置中把它登记为目录模板。新建向导中选择它。普通模板逐字节复制，保留空目录、图片和 PDF。预览列出排除的隐藏文件、Git 历史和环境目录。模板与知识库父目录须互不重叠。
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
-
-## Adding your plugin to the community plugin list
-
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v18 (`node --version`).
-- `npm i` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code.
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+要指定首页和需要渲染的文本，在模板根目录添加 `kb-template.json`。例如，以下声明只替换 `首页.md` 中的 `{{kb_name}}` 和 `{{description}}`。
 
 ```json
 {
-	"fundingUrl": "https://buymeacoffee.com"
+  "id": "research-folder",
+  "version": "1",
+  "entry": "首页.md",
+  "text": { "首页.md": ["kb_name", "description"] }
 }
 ```
 
-If you have multiple URLs, you can also do:
+目录模板沿用内置 `knowledge.base` 的六处总览绑定时，可声明 `"managed": ["knowledge.base:overview-bindings"]`。移动时只修改已匹配的过滤条件，自定义表达式保留供人工检查。
 
-```json
-{
-	"fundingUrl": {
-		"Buy Me a Coffee": "https://buymeacoffee.com",
-		"GitHub Sponsor": "https://github.com/sponsors",
-		"Patreon": "https://www.patreon.com/"
-	}
-}
-```
+另一个可用变量为 `kb_root`，表示最终 Vault 相对目录。可用 `hidden` 数组声明允许复制的隐藏文件相对路径。未声明的 `{{date:YYYY-MM-DD}}` 等笔记模板变量原样保留。目录模板不指定入口时，**打开** 会列出本库可打开的 Markdown 笔记。
 
-## API Documentation
+## 接管、移动与修复
 
-See https://docs.obsidian.md
+- **发现旧库**。登记含旧库的父目录后刷新。管理器检查直接子目录中的 `kb.toml`，显示映射和现有 Git 状态。选择 **预览接管**，可以只添加身份，也可以领管与已知模板匹配的总览字段。确认后只添加 `kb-manager.json`。已有分支、提交、暂存区和笔记继续使用；缺少本地 Git 时可在版本界面显式初始化。
+- **重复或失联的 ID**。复制整库也会复制清单。核对两条路径，在副本行选择 **标记为副本**，指认保留旧 ID 的原库。外部移动后可重新登记父目录并刷新。插件重装后，对自定义位置重新登记父目录即可按库内清单发现实例。
+- **编辑和归档**。选择 **编辑** 可调整显示名、简介或归档状态。确认界面列出清单修改。归档后仍可打开并查看历史，在编辑界面恢复活动状态。
+- **目录移动或改名**。先在 Vault 中建立目标父目录，再选择库的 **移动**。可在预览时登记已有的新父目录。同父目录更改目录名即可改名。检查预览中的源、目标、受管字段和已解析链接。移动使用同一文件系统内的目录改名。旧路径的库外链接、剪藏目标和自定义查询可能需要手动更新。
+- **中断恢复**。移动中断后，管理器显示已记录的操作。选择 **复核并继续**。若 ID、Git 索引、HEAD 或受管文件内容变化，先检查提示涉及的文件，保留自己的编辑。
+- **结构体检**。选择 **体检** 可检查目录映射、入口、索引链接和已登记的 Bases 绑定。逐项检查修改预览，再应用所需修复。用户改写的过滤器和歧义字段交由人工复核。数字、引文和论断是否得到原文支持需要阅读资料核实。
+
+本地 Git 写入目前支持普通自包含仓库。遇到 Git 锁、冲突、linked worktree、过滤器或尚未兼容的索引布局时，界面会报告原因。插件卸载后库目录、Markdown、附件和 `.git/` 均可独立使用。
+
+## 开发验证
+
+在仓库根目录使用 Node.js 24 和 npm。依赖齐备后依次运行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`。测试使用仓库内的隔离 Vault，原生 Git 仅用于独立回读。打包工具使用 Python 标准库，运行 `python scripts/package_plugin.py` 后得到 `dist/knowledge-base-manager.zip`。构建与安装均不读取参考子模块。
+
+参考来源与内置模板许可见 [LICENSES.md](assets/llm-wiki/LICENSES.md)。安装包含随包代码的许可清单。各平台结果、验收条件和剩余项目见 [发布验收记录](docs/verification/v1.md)。Windows 目录改名的应用内验收见 [M0 记录](docs/verification/m0.md)。
