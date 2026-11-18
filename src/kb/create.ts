@@ -70,7 +70,7 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 			const target = path.join(temporary,file.name);
 			await fs.mkdir(path.dirname(target),{recursive:true});
 			await fs.writeFile(target,file.bytes,{flag:'wx'});
-			if (!input.source && file.name === 'knowledge.base') manifest.managed.push({path:file.name,fingerprint:digest(file.bytes)});
+			if (!input.source && file.name === 'knowledge.base') manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location});
 		}
 		await fs.writeFile(path.join(temporary,identityFile),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});
 		await initializeRepository(temporary);

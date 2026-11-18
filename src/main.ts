@@ -2,6 +2,7 @@ import { FileSystemAdapter, Notice, Plugin, TFolder } from 'obsidian';
 import { VaultDisk } from './fs/vault.ts';
 import { defaults } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
+import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
@@ -13,14 +14,22 @@ export default class KnowledgeBaseManager extends Plugin {
 	config!: Config;
 	readonly skeleton=KB_BUILTIN;
 	known: Record<string,string> = {};
+	moves: Record<string, MoveRecord> = {};
+	async recordMove(record:MoveRecord) {
+		if(Object.values(this.moves).some(r=>r.phase!=='complete' && r.token!==record.token &&
+			[r.source,r.destination].some(p=>p===record.source || p===record.destination)))throw new Error('此路径有待恢复的移动');
+		this.moves[record.id]=record;
+		await this.persist();
+	}
 	private pendingSave = Promise.resolve();
 	persist() {
-		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known}));
+		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves}));
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
 	}
 	private busy = new Set<string>();
-	async exclusive<T>(location: string, action: ()=>Promise<T>): Promise<T> {
+	async exclusive<T>(location: string, action: ()=>Promise<T>, recovering=false): Promise<T> {
+		if(!recovering && Object.values(this.moves).some(r=>r.phase!=='complete' && [r.source,r.destination].includes(location)))throw new Error('请先恢复待完成的目录移动');
 		if(this.busy.has(location))throw new Error('此知识库正在执行另一项操作');
 		this.busy.add(location);
 		try{return await action();}finally{this.busy.delete(location);}
@@ -29,9 +38,10 @@ export default class KnowledgeBaseManager extends Plugin {
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
-		const saved=await this.loadData() as Partial<Config> & {known?: Record<string,string>} | null;
+		const saved=await this.loadData() as Partial<Config> & {known?: Record<string,string>; moves?:Record<string,MoveRecord>} | null;
 		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? [],author:saved?.author ?? '',email:saved?.email ?? ''};
 		this.known=saved?.known ?? {};
+		this.moves=saved?.moves ?? {};
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		this.addSettingTab(new ManagerSettings(this));
 		for (const [mode,name] of [['save','保存本库版本'],['history','查看本库历史']] as const){

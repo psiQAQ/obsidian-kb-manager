@@ -1,0 +1,70 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {VaultDisk,digest} from '../src/fs/vault.ts';
+import {newIdentity,discover} from '../src/kb/catalog.ts';
+import {initializeRepository} from '../src/git/repository.ts';
+import {renderBase} from '../src/kb/template.ts';
+import {examine,applyRepair} from '../src/kb/maintenance.ts';
+import {planMove,executeMove} from '../src/kb/move.ts';
+
+test('move resumes after rename, refuses a new edit, preserves staged bytes and custom filters',async t=>{
+	await fs.mkdir('.tmp',{recursive:true});
+	const root=await fs.mkdtemp(path.resolve('.tmp','move-'));
+	t.after(()=>fs.rm(root,{recursive:true,force:true}));
+	const disk=new VaultDisk(root,'.settings'),config={parents:['A','B'],templates:[],author:'',email:''};
+	const libdir=path.join(root,'A','光学');
+	await fs.mkdir(libdir,{recursive:true});await fs.mkdir(path.join(root,'B'));
+	const skeleton={'knowledge.base':await fs.readFile('assets/llm-wiki/knowledge.base','utf8')};
+	const base=renderBase(skeleton['knowledge.base'],'A/光学');
+	const manifest=newIdentity('光学','本地',{id:'llm-wiki',version:'1'});
+	manifest.managed.push({path:'knowledge.base',fingerprint:digest(base),root:'A/光学'});
+	await fs.writeFile(path.join(libdir,'kb-manager.json'),JSON.stringify(manifest));
+	await fs.writeFile(path.join(libdir,'knowledge.base'),base.replace('file.inFolder("A/光学/Notes")','file.name == "私人条件"')+'\n# 人工注释\n');
+	await fs.writeFile(path.join(root,'outside.md'),'[[A/光学/note]]');
+	await initializeRepository(libdir);
+	const git=(dir,...args)=>execFileSync('git',['-C',dir,...args]);
+	await fs.writeFile(path.join(libdir,'note.md'),'initial');git(libdir,'add','note.md');
+	git(libdir,'-c','user.name=Test','-c','user.email=t@example.invalid','commit','-qm','first');
+	await fs.writeFile(path.join(libdir,'note.md'),'index');git(libdir,'add','note.md');
+	await fs.writeFile(path.join(libdir,'note.md'),'work');
+	const head=git(libdir,'rev-parse','HEAD'),index=await fs.readFile(path.join(libdir,'.git/index'));
+	const [lib]=await discover(disk,config);
+	const record=await planMove(disk,config,lib,'B','新 光学',skeleton);
+	assert.ok(record.warnings.some(w=>w.includes('人工笔记')));
+	const dest=path.join(root,'B','新 光学');
+	let saved;
+	const persist=r=>{saved=structuredClone(r);return Promise.resolve();};
+	const files={
+		async replace(relative,before,after){
+			const f=await disk.path(relative);
+			assert.equal(digest(await fs.readFile(f)),before);
+			await fs.writeFile(f,after);
+		},
+		async create(relative,content){await fs.writeFile(await disk.path(relative),content,{flag:'wx'});}
+	};
+	await assert.rejects(executeMove(disk,config,record,{...files,replace:()=>Promise.reject(new Error('interrupted'))},persist),/interrupted/);
+	assert.equal(saved.phase,'moved');
+	const moved=path.join(dest,'knowledge.base');
+	const previous=await fs.readFile(moved,'utf8');
+	await fs.writeFile(moved,previous+'# new edit');
+	await assert.rejects(executeMove(disk,config,saved,files,persist),/编辑/);
+	await fs.writeFile(moved,previous);
+	await executeMove(disk,config,saved,files,persist);
+	assert.equal(saved.phase,'complete');
+	assert.deepEqual(git(dest,'rev-parse','HEAD'),head);
+	assert.deepEqual(await fs.readFile(path.join(dest,'.git/index')),index);
+	assert.equal(await fs.readFile(path.join(dest,'note.md'),'utf8'),'work');
+	assert.equal(await fs.readFile(path.join(root,'outside.md'),'utf8'),'[[A/光学/note]]');
+	const text=await fs.readFile(moved,'utf8');
+	assert.ok(text.includes('私人条件') && text.includes('# 人工注释') && text.includes('B/新 光学'));
+	const [current]=await discover(disk,config);
+	assert.equal(current.identity.id,manifest.id);
+	assert.deepEqual((await examine(disk,current,skeleton)).repairs,[]);
+	await fs.unlink(moved);
+	const [repair]=(await examine(disk,current,skeleton)).repairs;
+	await applyRepair(disk,config,current,repair,files);
+	assert.deepEqual((await examine(disk,current,skeleton)).repairs,[]);
+});

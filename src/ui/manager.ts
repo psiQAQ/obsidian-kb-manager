@@ -4,6 +4,7 @@ import type { Library } from '../kb/catalog.ts';
 import { discover } from '../kb/catalog.ts';
 import { adopt, ancestorWarnings, createLibrary, previewCreate } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
+import { edit,health,move,resumeMove } from './maintain.ts';
 import { versions } from './versions.ts';
 import { Dialog } from './dialog.ts';
 
@@ -22,6 +23,12 @@ export class ManagerView extends ItemView {
 			.addButton(b=>b.setButtonText('新建').onClick(()=>this.create()))
 			.addButton(b=>b.setButtonText('刷新').onClick(()=>this.render()));
 		try {
+			for(const record of Object.values(this.plugin.moves)){
+				const row=new Setting(el).setName(record.source+' → '+record.destination).setDesc('移动阶段：'+record.phase);
+				if(record.phase!=='complete')row.addButton(b=>b.setButtonText('复核并继续').onClick(async()=>{
+					try{await resumeMove(this.plugin,record);}catch(error){new Notice(String(error),8000);}
+				}));
+			}
 			const libraries=await discover(this.plugin.disk,this.plugin.config);
 			if (!libraries.length) el.createEl('p',{text:'尚未发现知识库。可以新建知识库，或在设置中登记旧库的父目录。'});
 			const before=JSON.stringify(this.plugin.known);
@@ -56,6 +63,9 @@ export class ManagerView extends ItemView {
 				} catch(error){new Notice(String(error));}
 			})); return;
 		}
+		row.addButton(b=>b.setButtonText('编辑').onClick(()=>edit(this.plugin,lib)));
+		row.addButton(b=>b.setButtonText('体检').onClick(async()=>{try{await health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
+		if(!lib.identity.archived)row.addButton(b=>b.setButtonText('移动').onClick(()=>move(this.plugin,lib)));
 		for(const [mode,label] of [['save','保存版本'],['history','历史']] as const){
 			if(lib.identity.archived && mode==='save')continue;
 			row.addButton(b=>b.setButtonText(label).onClick(async()=>{
