@@ -6,6 +6,7 @@ export default defineConfig(
 	globalIgnores([
 		'node_modules',
 		'references/**',
+		'.tmp/**',
 		'dist',
 		'esbuild.config.mjs',
 		'version-bump.mjs',

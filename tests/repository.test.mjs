@@ -34,6 +34,19 @@ test('two repositories retain independent same-name files through directory rena
   }
   heads.push(await git.commit({...repo, author:{name:'Test', email:'test@example.invalid'}, message:name, disallowEmpty:true}));
  }
+ const first = repository(path.join(root, '光学 研究'));
+ const second = repository(path.join(root, '量子计算'));
+ const secondIndex = await fs.readFile(path.join(second.gitdir, 'index'));
+ await fs.writeFile(path.join(first.dir, '另一个文件.md'), '只属于光学研究');
+ await git.add({ ...first, filepath: '另一个文件.md' });
+ heads[0] = await git.commit({
+  ...first,
+  author: { name: 'Test', email: 'test@example.invalid' },
+  message: '只保存第一个库',
+  disallowEmpty: true,
+ });
+ assert.deepEqual(await fs.readFile(path.join(second.gitdir, 'index')), secondIndex);
+ assert.equal(read(second.dir, 'rev-parse', 'HEAD').toString().trim(), heads[1]);
  await fs.rename(path.join(root,'光学 研究'), path.join(root,'新位置'));
  for (const [i,name] of ['新位置','量子计算'].entries()) {
   const dir = path.join(root,name);
