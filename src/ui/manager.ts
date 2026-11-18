@@ -127,6 +127,7 @@ export class ManagerView extends ItemView {
 			const action=(title:string,icon:string,run:()=>void|Promise<void>)=>menu.addItem(item=>item.setTitle(title).setIcon(icon).onClick(async()=>{
 				try{await run();}catch(error){new Notice(String(error));}
 			}));
+			if(!gitDisabled(this.plugin))action(tr('Git 状态','Git status'),'git-branch',()=>this.showLibrary(id));
 			action(tr('本库 Git 设置','Library Git settings'),'settings',()=>librarySettings(this.plugin,lib));
 			action(tr('编辑','Edit'),'pencil',()=>edit(this.plugin,lib));
 			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib));

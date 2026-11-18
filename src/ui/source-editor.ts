@@ -10,7 +10,6 @@ import { changeIndex, changeIndexHunk, editorIndexBase, fileComparison, reverseW
 import { previewVersion } from '../git/versions.ts';
 import { Dialog } from './dialog.ts';
 import { assertGitEnabled,gitDisabled,pluginNotice } from './device.ts';
-import { refreshSourceTabs } from './source-diff.ts';
 import { registerConflictEditor } from './source-conflicts.ts';
 import { hunkLines } from '../git/hunk-lines.ts';
 import type { GitPreferences } from '../preferences.ts';
@@ -105,7 +104,6 @@ const state=StateField.define<RangeSet<GutterMarker>>({
 const listeners=new WeakMap<KnowledgeBaseManager,Set<()=>void>>();
 const commandLabels=new WeakMap<KnowledgeBaseManager,string>();
 export function refreshSourceEditors(plugin:KnowledgeBaseManager){
-	refreshSourceTabs(plugin);
 	const language=plugin.t('中','en');
 	if(commandLabels.get(plugin)!==language){
 		for(const action of Object.keys(commands) as HunkCommand[]){

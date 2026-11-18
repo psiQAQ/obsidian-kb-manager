@@ -5,7 +5,7 @@ import { registerFileCommands } from './ui/file-commands.ts';
 import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.ts';
 import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
-import { registerSourceDiff } from './ui/source-diff.ts';
+import { registerSourceDiff, refreshSourceTabs } from './ui/source-diff.ts';
 import { effectivePreferences, readPreferences } from './preferences.ts';
 import { setLanguage, tr } from './i18n.ts';
 import { startAutomation } from './ui/network.ts';
@@ -152,12 +152,8 @@ export default class KnowledgeBaseManager extends Plugin {
 		return right.view;
 	}
 	async refresh(){
-		const changed=this.updateLanguage();
-		if(changed){
-			for(const type of ['knowledge-base-manager-history','knowledge-base-manager-file-diff']){
-				for(const {view} of this.app.workspace.getLeavesOfType(type))await view.setState(view.getState(),{history:false});
-			}
-		}
+		this.updateLanguage();
+		await refreshSourceTabs(this);
 		refreshAuthorship(this);
 		refreshSourceEditors(this);
 		this.refreshStatus?.();

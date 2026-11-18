@@ -8,17 +8,13 @@ import { fileComparison, changeIndexHunk, textHunks } from '../git/index-actions
 import { committedComparison } from '../git/index-history.ts';
 import { historyType, registerSourceHistory } from './source-history.ts';
 import { Dialog } from './dialog.ts';
-import { assertGitEnabled, gitDisabled, pluginNotice } from './device.ts';
+import { assertGitEnabled, pluginNotice } from './device.ts';
 
 const diffType='knowledge-base-manager-file-diff';
-const tabDisplay=new WeakMap<KnowledgeBaseManager,string>();
-export function refreshSourceTabs(plugin:KnowledgeBaseManager){
-	const display=plugin.t('zh','en')+'-'+String(gitDisabled(plugin));
-	if(tabDisplay.get(plugin)===display)return;
-	tabDisplay.set(plugin,display);
+export async function refreshSourceTabs(plugin:KnowledgeBaseManager){
 	for(const type of [diffType,historyType])for(const leaf of plugin.app.workspace.getLeavesOfType(type)){
 		if(leaf.view.getViewType()!==type)continue;
-		void leaf.view.setState(leaf.view.getState(),{history:false}).catch(error=>pluginNotice(plugin,'error',String(error)));
+		await leaf.view.setState(leaf.view.getState(),{history:false}).catch(error=>pluginNotice(plugin,'error',String(error)));
 	}
 }
 interface DiffTarget { id:string; file:string; staged:boolean; commit?:string }
@@ -102,7 +98,6 @@ class SourceDiff extends ItemView {
 								await changeIndexHunk(dir,preview,value.staged?'unstage':'stage',value.file,i);
 							});
 							modal.close();
-							await this.setState(value,result);
 							await p.refresh();
 						});modal.open();
 					};
