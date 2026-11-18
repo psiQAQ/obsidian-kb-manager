@@ -7,3 +7,6 @@
 .kb-line-counts-colored .kb-lines-added { color: var(--text-success); }
 .kb-line-counts-colored .kb-lines-changed { color: var(--text-warning); }
 .kb-line-counts-colored .kb-lines-deleted { color: var(--text-error); }
+
+/* Obsidian Git also decorates conflict markers in nested repositories. */
+.cm-line:has(.kb-conflict-controls) .git-conflict-actions-widget { display: none; }
