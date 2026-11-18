@@ -3,6 +3,7 @@ import type { ViewStateResult } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { discover, recheck } from '../kb/catalog.ts';
 import { history } from '../git/versions.ts';
+import { displayAuthor } from '../git/authorship.ts';
 import { commitFiles } from '../git/index-history.ts';
 import { showDiff } from './source-diff.ts';
 import { assertGitEnabled } from './device.ts';
@@ -51,7 +52,7 @@ class SourceHistory extends ItemView {
 					for(const {oid,commit} of data.entries){
 						const row=list.createEl('details');
 						row.createEl('summary',{text:oid.slice(0,10)+' · '+commit.message.trim()});
-						const details=[pref.historyAuthor && commit.author.name,pref.historyDate && new Date(commit.author.timestamp*1000).toLocaleString()].filter(Boolean);
+						const details=[displayAuthor(commit.author.name,pref.historyAuthor),pref.historyDate && new Date(commit.author.timestamp*1000).toLocaleString()].filter(Boolean);
 						if(details.length)row.createEl('p',{text:details.join(' · ')});
 						let loaded=false;
 						row.ontoggle=()=>{if(row.open && !loaded){

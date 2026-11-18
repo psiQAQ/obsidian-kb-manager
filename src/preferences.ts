@@ -19,7 +19,7 @@ export interface GitPreferences {
 	blameText: string;
 	hunkCommands: boolean;
 	hunkSigns: boolean;
-	hunkStatusBar: boolean;
+	hunkStatusBar: 'disabled' | 'plain' | 'colored';
 	showFileMenu: boolean;
 	showStatusBar: boolean;
 	showBranchStatusBar: boolean;
@@ -32,7 +32,7 @@ export interface GitPreferences {
 	listChangedFilesInMessageBody: boolean;
 	commitDateFormat: string;
 	commitHostname: string;
-	historyAuthor: boolean;
+	historyAuthor: 'hidden' | 'initials' | 'full';
 	historyDate: boolean;
 	refreshSourceControl: boolean;
 	refreshSourceControlTimer: number;
@@ -63,10 +63,10 @@ export interface PreferenceStore {
 
 export const gitDefaults: GitPreferences = {
 	author: '', email: '', tree: false, lineAuthor: false, hunkCommands: false, showFileMenu: true, diffStyle: 'split', commitMessage: '',
-	commitDateFormat: 'YYYY-MM-DD HH:mm:ss', commitHostname: '', historyAuthor: true, historyDate: true,
+	commitDateFormat: 'YYYY-MM-DD HH:mm:ss', commitHostname: '', historyAuthor: 'full', historyDate: true,
 	autoCommitMessage: 'Knowledge base backup · {{date}}',
 	autoStageOnEmptyIndex:true, listChangedFilesInMessageBody:false,
-	hunkSigns: false, hunkStatusBar: false,
+	hunkSigns: false, hunkStatusBar: 'disabled',
 	conflictResolutionMode:'both',
 	blameHash: false, blameIgnoreWhitespace: false, blameFollow: 'inactive', blameAuthor: 'initials',
 	blameDate: 'date', blameFormat: 'YYYY-MM-DD HH:mm', blameTimezone: 'viewer', blameMaxDays: 365,
@@ -92,11 +92,15 @@ function readGit(value: unknown): Partial<GitPreferences> {
 	for (const key of ['author','email','commitMessage','autoCommitMessage','commitDateFormat','commitHostname','blameFormat','autoGlobs'] as const) {
 		if (typeof raw[key] === 'string') result[key] = raw[key];
 	}
-	for (const key of ['tree','lineAuthor','hunkCommands','hunkSigns','hunkStatusBar','showFileMenu','showStatusBar','showBranchStatusBar','changedFilesInStatusBar',
-		'historyAuthor','historyDate','refreshSourceControl','pullBeforePush','disablePush','squashCommitsBeforePush','showInfoNotices','showErrorNotices','showNoChangesNotices',
+	for (const key of ['tree','lineAuthor','hunkCommands','hunkSigns','showFileMenu','showStatusBar','showBranchStatusBar','changedFilesInStatusBar',
+		'historyDate','refreshSourceControl','pullBeforePush','disablePush','squashCommitsBeforePush','showInfoNotices','showErrorNotices','showNoChangesNotices',
 		'blameHash','blameIgnoreWhitespace','autoAfterEdits','autoFromLastCommit','autoPullOnStart','autoStageOnEmptyIndex','listChangedFilesInMessageBody'] as const) {
 		if (typeof raw[key] === 'boolean') result[key] = raw[key];
 	}
+	if (typeof raw.historyAuthor === 'boolean') result.historyAuthor = raw.historyAuthor ? 'full' : 'hidden';
+	else if (raw.historyAuthor === 'hidden' || raw.historyAuthor === 'initials' || raw.historyAuthor === 'full') result.historyAuthor = raw.historyAuthor;
+	if (typeof raw.hunkStatusBar === 'boolean') result.hunkStatusBar = raw.hunkStatusBar ? 'plain' : 'disabled';
+	else if (raw.hunkStatusBar === 'disabled' || raw.hunkStatusBar === 'plain' || raw.hunkStatusBar === 'colored') result.hunkStatusBar = raw.hunkStatusBar;
 	if (raw.diffStyle === 'split' || raw.diffStyle === 'unified') result.diffStyle = raw.diffStyle;
 	if (typeof raw.diffTimeout === 'number' && Number.isInteger(raw.diffTimeout) && raw.diffTimeout >= 1 && raw.diffTimeout <= 10000)
 		result.diffTimeout = raw.diffTimeout;

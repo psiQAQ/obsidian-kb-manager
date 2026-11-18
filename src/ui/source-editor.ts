@@ -12,6 +12,8 @@ import { Dialog } from './dialog.ts';
 import { assertGitEnabled,gitDisabled,pluginNotice } from './device.ts';
 import { refreshSourceTabs } from './source-diff.ts';
 import { registerConflictEditor } from './source-conflicts.ts';
+import { hunkLines } from '../git/hunk-lines.ts';
+import type { GitPreferences } from '../preferences.ts';
 
 type Hunk=ReturnType<typeof textHunks>['patch']['hunks'][number];
 type HunkCommand='next'|'previous'|'preview'|'stage'|'reset';
@@ -20,21 +22,6 @@ const commands:Record<HunkCommand,[string,string]>={
 	preview:['预览光标处差异块','Preview hunk at cursor'],stage:['暂存光标处差异块','Stage hunk at cursor'],
 	reset:['恢复光标处差异块','Reset hunk at cursor'],
 };
-
-function lines(hunk:Hunk){
-	let line=Math.max(1,hunk.newStart),pendingDeletes=false;
-	const changed=new Map<number,string>();
-	for(const entry of hunk.lines){
-		if(entry.startsWith('-')){pendingDeletes=true;continue;}
-		if(entry.startsWith('\\'))continue;
-		if(entry.startsWith('+'))changed.set(line,pendingDeletes?'~':'+');
-		else if(pendingDeletes)changed.set(line,'−');
-		pendingDeletes=false;
-		line++;
-	}
-	if(pendingDeletes)changed.set(line,'−');
-	return changed;
-}
 
 const normalize=(s:string)=>s.replace(/^\uFEFF/u,'').replace(/\r\n/gu,'\n');
 const decode=(bytes:Uint8Array)=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
@@ -63,7 +50,7 @@ async function act(plugin:KnowledgeBaseManager,action:HunkCommand,editor:Editor,
 	const {patch}=textHunks(before ?? new Uint8Array(),after,prefs.diffTimeout);
 	if(!patch.hunks.length)throw new Error(t('当前文件没有差异块','There are no hunks in this file'));
 	const cursor=editor.getCursor().line+1;
-	const starts=patch.hunks.map(h=>Math.min(editor.lineCount(),lines(h).keys().next().value ?? 1));
+	const starts=patch.hunks.map(h=>Math.min(editor.lineCount(),hunkLines(h).marks.keys().next().value ?? 1));
 	if(action==='next' || action==='previous'){
 		const target=action==='next' ? starts.find(n=>n>cursor) ?? starts[0]! : [...starts].reverse().find(n=>n<cursor) ?? starts[starts.length-1]!;
 		const pos={line:target-1,ch:0};
@@ -163,32 +150,43 @@ export function registerSourceEditor(plugin:KnowledgeBaseManager){
 				const file=this.file();
 				if(!file || gitDisabled(plugin))return this.display([],false,false);
 				const shared=plugin.preferences();
-				if(!shared.hunkSigns && !shared.hunkStatusBar && !Object.values(plugin.prefs.libraries).some(p=>p.hunkSigns || p.hunkStatusBar)){
+				if(!shared.hunkSigns && shared.hunkStatusBar==='disabled' && !Object.values(plugin.prefs.libraries).some(p=>p.hunkSigns || (p.hunkStatusBar && p.hunkStatusBar!=='disabled'))){
 					this.display([],false,false);return;
 				}
 				if(this.path!==file.path){
 					const lib=await locate(plugin,file.path);
 					const pref=plugin.preferences(lib?.identity?.id);
-					const base=lib && (pref.hunkSigns || pref.hunkStatusBar)
+					const base=lib && (pref.hunkSigns || pref.hunkStatusBar!=='disabled')
 						? await editorIndexBase(await plugin.disk.path(lib.location),file.path.slice(lib.location.length+1)) : undefined;
 					if(version!==this.version)return;
 					this.path=file.path;this.base=base;this.libId=lib?.identity?.id;
 				}
 				const pref=plugin.preferences(this.libId);
-				if(!this.base || (!pref.hunkSigns && !pref.hunkStatusBar))return this.display([],false,false);
+				if(!this.base || (!pref.hunkSigns && pref.hunkStatusBar==='disabled'))return this.display([],false,false);
 				const encode=new TextEncoder();
 				const hunks=textHunks(encode.encode(normalize(decode(this.base))),encode.encode(normalize(this.view.state.doc.toString())),pref.diffTimeout).patch.hunks;
 				this.display(hunks,pref.hunkSigns,pref.hunkStatusBar);
 			}
-			private display(hunks:Hunk[],signs:boolean,showStatus:boolean){
+			private display(hunks:Hunk[],signs:boolean,mode:GitPreferences['hunkStatusBar']|false){
 				const doc=this.view.state.doc;
 				const symbols=new Map<number,string>();
-				if(signs)for(const h of hunks)for(const [line,symbol] of lines(h))symbols.set(doc.line(Math.min(doc.lines,line)).from,symbol);
+				const totals={added:0,changed:0,deleted:0};
+				for(const h of hunks){
+					const {marks,counts}=hunkLines(h);
+					totals.added+=counts.added; totals.changed+=counts.changed; totals.deleted+=counts.deleted;
+					if(signs)for(const [line,symbol] of marks)symbols.set(doc.line(Math.min(doc.lines,line)).from,symbol);
+				}
 				const ranges=Array.from(symbols,([pos,s])=>new Sign(s).range(pos));
 				this.view.dispatch({effects:marks.of(RangeSet.of(ranges,true))});
 				if(plugin.app.workspace.getActiveFile()?.path===this.file()?.path){
-					if(showStatus){status.setText(plugin.t('差异块','Hunks')+' '+hunks.length);status.show();}
-					else status.hide();
+					status.empty();
+					if(!mode || mode==='disabled' || !hunks.length){status.hide();return;}
+					status.toggleClass('kb-line-counts-colored',mode==='colored');
+					status.setAttribute('aria-label',plugin.t('当前笔记新增、修改、删除的行数','Lines added, changed and deleted in the current note'));
+					for(const [key,prefix] of [['added','+'],['changed','~'],['deleted','−']] as const){
+						if(totals[key])status.createSpan({cls:'kb-lines-'+key,text:prefix+totals[key]+' '});
+					}
+					status.show();
 				}
 			}
 			destroy(){this.version++;window.clearTimeout(this.timer);updates.delete(this.refresh);}

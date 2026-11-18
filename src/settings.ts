@@ -22,6 +22,7 @@ const categories = {
 type Category = keyof typeof categories;
 type Label = readonly [string,string];
 type BooleanKey = { [K in keyof GitPreferences]: GitPreferences[K] extends boolean ? K : never }[keyof GitPreferences];
+type ChoiceKey = { [K in keyof GitPreferences]: GitPreferences[K] extends string ? string extends GitPreferences[K] ? never : K : never }[keyof GitPreferences];
 
 class SettingsPages {
 	private page?: Category;
@@ -86,7 +87,7 @@ class SettingsPages {
 				row(key,label,desc).addText(input => input.setValue(value(key)).onChange(s => set(key,s)));
 			const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 				row(key,label,desc).addToggle(input => input.setValue(value(key)).onChange(b => set(key,b)));
-			const choice = <K extends 'backend'|'syncMethod'|'mergeStrategy'|'diffStyle'|'blameFollow'|'blameAuthor'|'blameDate'|'blameTimezone'|'autoGlobMode'|'conflictResolutionMode'>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
+			const choice = <K extends ChoiceKey>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
 				row(key,label,desc).addDropdown(input => input.addOptions(options).setValue(value(key))
 					.onChange(s => set(key,s as GitPreferences[K])));
 			const note = (zh: string,en: string) => inputs.createEl('p',{text:t(zh,en)});
@@ -137,7 +138,7 @@ class SettingsPages {
 				case 'editor':
 					choice('conflictResolutionMode',['显示冲突块操作','Show conflict resolution controls'],{source:t('源码模式','Source mode'),'live-preview':t('实时预览模式','Live preview'),both:t('两种编辑模式','Both editing modes'),disabled:t('关闭','Disabled')});
 					toggle('hunkSigns',['在编辑器行旁标记改动','Show change markers in the editor gutter']);
-					toggle('hunkStatusBar',['在状态栏显示行改动','Show line changes in the status bar']);
+					choice('hunkStatusBar',['状态栏行改动','Line changes in the status bar'],{disabled:t('关闭','Off'),plain:t('单色','Monochrome'),colored:t('按改动类型着色','Color by change type')});
 					toggle('hunkCommands',['差异块操作','Hunk actions'],['在差异视图中逐块暂存或取消暂存。','Stage or unstage individual hunks in the diff view.']);
 					toggle('lineAuthor',['行作者信息','Line author information'],['使用原生 Git 在编辑器行旁显示提交作者，支持光标行作者查询命令。','Show line authors in the editor gutter and enable the current line author command using native Git.']);
 					toggle('blameHash',['显示提交哈希','Show commit hash']);
@@ -168,7 +169,7 @@ class SettingsPages {
 							input.inputEl.type='number'; input.inputEl.min='1'; input.inputEl.max='10000';
 							input.setValue(String(value('diffTimeout'))).onChange(s => set('diffTimeout',Number(s)));
 						});
-					toggle('historyAuthor',['历史中显示作者','Show author in history']);
+					choice('historyAuthor',['历史中的作者姓名','Author in history'],{hidden:t('隐藏','Hide'),initials:t('首字母','Initials'),full:t('全名','Full name')});
 					toggle('historyDate',['历史中显示日期','Show date in history']);
 					break;
 				case 'interface':

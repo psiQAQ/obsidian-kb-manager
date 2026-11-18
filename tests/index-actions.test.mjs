@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {hunkLines} from '../src/git/hunk-lines.ts';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -133,4 +134,10 @@ test('source control rejects ambiguous refs, unsafe editor paths and multiply li
 	await fs.unlink(ref);
 	await fs.writeFile(path.join(dir,'.git','packed-refs'),'bogus refs/heads/main\n');
 	await assert.rejects(previewVersion(dir),/Invalid local Git reference/);
+});
+
+test('editor line counts distinguish replacements and independent edit runs',()=>{
+	const {counts,marks}=hunkLines({newStart:3,lines:[' keep','-a','-b','+A','+B',' unchanged','-gone',' context','+new','+end']});
+	assert.deepEqual(counts,{added:2,changed:2,deleted:1});
+	assert.deepEqual([...marks],[[4,'~'],[5,'~'],[7,'−'],[8,'+'],[9,'+']]);
 });

@@ -47,6 +47,14 @@ test('every supported default can round trip as a library override', () => {
 	assert.deepEqual(effectivePreferences(saved,identity,a),gitDefaults);
 });
 
+test('legacy display toggles retain their meaning alongside per-library display modes', () => {
+	const store=readPreferences({defaults:{historyAuthor:false,hunkStatusBar:true},libraries:{[a]:{historyAuthor:'initials',hunkStatusBar:'colored'}}});
+	assert.equal(effectivePreferences(store,identity,b).historyAuthor,'hidden');
+	assert.equal(effectivePreferences(store,identity,b).hunkStatusBar,'plain');
+	assert.equal(effectivePreferences(store,identity,a).historyAuthor,'initials');
+	assert.equal(effectivePreferences(store,identity,a).hunkStatusBar,'colored');
+});
+
 test('unsafe colors and invalid time budgets fall back without starting a timer', () => {
 	const saved = readPreferences({defaults:{blameText:'url(example)',blameNew:'#bad',diffTimeout:-1,
 		refreshSourceControlTimer:2147483648,autoAfterEdits:10}, libraries:{[b]:{blameTimezone:'author'}}});

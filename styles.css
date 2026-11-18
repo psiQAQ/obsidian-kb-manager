@@ -4,3 +4,6 @@
 .kb-library-git { padding-inline-start: var(--size-4-2); border-inline-start: 2px solid var(--interactive-accent); }
 .kb-library-git pre { overflow: auto; white-space: pre; }
 .kb-library-git textarea { width: 100%; }
+.kb-line-counts-colored .kb-lines-added { color: var(--text-success); }
+.kb-line-counts-colored .kb-lines-changed { color: var(--text-warning); }
+.kb-line-counts-colored .kb-lines-deleted { color: var(--text-error); }
