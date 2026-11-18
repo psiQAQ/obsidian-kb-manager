@@ -30,7 +30,14 @@ test('native Git interoperates with previews, partially staged bytes, delete and
 	const partial=await previewVersion(dir);
 	assert.ok(partial.staged);
 	assert.deepEqual(await fs.readFile(index),bytes);
-	await saveVersion(dir,partial,'index only',author);
+	let proposed;
+	await assert.rejects(saveVersion(dir,partial,'index only',author,receipt=>{
+		if(receipt.candidate)proposed=receipt.candidate;
+		if(receipt.committed)throw new Error('simulated loss of completion acknowledgement');
+		return Promise.resolve();
+	}),/completion acknowledgement/);
+	assert.equal(run('rev-parse','HEAD').toString().trim(),proposed);
+	await assert.rejects(saveVersion(dir,partial,'index only',author),/变化/);
 	assert.equal(run('show','HEAD:note.md').toString(),'staged');
 	assert.equal(await fs.readFile(file,'utf8'),'working');
 	const stale=await previewVersion(dir);
@@ -46,4 +53,5 @@ test('native Git interoperates with previews, partially staged bytes, delete and
 	assert.equal(run('ls-tree','--name-only','HEAD').toString().trim(),'.gitignore');
 	await fs.writeFile(path.join(dir,'.git/index.lock'),'');
 	await assert.rejects(previewVersion(dir),/index.lock/);
+	assert.equal((await history(dir)).entries.length,3);
 });

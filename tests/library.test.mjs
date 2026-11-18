@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
 import { VaultDisk } from '../src/fs/vault.ts';
 import { defaults, discover } from '../src/kb/catalog.ts';
-import { adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
+import { ancestorWarnings, legacyBinding, adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
+import { inspectSources } from '../src/kb/sources.ts';
 import { readMapping } from '../src/kb/mapping.ts';
 
 async function setup(t) {
@@ -83,4 +84,57 @@ test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate 
 	await fs.cp(dir,path.join(root,'knowledge-base','副本'),{recursive:true});
 	assert.ok((await discover(disk,config)).every(lib=>lib.duplicate));
 	assert.throws(()=>readMapping(toml.replace('raw = "raw"','raw = "Notes"')),/overlap/iu);
+});
+
+test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=>{
+	const {disk,root,config,skeleton,input}=await setup(t);
+	const dir=path.join(root,'样板');
+	await fs.mkdir(dir);
+	await fs.writeFile(path.join(dir,'knowledge.base'),skeleton['knowledge.base']);
+	await fs.writeFile(path.join(dir,'README.md'),'{{kb_name}} {{date:YYYY-MM-DD}}');
+	await fs.writeFile(path.join(dir,'kb-template.json'),JSON.stringify({
+		id:'custom',entry:'README.md',managed:['knowledge.base:overview-bindings'],text:{'README.md':['kb_name']}
+	}));
+	const preview=await previewCreate(disk,config,{...input,source:'样板'},skeleton);
+	await createLibrary(disk,config,preview,skeleton);
+	const [custom]=await discover(disk,config);
+	assert.equal(custom.identity.managed[0].role,'overview-bindings');
+	assert.equal(await fs.readFile(await disk.path(custom.location+'/README.md'),'utf8'),'光学 {{date:YYYY-MM-DD}}');
+	const legacy=path.join(root,'knowledge-base','旧库');
+	await fs.mkdir(legacy);await fs.mkdir(path.join(legacy,'raw'));await fs.mkdir(path.join(legacy,'Notes'));
+	await fs.writeFile(path.join(legacy,'kb.toml'),skeleton['kb.toml']);
+	const base=await fs.readFile(await disk.path(custom.location+'/knowledge.base'),'utf8');
+	await fs.writeFile(path.join(legacy,'knowledge.base'),base.replaceAll(custom.location,'knowledge-base/旧库'));
+	const lib=(await discover(disk,config)).find(l=>!l.identity);
+	const candidate=await legacyBinding(disk,lib);
+	assert.ok(candidate);
+	const manifest=await adopt(disk,config,lib,[],candidate);
+	assert.equal(manifest.template.id,'unknown');
+	assert.equal(manifest.managed.length,1);
+	const note=path.join(legacy,'Notes','原件.md');
+	await fs.writeFile(note,'abc');
+	const stamp=(await fs.stat(note,{bigint:true})).mtimeNs.toString();
+	assert.equal(execFileSync(process.platform==='win32'?'python':'python3',['-c','import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)',note]).toString().trim(),stamp);
+	const snapshot=path.join(legacy,'raw','快照.md');
+	await fs.writeFile(snapshot,'---\nsnapshot_source_note: "../Notes/原件.md"\nsnapshot_source_mtime_ns: "'+stamp+'"\n---\n');
+	assert.deepEqual(await inspectSources(disk,lib),[]);
+	await fs.utimes(note,1000,1000);
+	assert.equal((await inspectSources(disk,lib)).length,1);
+	assert.ok((await fs.readFile(snapshot,'utf8')).includes(stamp));
+});
+
+test('parent repository exposure appears in preview without modifying its index',async t=>{
+	const {root,disk}=await setup(t);
+	const run=(...args)=>execFileSync('git',['-C',root,...args]);
+	run('init','-q','-b','parent');
+	await fs.writeFile(path.join(root,'.gitignore'),'knowledge-base/ignored/\n');
+	await fs.mkdir(path.join(root,'knowledge-base','tracked'),{recursive:true});
+	await fs.writeFile(path.join(root,'knowledge-base','tracked','note.md'),'tracked');
+	run('add','.gitignore','knowledge-base/tracked/note.md');
+	const index=path.join(root,'.git','index');
+	const previous=await fs.readFile(index);
+	assert.match((await ancestorWarnings(disk,'knowledge-base/tracked'))[0],/已被跟踪/);
+	assert.match((await ancestorWarnings(disk,'knowledge-base/ignored'))[0],/目标已被忽略/);
+	assert.match((await ancestorWarnings(disk,'knowledge-base/fresh'))[0],/未被忽略/);
+	assert.deepEqual(await fs.readFile(index),previous);
 });

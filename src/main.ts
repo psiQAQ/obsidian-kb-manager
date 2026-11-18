@@ -2,6 +2,7 @@ import { FileSystemAdapter, Notice, Plugin, TFolder } from 'obsidian';
 import { VaultDisk } from './fs/vault.ts';
 import { defaults } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
+import type { SaveRecord } from './git/versions.ts';
 import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
@@ -15,6 +16,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	readonly skeleton=KB_BUILTIN;
 	known: Record<string,string> = {};
 	moves: Record<string, MoveRecord> = {};
+	saves: Record<string,SaveRecord> = {};
 	async recordMove(record:MoveRecord) {
 		if(Object.values(this.moves).some(r=>r.phase!=='complete' && r.token!==record.token &&
 			[r.source,r.destination].some(p=>p===record.source || p===record.destination)))throw new Error('此路径有待恢复的移动');
@@ -23,7 +25,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	}
 	private pendingSave = Promise.resolve();
 	persist() {
-		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves}));
+		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves,saves:this.saves}));
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
 	}
@@ -38,10 +40,11 @@ export default class KnowledgeBaseManager extends Plugin {
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
-		const saved=await this.loadData() as Partial<Config> & {known?: Record<string,string>; moves?:Record<string,MoveRecord>} | null;
+		const saved=await this.loadData() as Partial<Config> & {known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
 		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? [],author:saved?.author ?? '',email:saved?.email ?? ''};
 		this.known=saved?.known ?? {};
 		this.moves=saved?.moves ?? {};
+		this.saves=saved?.saves ?? {};
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		this.addSettingTab(new ManagerSettings(this));
 		for (const [mode,name] of [['save','保存本库版本'],['history','查看本库历史']] as const){

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import git from 'isomorphic-git';
 import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
 import { guardGit } from '../git/guard.ts';
 import { repository } from '../git/repository.ts';
@@ -87,10 +88,10 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	if(current!==destination){
 		let at=current;
 		if(at===source && key(record.source)===key(record.destination)){
-			await fs.rename(source,intermediate);at=intermediate;
+			await renameNewDirectory(source,intermediate);at=intermediate;
 		}
 		if(await statIfPresent(destination))throw new Error('目标已被占用');
-		await fs.rename(at,destination);
+		await renameNewDirectory(at,destination);
 	}
 	record={...record,phase:'moved'};await save(record);
 	for(const item of record.changes){

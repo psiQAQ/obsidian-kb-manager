@@ -8,6 +8,7 @@ import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { changeIdentity } from './identity.ts';
+import { inspectSources } from '../kb/sources.ts';
 import { Dialog } from './dialog.ts';
 
 function visible(plugin:KnowledgeBaseManager):VisibleFiles {
@@ -54,7 +55,7 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 export async function health(plugin:KnowledgeBaseManager,lib:Library){
 	const dialog=new Dialog(plugin.app,'知识库体检');
 	const report=await examine(plugin.disk,lib,plugin.skeleton);
-	const links=await checkIndexLinks(plugin.disk,lib);
+	const links=[...await checkIndexLinks(plugin.disk,lib),...await inspectSources(plugin.disk,lib)];
 	dialog.lines([lib.location, ...report.manual,...links,...report.repairs.flatMap(r=>[r.file,...r.fields])]);
 	if(!report.manual.length && !links.length && !report.repairs.length)dialog.lines(['结构检查未发现问题']);
 	for(const item of report.repairs){
@@ -76,23 +77,27 @@ export async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
 
 export function move(plugin:KnowledgeBaseManager,lib:Library){
 	const old=lib.location.split('/'), original=old.pop()!;
-	let parent=old.join('/'), name=original;
+	let parent=old.join('/'), name=original, additional='';
 	const dialog=new Dialog(plugin.app,'移动或重命名知识库');
 	const choices=[parent,...plugin.config.parents.filter(p=>p!==parent)];
 	dialog.choice('目标父目录',Object.fromEntries(choices.map(p=>[p,p])),v=>{parent=v;});
+	dialog.text('或登记已存在的新父目录','',v=>{additional=v.trim();});
 	dialog.text('目标目录名',name,v=>{name=v;});
 	dialog.action('预览',async()=>{
-		const plan=await planMove(plugin.disk,plugin.config,lib,parent,name,plugin.skeleton);
+		const target=additional || parent;
+		const proposedConfig=()=>({...plugin.config,parents:[...new Set([...plugin.config.parents,target])]});
+		const plan=await planMove(plugin.disk,proposedConfig(),lib,target,name,plugin.skeleton);
 		const links=new Set<string>();
 		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
 			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
 		}
 		const confirm=new Dialog(plugin.app,'确认目录移动');
-		confirm.lines([plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
+		confirm.lines([...(plugin.config.parents.includes(target)?[]:['登记已有父目录：'+target]),plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
 			'以下已解析的链接可能失效。外部剪藏、脚本与动态查询需人工核对。',...links]);
 		confirm.action('移动完整目录',async()=>{
-			const fresh=await planMove(plugin.disk,plugin.config,lib,parent,name,plugin.skeleton);
+			const fresh=await planMove(plugin.disk,proposedConfig(),lib,target,name,plugin.skeleton);
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error('预览已变化');
+			plugin.config=proposedConfig();
 			await plugin.recordMove(plan);
 			confirm.close();dialog.close();
 			try{await resumeMove(plugin,plan);}finally{await plugin.refresh();}

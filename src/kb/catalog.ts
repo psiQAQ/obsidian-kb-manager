@@ -7,7 +7,7 @@ import { readMapping } from './mapping.ts';
 import type { Mapping } from './mapping.ts';
 
 export const identityFile = 'kb-manager.json';
-export interface ManagedFile { path: string; fingerprint: string; root?: string }
+export interface ManagedFile { path: string; fingerprint: string; root?: string; role?: 'overview-bindings' }
 export interface Identity {
 	schemaVersion: 1; id: string; displayName: string; description: string; archived: boolean;
 	template: {id: string; version: string}; managed: ManagedFile[]; entry?: string;
@@ -75,6 +75,14 @@ export async function discover(disk: VaultDisk, config: Config): Promise<Library
 	for (const parent of config.parents) {
 		const dir = await disk.path(parent);
 		if (!await statIfPresent(dir)) continue;
+		// A newly configured parent may itself be inside an existing instance.
+		const parts=parent.split('/');
+		let nested=false;
+		for(let i=0;i<=parts.length;i++){
+			const ancestor=i?await disk.path(parts.slice(0,i).join('/')):disk.root;
+			if(await statIfPresent(path.join(ancestor,identityFile)) || await statIfPresent(path.join(ancestor,'kb.toml'))){nested=true;break;}
+		}
+		if(nested)continue;
 		for (const child of await fs.readdir(dir,{withFileTypes:true})) {
 			if (!child.isDirectory() || child.name.startsWith('.')) continue;
 			const lib = await inspect(disk, parent + '/' + child.name);

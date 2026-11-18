@@ -12,7 +12,7 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 	dialog.lines([lib.identity?.displayName ?? '',lib.location]);
 	if(lib.git==='missing'){
 		dialog.lines(['此库没有 Git 历史。初始化将创建 .git/ 和 main 分支。']);
-		dialog.action('初始化本地 Git',async()=>{
+		if(!lib.identity?.archived)dialog.action('初始化本地 Git',async()=>{
 			await plugin.exclusive(lib.location,async()=>{
 				await recheck(plugin.disk,plugin.config,lib);
 				await initializeRepository(dir);
@@ -37,9 +37,14 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 	} else {
 		if(lib.identity?.archived)throw new Error('请先恢复此库');
 		const preview=await previewVersion(dir);
+		const previous=lib.identity && plugin.saves[lib.identity.id];
+		if(previous && !previous.committed)dialog.lines([
+			previous.candidate===preview.head?'上次提交已写入：'+preview.head:'上次操作尚未确认完成，当前 HEAD：'+(preview.head||'空'),
+			'上次说明：'+previous.message,'已记录暂存：'+(previous.staged.join('、')||'无'),previous.problem??'',
+		]);
 		dialog.lines([preview.branch+' · '+(preview.head.slice(0,10)||'无提交'),
 			preview.staged?'仅提交索引中已暂存的内容；其余工作区变更留待下次保存。':'将暂存并提交下列变更。已忽略且未跟踪的文件跳过。',
-			'扫描 '+preview.files+' 个文件；读取变更内容 '+preview.bytes+' 字节；'+preview.elapsed+' ms',
+			preview.platform+' · 扫描 '+preview.files+' 个文件；读取变更内容 '+preview.bytes+' 字节；'+preview.elapsed+' ms',
 			...preview.changes.map(c=>c.file+' · 索引 '+state(c.head,c.stage)+' · 工作区 '+(c.stage===3?'有其他内容':state(c.stage,c.work)))]);
 		if(preview.changes.length){
 			let message='',name=plugin.config.author,email=plugin.config.email;
@@ -48,7 +53,11 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			dialog.action(preview.staged?'提交已暂存内容':'保存此版本',async()=>{
 				const oid=await plugin.exclusive(lib.location,async()=>{
 					await recheck(plugin.disk,plugin.config,lib);
-					return saveVersion(dir,preview,message,{name,email});
+					return saveVersion(dir,preview,message,{name,email},async receipt=>{
+						if(!lib.identity)throw new Error('库身份已失效');
+						plugin.saves[lib.identity.id]=receipt;
+						await plugin.persist();
+					});
 				});
 				dialog.contentEl.empty();dialog.lines([lib.location,'已提交 '+oid]);
 			});

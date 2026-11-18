@@ -24,14 +24,16 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 		}
 	}
 	const binding=lib.identity?.managed.find(item=>item.path==='knowledge.base');
-	if(!binding || lib.identity?.template.id!=='llm-wiki' || lib.identity.template.version!=='1'){
+	const builtin=lib.identity?.template.id==='llm-wiki' && lib.identity.template.version==='1';
+	if(!binding || (!builtin && binding.role!=='overview-bindings')){
 		manual.push('未知来源的视图与外部路径需人工核对。');return {manual,repairs};
 	}
 	const file=await disk.path(lib.location+'/knowledge.base');
 	const status=await statIfPresent(file);
 	if(!status){
 		const source=skeleton['knowledge.base'];
-		if(source)repairs.push({file:'knowledge.base',before:null,after:renderBase(source,destination),fields:['补齐内置 v1 总览']});
+		if(!builtin || binding.role==='overview-bindings')manual.push('旧库的受管 Base 缺失，须从原库恢复。');
+		if(source && builtin && binding.role!=='overview-bindings')repairs.push({file:'knowledge.base',before:null,after:renderBase(source,destination),fields:['补齐内置 v1 总览']});
 		return {manual,repairs};
 	}
 	if(!status.isFile())throw new Error('预期常规文件 knowledge.base');
@@ -51,7 +53,7 @@ export interface VisibleFiles {
 }
 export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:Repair,files:VisibleFiles){
 	await recheck(disk,config,lib);
-	if(lib.identity?.archived || item.file!=='knowledge.base' || lib.identity?.template.id!=='llm-wiki' ||
+	if(lib.identity?.archived || item.file!=='knowledge.base' || !lib.identity ||
 		!lib.identity.managed.some(m=>m.path===item.file))throw new Error('此文件未授权修复');
 	segments(item.file);
 	const relative=lib.location+'/'+item.file;

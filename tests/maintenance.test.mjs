@@ -30,6 +30,8 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	git(libdir,'-c','user.name=Test','-c','user.email=t@example.invalid','commit','-qm','first');
 	await fs.writeFile(path.join(libdir,'note.md'),'index');git(libdir,'add','note.md');
 	await fs.writeFile(path.join(libdir,'note.md'),'work');
+	await fs.writeFile(path.join(libdir,'.hidden'),Buffer.from([0,1,255,13,10]));
+	await fs.writeFile(path.join(libdir,'attachment.bin'),Buffer.from([255,10,0]));
 	const head=git(libdir,'rev-parse','HEAD'),index=await fs.readFile(path.join(libdir,'.git/index'));
 	const [lib]=await discover(disk,config);
 	const record=await planMove(disk,config,lib,'B','新 光学',skeleton);
@@ -57,6 +59,8 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	assert.deepEqual(git(dest,'rev-parse','HEAD'),head);
 	assert.deepEqual(await fs.readFile(path.join(dest,'.git/index')),index);
 	assert.equal(await fs.readFile(path.join(dest,'note.md'),'utf8'),'work');
+	assert.deepEqual(await fs.readFile(path.join(dest,'.hidden')),Buffer.from([0,1,255,13,10]));
+	assert.deepEqual(await fs.readFile(path.join(dest,'attachment.bin')),Buffer.from([255,10,0]));
 	assert.equal(await fs.readFile(path.join(root,'outside.md'),'utf8'),'[[A/光学/note]]');
 	const text=await fs.readFile(moved,'utf8');
 	assert.ok(text.includes('私人条件') && text.includes('# 人工注释') && text.includes('B/新 光学'));
@@ -66,5 +70,11 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	await fs.unlink(moved);
 	const [repair]=(await examine(disk,current,skeleton)).repairs;
 	await applyRepair(disk,config,current,repair,files);
-	assert.deepEqual((await examine(disk,current,skeleton)).repairs,[]);
+	const intermediate=await planMove(disk,config,current,'B','Optics',skeleton);
+	await executeMove(disk,config,intermediate,files,persist);
+	const renamed=(await discover(disk,config))[0];
+	const caseOnly=await planMove(disk,config,renamed,'B','OPTICS',skeleton);
+	await executeMove(disk,config,caseOnly,files,persist);
+	assert.deepEqual(await fs.readdir(path.join(root,'B')),['OPTICS']);
+	assert.deepEqual((await examine(disk,(await discover(disk,config))[0],skeleton)).repairs,[]);
 });

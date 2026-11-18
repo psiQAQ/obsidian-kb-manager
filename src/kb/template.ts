@@ -7,7 +7,7 @@ import { digest, key, statIfPresent } from '../fs/vault.ts';
 export interface TemplateFile { name: string; bytes: Uint8Array }
 export interface Template {
 	id: string; version: string; entry?: string;
-	files: TemplateFile[]; folders: string[]; excluded: string[];
+	overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
 }
 export interface Variables { displayName: string; description: string; destination: string }
 
@@ -42,7 +42,7 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 const excludedNames = new Set(['.git','.cache','.venv','__pycache__','node_modules']);
 interface Declaration {
 	id?: string; version?: string; entry?: string;
-	hidden?: string[]; text?: Record<string,string[]>;
+	managed?: string[]; hidden?: string[]; text?: Record<string,string[]>;
 }
 
 function declaration(raw: string): Declaration {
@@ -50,7 +50,7 @@ function declaration(raw: string): Declaration {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid template declaration');
 	const data = value as Record<string, unknown>;
 	for (const name of Object.keys(data)) {
-		if (!['id','version','entry','hidden','text'].includes(name)) throw new Error('Unknown template field: ' + name);
+		if (!['id','version','entry','hidden','text','managed'].includes(name)) throw new Error('Unknown template field: ' + name);
 	}
 	for (const name of ['id','version','entry']) {
 		if (name in data && (typeof data[name] !== 'string' || !data[name])) throw new Error('Invalid template ' + name);
@@ -58,6 +58,9 @@ function declaration(raw: string): Declaration {
 	if (typeof data.entry === 'string') segments(data.entry);
 	if ('hidden' in data && (!Array.isArray(data.hidden) || !data.hidden.every(v => typeof v === 'string'))) {
 		throw new Error('Invalid hidden file list');
+	}
+	if ('managed' in data && (!Array.isArray(data.managed) || data.managed.length !== 1 || data.managed[0] !== 'knowledge.base:overview-bindings')) {
+		throw new Error('Unknown managed field declaration');
 	}
 	if ('text' in data) {
 		if (!data.text || typeof data.text !== 'object' || Array.isArray(data.text)) throw new Error('Invalid text declarations');
@@ -104,13 +107,17 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 				bytes = Buffer.from(original.replace(/\{\{(kb_name|description|kb_root)\}\}/gu,(token,field: string) =>
 					fields.includes(field) ? variables[field] ?? token : token));
 			}
+			if (file === 'knowledge.base' && spec.managed?.length) {
+				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
+				bytes = Buffer.from(renderBase(original,vars.destination));
+			}
 			files.push({name:file, bytes});
 		}
 	}
 	await walk('');
-	for (const name of [...Object.keys(spec.text ?? {}), ...(spec.entry ? [spec.entry] : [])]) {
+	for (const name of [...Object.keys(spec.text ?? {}), ...(spec.managed?.length ? ['knowledge.base'] : []), ...(spec.entry ? [spec.entry] : [])]) {
 		if (!files.some(file => file.name === name)) throw new Error('Missing declared file: ' + name);
 	}
 	return { id:spec.id ?? 'folder', version:spec.version ?? digest(JSON.stringify([spec,folders,sourceFiles])),
-		entry:spec.entry, files, folders, excluded };
+		overview:!!spec.managed?.length, entry:spec.entry, files, folders, excluded };
 }

@@ -2,7 +2,7 @@ import { ItemView, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
 import { discover } from '../kb/catalog.ts';
-import { adopt, ancestorWarnings, createLibrary, previewCreate } from '../kb/create.ts';
+import { adopt, legacyBinding, ancestorWarnings, createLibrary, previewCreate } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
 import { edit,health,move,resumeMove } from './maintain.ts';
 import { versions } from './versions.ts';
@@ -46,6 +46,7 @@ export class ManagerView extends ItemView {
 		const detail=[lib.location,lib.identity?.template.id ?? '旧库',lib.git, lib.identity?.archived ? '已归档' : '',lib.problem,
 			lib.duplicate ? 'ID 重复，请核对两个目录' : ''].filter(Boolean).join(' · ');
 		const row=new Setting(this.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
+		row.addButton(b=>b.setButtonText('体检').onClick(async()=>{try{await health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(lib.problem)return;
 		if(lib.duplicate){
 			row.addButton(b=>b.setButtonText('标记为副本').onClick(async()=>{
@@ -58,13 +59,21 @@ export class ManagerView extends ItemView {
 					const warnings=await ancestorWarnings(this.plugin.disk,lib.location);
 					const dialog=new Dialog(this.app,'接管旧知识库');
 					dialog.lines([lib.location,'新增 kb-manager.json','Git：'+lib.git,...Object.entries(lib.mapping ?? {}).map(([k,v])=>k+' → '+String(v)),...warnings]);
-					dialog.action('确认接管',async()=>{await adopt(this.plugin.disk,this.plugin.config,lib,warnings);dialog.close();await this.render();});
+					const candidate=await legacyBinding(this.plugin.disk,lib);
+					const confirm=async(hash?:string)=>{
+						await this.plugin.exclusive(lib.location,()=>adopt(this.plugin.disk,this.plugin.config,lib,warnings,hash));
+						dialog.close();await this.render();
+					};
+					dialog.action('仅添加身份',()=>confirm());
+					if(candidate){
+						dialog.lines(['可领管 knowledge.base 的库根、wiki 和 Notes 过滤条件。其他字段由原作者维护。']);
+						dialog.action('添加身份并领管已匹配的绑定',()=>confirm(candidate));
+					}
 					dialog.open();
 				} catch(error){new Notice(String(error));}
 			})); return;
 		}
 		row.addButton(b=>b.setButtonText('编辑').onClick(()=>edit(this.plugin,lib)));
-		row.addButton(b=>b.setButtonText('体检').onClick(async()=>{try{await health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(!lib.identity.archived)row.addButton(b=>b.setButtonText('移动').onClick(()=>move(this.plugin,lib)));
 		for(const [mode,label] of [['save','保存版本'],['history','历史']] as const){
 			if(lib.identity.archived && mode==='save')continue;
@@ -74,7 +83,15 @@ export class ManagerView extends ItemView {
 		}
 		row.addButton(b=>b.setButtonText('打开').onClick(async ()=>{
 			const entry=lib.identity?.entry;
-			if(!entry){new Notice('此模板没有指定入口。目录：'+lib.location);return;}
+			if(!entry){
+				const choices=new Dialog(this.app,lib.location);
+				const files=this.app.vault.getMarkdownFiles().filter(f=>f.path.startsWith(lib.location+'/'));
+				if(!files.length)choices.lines(['目录中没有 Markdown 文件。']);
+				for(const file of files)choices.action(file.path.slice(lib.location.length+1),async()=>{
+					await this.plugin.disk.path(file.path);await this.app.workspace.getLeaf(false).openFile(file);choices.close();
+				});
+				choices.open();return;
+			}
 			try {
 				await this.plugin.disk.path(lib.location+'/'+entry);
 				const file=this.app.vault.getAbstractFileByPath(lib.location+'/'+entry);
