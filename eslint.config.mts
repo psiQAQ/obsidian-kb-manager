@@ -5,6 +5,7 @@ import { globalIgnores, defineConfig } from 'eslint/config';
 export default defineConfig(
 	globalIgnores([
 		'node_modules',
+		'references/**',
 		'dist',
 		'esbuild.config.mjs',
 		'version-bump.mjs',

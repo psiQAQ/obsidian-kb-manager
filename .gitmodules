@@ -1,0 +1,12 @@
+[submodule "references/agent-wiki"]
+	path = references/agent-wiki
+	url = https://github.com/psiQAQ/obsidian-agent-wiki.git
+[submodule "references/neseser"]
+	path = references/neseser
+	url = https://github.com/Czarnak/neseser.git
+[submodule "references/folder-git"]
+	path = references/folder-git
+	url = https://github.com/Octadira/obsidian-folder-git.git
+[submodule "references/obsidian-git"]
+	path = references/obsidian-git
+	url = https://github.com/Vinzent03/obsidian-git.git
