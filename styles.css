@@ -1,0 +1,6 @@
+.kb-manager-sidebar { padding: var(--size-4-2); }
+.kb-manager-sidebar .setting-item { gap: var(--size-4-1); flex-wrap: wrap; }
+.kb-manager-sidebar .setting-item-info { min-width: 7em; overflow-wrap: anywhere; }
+.kb-library-git { padding-inline-start: var(--size-4-2); border-inline-start: 2px solid var(--interactive-accent); }
+.kb-library-git pre { overflow: auto; white-space: pre; }
+.kb-library-git textarea { width: 100%; }

@@ -1,6 +1,19 @@
-import { FileSystemAdapter, Notice, Plugin, TFolder } from 'obsidian';
+import { gitDisabled } from './ui/device.ts';
+import { registerAuthorship,refreshAuthorship } from './ui/authorship.ts';
+import { registerLibraryCommands } from './ui/library-commands.ts';
+import { registerFileCommands } from './ui/file-commands.ts';
+import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.ts';
+import { attachLibraryStatus } from './ui/library-status.ts';
+import { readGrants } from './git/network-automation.ts';
+import { registerSourceDiff } from './ui/source-diff.ts';
+import { effectivePreferences, readPreferences } from './preferences.ts';
+import { setLanguage, tr } from './i18n.ts';
+import { startAutomation } from './ui/network.ts';
+import type { AutomationGrant } from './git/network.ts';
+import { blameLine } from './git/network-native.ts';
+import { FileSystemAdapter, Notice, Plugin, TFolder, TFile, getLanguage, setTooltip } from 'obsidian';
 import { VaultDisk } from './fs/vault.ts';
-import { defaults } from './kb/catalog.ts';
+import { defaults, discover, recheck } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
 import type { SaveRecord } from './git/versions.ts';
 import type { MoveRecord } from './kb/move.ts';
@@ -14,25 +27,37 @@ export default class KnowledgeBaseManager extends Plugin {
 	disk!: VaultDisk;
 	config!: Config;
 	readonly skeleton=KB_BUILTIN;
+	readonly t = tr;
+	prefs = readPreferences(undefined);
+	grants: Record<string,AutomationGrant> = {};
+	preferences(id?:string){return effectivePreferences(this.prefs,this.config,id);}
+	private refreshStatus?:()=>void;
+	private language = '';
+	private ribbon?: HTMLElement;
+	private opening?: Promise<ManagerView>;
 	known: Record<string,string> = {};
 	moves: Record<string, MoveRecord> = {};
 	saves: Record<string,SaveRecord> = {};
 	async recordMove(record:MoveRecord) {
 		if(Object.values(this.moves).some(r=>r.phase!=='complete' && r.token!==record.token &&
-			[r.source,r.destination].some(p=>p===record.source || p===record.destination)))throw new Error('此路径有待恢复的移动');
+			[r.source,r.destination].some(p=>p===record.source || p===record.destination)))throw new Error(tr('此路径有待恢复的移动',"This path has a move awaiting recovery"));
 		this.moves[record.id]=record;
 		await this.persist();
 	}
 	private pendingSave = Promise.resolve();
 	persist() {
-		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves,saves:this.saves}));
+		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves,saves:this.saves,prefs:this.prefs,grants:this.grants}));
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
 	}
+	async exclusiveGit<T>(location:string, action:()=>Promise<T>){
+		if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
+		return this.exclusive(location,action);
+	}
 	private busy = new Set<string>();
 	async exclusive<T>(location: string, action: ()=>Promise<T>, recovering=false): Promise<T> {
-		if(!recovering && Object.values(this.moves).some(r=>r.phase!=='complete' && [r.source,r.destination].includes(location)))throw new Error('请先恢复待完成的目录移动');
-		if(this.busy.has(location))throw new Error('此知识库正在执行另一项操作');
+		if(!recovering && Object.values(this.moves).some(r=>r.phase!=='complete' && [r.source,r.destination].includes(location)))throw new Error(tr('请先恢复待完成的目录移动',"Resume the pending move first"));
+		if(this.busy.has(location))throw new Error(tr('此知识库正在执行另一项操作',"Another operation is running for this library"));
 		this.busy.add(location);
 		try{return await action();}finally{this.busy.delete(location);}
 	}
@@ -40,34 +65,102 @@ export default class KnowledgeBaseManager extends Plugin {
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
-		const saved=await this.loadData() as Partial<Config> & {known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
+		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
 		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? [],author:saved?.author ?? '',email:saved?.email ?? ''};
+		this.prefs=readPreferences(saved?.prefs);
+		this.grants=readGrants(saved?.grants);
 		this.known=saved?.known ?? {};
 		this.moves=saved?.moves ?? {};
 		this.saves=saved?.saves ?? {};
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
+		registerSourceDiff(this);
 		this.addSettingTab(new ManagerSettings(this));
-		for (const [mode,name] of [['save','保存本库版本'],['history','查看本库历史']] as const){
-			this.addCommand({id:'version-'+mode,name,callback:async()=>{
-				try{await activeVersion(this,mode);}catch(error){new Notice(String(error),8000);}
-			}});
-		}
-		this.addRibbonIcon('library','打开知识库管理器',()=>this.openManager());
-		this.addCommand({id:'open-manager',name:'打开知识库管理器',callback:()=>this.openManager()});
-		this.addCommand({id:'create-library',name:'新建知识库',callback:async()=>(await this.openManager()).create()});
+		this.updateLanguage();
+		this.ribbon=this.addRibbonIcon('library',tr('打开知识库管理器','Open knowledge base manager'),()=>this.openManager());
+		registerSourceEditor(this);
+		registerAuthorship(this);
+		this.refreshStatus=attachLibraryStatus(this);
+		startAutomation(this);
+		this.app.workspace.onLayoutReady(()=>{
+			if(this.app.workspace.getLeavesOfType(managerType).some(leaf=>leaf.getRoot()!==this.app.workspace.rightSplit)){
+				void this.openManager().catch(error=>new Notice(String(error)));
+			}
+		});
 		this.registerEvent(this.app.workspace.on('file-menu',(menu,file)=>{
+			if(!gitDisabled(this) && file instanceof TFile){
+				const entry=Object.entries(this.known).find(([,root])=>file.path.startsWith(root+'/'));
+				if(entry && this.preferences(entry[0]).showFileMenu)menu.addItem(item=>item.setTitle(tr('本库 Git 状态','Library Git status')).setIcon('git-branch').onClick(async()=>{
+					const view=await this.openManager();
+					await view.showLibrary(entry[0]);
+				}));
+			}
 			if(file instanceof TFolder && this.config.parents.some(p=>file.parent?.path===p)){
-				menu.addItem(item=>item.setTitle('打开知识库管理器').setIcon('library').onClick(()=>this.openManager()));
+				menu.addItem(item=>item.setTitle(tr('打开知识库管理器',"Open knowledge base manager")).setIcon('library').onClick(()=>this.openManager()));
 			}
 		}));
 	}
-	async openManager(): Promise<ManagerView> {
-		const workspace=this.app.workspace;
-		const leaf=workspace.getLeavesOfType(managerType)[0] ?? workspace.getLeaf('tab');
-		await leaf.setViewState({type:managerType,active:true});
-		await workspace.revealLeaf(leaf);
-		if(!(leaf.view instanceof ManagerView))throw new Error('Manager unavailable');
-		return leaf.view;
+	private updateLanguage(){
+		const lang=this.prefs.language==='system' ? getLanguage() : this.prefs.language;
+		if(this.language===lang)return false;
+		if(this.language)for(const id of ['version-save','version-history','open-manager','create-library','line-author'])this.removeCommand(id);
+		const reload=Boolean(this.language);
+		this.language=lang;
+		setLanguage(lang);
+		registerFileCommands(this,reload);
+		registerLibraryCommands(this,reload);
+		if(this.ribbon)setTooltip(this.ribbon,tr('打开知识库管理器','Open knowledge base manager'));
+		for (const [mode,name] of [['save',tr('保存本库版本',"Save a library version")],['history',tr('查看本库历史',"View library history")]] as const){
+			this.addCommand({id:'version-'+mode,name,callback:async()=>{
+				try{if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));await activeVersion(this,mode);}catch(error){new Notice(String(error),8000);}
+			}});
+		}
+		this.addCommand({id:'open-manager',name:tr('打开知识库管理器',"Open knowledge base manager"),callback:()=>this.openManager()});
+		this.addCommand({id:'create-library',name:tr('新建知识库',"Create knowledge base"),callback:async()=>(await this.openManager()).create()});
+		this.addCommand({id:'line-author',name:tr('查看当前行作者','Show current line author'),editorCallback:async(editor,ctx)=>{
+			try {
+				if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
+				const file=ctx.file;
+				const line=editor.getCursor().line+1;
+				if(!file)return;
+				const lib=(await discover(this.disk,this.config)).find(l=>file.path.startsWith(l.location+'/'));
+				if(!lib?.identity)throw new Error(tr('文件不在知识库中','File is outside a managed library'));
+				const settings=this.preferences(lib.identity.id);
+				if(!settings.lineAuthor || settings.backend!=='native')throw new Error(tr('请启用原生 Git 和行作者功能','Enable native Git and line author information'));
+				await recheck(this.disk,this.config,lib);
+				const info=await blameLine(await this.disk.path(lib.location),file.path.slice(lib.location.length+1),line);
+				new Notice(info.author+' · '+info.oid.slice(0,10)+' · '+info.summary);
+			}catch(error){new Notice(String(error));}
+		}});
+		return true;
 	}
-	async refresh(){for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render();}
+	async openManager(): Promise<ManagerView> {
+		this.opening ??= this.openRight().finally(()=>{this.opening=undefined;});
+		return this.opening;
+	}
+	private async openRight(){
+		const workspace=this.app.workspace;
+		const old=workspace.getLeavesOfType(managerType);
+		let right=old.find(leaf=>leaf.getRoot()===workspace.rightSplit);
+		if(!right){
+			right=workspace.getRightLeaf(false) ?? undefined;
+			if(!right)throw new Error(tr('右侧栏不可用','Right sidebar is unavailable'));
+			await right.setViewState({type:managerType});
+		}
+		await workspace.revealLeaf(right);
+		if(!(right.view instanceof ManagerView))throw new Error('Manager unavailable');
+		for(const item of old)if(item!==right)item.detach();
+		return right.view;
+	}
+	async refresh(){
+		const changed=this.updateLanguage();
+		if(changed){
+			for(const type of ['knowledge-base-manager-history','knowledge-base-manager-file-diff']){
+				for(const {view} of this.app.workspace.getLeavesOfType(type))await view.setState(view.getState(),{history:false});
+			}
+		}
+		refreshAuthorship(this);
+		refreshSourceEditors(this);
+		this.refreshStatus?.();
+		for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render();
+	}
 }
