@@ -5,6 +5,7 @@ export interface GitPreferences {
 	email: string;
 	tree: boolean;
 	lineAuthor: boolean;
+	conflictResolutionMode: 'source'|'live-preview'|'both'|'disabled';
 	blameHash: boolean;
 	blameIgnoreWhitespace: boolean;
 	blameFollow: 'inactive'|'same-commit'|'all-commits';
@@ -27,6 +28,8 @@ export interface GitPreferences {
 	diffTimeout: number;
 	commitMessage: string;
 	autoCommitMessage: string;
+	autoStageOnEmptyIndex: boolean;
+	listChangedFilesInMessageBody: boolean;
 	commitDateFormat: string;
 	commitHostname: string;
 	historyAuthor: boolean;
@@ -35,8 +38,13 @@ export interface GitPreferences {
 	refreshSourceControlTimer: number;
 	backend: 'builtin' | 'native';
 	syncMethod: 'ff-only' | 'merge' | 'rebase';
+	mergeStrategy: 'none'|'ours'|'theirs';
 	pullBeforePush: boolean;
 	disablePush: boolean;
+	squashCommitsBeforePush: boolean;
+	showInfoNotices: boolean;
+	showErrorNotices: boolean;
+	showNoChangesNotices: boolean;
 	autoCommitMinutes: number;
 	autoPullMinutes: number;
 	autoPushMinutes: number;
@@ -57,15 +65,19 @@ export const gitDefaults: GitPreferences = {
 	author: '', email: '', tree: false, lineAuthor: false, hunkCommands: false, showFileMenu: true, diffStyle: 'split', commitMessage: '',
 	commitDateFormat: 'YYYY-MM-DD HH:mm:ss', commitHostname: '', historyAuthor: true, historyDate: true,
 	autoCommitMessage: 'Knowledge base backup · {{date}}',
+	autoStageOnEmptyIndex:true, listChangedFilesInMessageBody:false,
 	hunkSigns: false, hunkStatusBar: false,
+	conflictResolutionMode:'both',
 	blameHash: false, blameIgnoreWhitespace: false, blameFollow: 'inactive', blameAuthor: 'initials',
 	blameDate: 'date', blameFormat: 'YYYY-MM-DD HH:mm', blameTimezone: 'viewer', blameMaxDays: 365,
 	blameOld: '#42dcff', blameNew: '#ff9696', blameText: 'var(--text-muted)',
 	showStatusBar: true, showBranchStatusBar: true, changedFilesInStatusBar: false,
 	diffTimeout: 50,
 	pullBeforePush: true, disablePush: false,
+	squashCommitsBeforePush:false, showInfoNotices:true, showErrorNotices:true, showNoChangesNotices:true,
 	refreshSourceControl: true, refreshSourceControlTimer: 7000,
 	backend: 'builtin', syncMethod: 'ff-only',
+	mergeStrategy:'none',
 	autoCommitMinutes: 0, autoPullMinutes: 0, autoPushMinutes: 0,
 	autoGlobMode:'exclude', autoGlobs:'', autoAfterEdits:false, autoFromLastCommit:false, autoPullOnStart:false,
 };
@@ -81,7 +93,8 @@ function readGit(value: unknown): Partial<GitPreferences> {
 		if (typeof raw[key] === 'string') result[key] = raw[key];
 	}
 	for (const key of ['tree','lineAuthor','hunkCommands','hunkSigns','hunkStatusBar','showFileMenu','showStatusBar','showBranchStatusBar','changedFilesInStatusBar',
-		'historyAuthor','historyDate','refreshSourceControl','pullBeforePush','disablePush','blameHash','blameIgnoreWhitespace','autoAfterEdits','autoFromLastCommit','autoPullOnStart'] as const) {
+		'historyAuthor','historyDate','refreshSourceControl','pullBeforePush','disablePush','squashCommitsBeforePush','showInfoNotices','showErrorNotices','showNoChangesNotices',
+		'blameHash','blameIgnoreWhitespace','autoAfterEdits','autoFromLastCommit','autoPullOnStart','autoStageOnEmptyIndex','listChangedFilesInMessageBody'] as const) {
 		if (typeof raw[key] === 'boolean') result[key] = raw[key];
 	}
 	if (raw.diffStyle === 'split' || raw.diffStyle === 'unified') result.diffStyle = raw.diffStyle;
@@ -89,6 +102,7 @@ function readGit(value: unknown): Partial<GitPreferences> {
 		result.diffTimeout = raw.diffTimeout;
 	if (raw.backend === 'builtin' || raw.backend === 'native') result.backend = raw.backend;
 	if (raw.autoGlobMode === 'include' || raw.autoGlobMode === 'exclude') result.autoGlobMode = raw.autoGlobMode;
+	if (raw.conflictResolutionMode === 'source' || raw.conflictResolutionMode === 'live-preview' || raw.conflictResolutionMode === 'both' || raw.conflictResolutionMode === 'disabled') result.conflictResolutionMode = raw.conflictResolutionMode;
 	for (const key of ['blameOld','blameNew','blameText'] as const) {
 		const color = raw[key];
 		if (typeof color === 'string' && (/^#[0-9a-f]{6}$/iu.test(color) || (key === 'blameText' && color === gitDefaults.blameText))) result[key] = color;
@@ -100,6 +114,7 @@ function readGit(value: unknown): Partial<GitPreferences> {
 	if (raw.blameDate === 'hidden' || raw.blameDate === 'date' || raw.blameDate === 'datetime' || raw.blameDate === 'relative' || raw.blameDate === 'custom') result.blameDate = raw.blameDate;
 	if (raw.blameTimezone === 'viewer' || raw.blameTimezone === 'author' || raw.blameTimezone === 'utc') result.blameTimezone = raw.blameTimezone;
 	if (raw.syncMethod === 'ff-only' || raw.syncMethod === 'merge' || raw.syncMethod === 'rebase') result.syncMethod = raw.syncMethod;
+	if (raw.mergeStrategy === 'none' || raw.mergeStrategy === 'ours' || raw.mergeStrategy === 'theirs') result.mergeStrategy = raw.mergeStrategy;
 	if (typeof raw.refreshSourceControlTimer === 'number' && Number.isInteger(raw.refreshSourceControlTimer) &&
 		raw.refreshSourceControlTimer >= 500 && raw.refreshSourceControlTimer <= 2147483647)
 		result.refreshSourceControlTimer = raw.refreshSourceControlTimer;

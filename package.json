@@ -1,6 +1,6 @@
 {
 	"name": "knowledge-base-manager",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Manage independent local knowledge bases in a desktop vault.",
 	"main": "main.js",
 	"type": "module",
@@ -15,19 +15,25 @@
 	"keywords": [],
 	"license": "0-BSD",
 	"devDependencies": {
+		"@codemirror/state": "6.5.0",
+		"@codemirror/view": "6.38.6",
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",
 		"esbuild": "0.25.5",
+		"esbuild-svelte": "0.9.5",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.4.0",
 		"globals": "^17.6.0",
 		"jiti": "^2.6.1",
 		"obsidian": "latest",
+		"svelte": "5.58.0",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1"
 	},
 	"dependencies": {
+		"diff": "9.0.0",
 		"isomorphic-git": "1.44.17",
+		"picomatch": "4.0.4",
 		"smol-toml": "1.9.1",
 		"yaml": "2.9.1"
 	}

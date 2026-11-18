@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {effectivePreferences, readPreferences} from '../src/preferences.ts';
+import {effectivePreferences, gitDefaults, readPreferences} from '../src/preferences.ts';
 
 const a = '10000000-0000-4000-8000-000000000001';
 const b = '10000000-0000-4000-8000-000000000002';
@@ -39,4 +39,17 @@ test('invalid values and repository paths cannot become saved preferences', () =
 		libraries:{[a]:{autoCommitMinutes:5,token:'secret',tree:'yes'},'libraries/A':{backend:'native'}},
 	});
 	assert.deepEqual(store,{language:'system',defaults:{},libraries:{[a]:{autoCommitMinutes:5}}});
+});
+
+test('every supported default can round trip as a library override', () => {
+	const saved = readPreferences({language:'zh',libraries:{[a]:gitDefaults}});
+	assert.deepEqual(saved.libraries[a],gitDefaults);
+	assert.deepEqual(effectivePreferences(saved,identity,a),gitDefaults);
+});
+
+test('unsafe colors and invalid time budgets fall back without starting a timer', () => {
+	const saved = readPreferences({defaults:{blameText:'url(example)',blameNew:'#bad',diffTimeout:-1,
+		refreshSourceControlTimer:2147483648,autoAfterEdits:10}, libraries:{[b]:{blameTimezone:'author'}}});
+	assert.deepEqual(saved.defaults,{});
+	assert.equal(effectivePreferences(saved,identity,b).blameTimezone,'author');
 });
