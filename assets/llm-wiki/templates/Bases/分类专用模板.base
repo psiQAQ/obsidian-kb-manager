@@ -1,0 +1,46 @@
+filters:
+  and:
+    - this.file.path.startsWith("__KB_ROOT__/")
+    - file.path.startsWith("__KB_ROOT__/")
+    - file.inFolder("__KB_ROOT__/__WIKI_DIR__")
+    - '!file.inFolder("__KB_ROOT__/__TEMPLATES_DIR__")'
+    - file.ext == "md"
+    - managed_by == "agent"
+    - type == "source" || type == "entity" || type == "concept" || type == "analysis" || type == "archive" || type == "overview" || type == "category"
+    - categories.contains(link("__CATEGORY_PATH__"))
+    - file.path != "__CATEGORY_PATH__.md"
+properties:
+  note.type:
+    displayName: 页面类型
+  note.updated:
+    displayName: 知识更新日期
+  note.sources:
+    displayName: 来源路径
+  note.archived:
+    displayName: 归档日期
+views:
+  - type: table
+    name: 分类内容
+    filters:
+      and:
+        - type != "archive"
+    order:
+      - file.name
+      - type
+      - updated
+      - sources
+    sort:
+      - property: updated
+        direction: DESC
+  - type: table
+    name: 历史归档
+    filters:
+      and:
+        - type == "archive"
+    order:
+      - file.name
+      - archived
+      - sources
+    sort:
+      - property: archived
+        direction: DESC

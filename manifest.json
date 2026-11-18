@@ -2,7 +2,7 @@
 	"id": "knowledge-base-manager",
 	"name": "Knowledge Base Manager",
 	"version": "1.0.0",
-	"minAppVersion": "1.0.0",
+	"minAppVersion": "1.15.1",
 	"description": "Create knowledge bases from templates and manage their local version history.",
 	"author": "Knowledge Base Manager contributors",
 	"isDesktopOnly": true

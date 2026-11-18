@@ -1,5 +1,6 @@
 import esbuild from 'esbuild';
 import process from 'process';
+import { readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 
 const banner = `/*
@@ -10,12 +11,37 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === 'production';
 
+const skeleton = [
+  ".gitignore",
+  "AGENTS.md",
+  "Clippings/.gitkeep",
+  "LICENSES.md",
+  "Notes/.gitkeep",
+  "README.md",
+  "kb.toml",
+  "knowledge.base",
+  "raw/.gitkeep",
+  "reports/.gitkeep",
+  "templates/Bases/分类专用模板.base",
+  "templates/人工笔记模板.md",
+  "templates/分类入口模板.md",
+  "templates/归档模板.md",
+  "templates/新来源模板.md",
+  "templates/知识页面模板.md",
+  "templates/资料摘要模板.md",
+  "wiki/index.md",
+  "wiki/log.md",
+  "wiki/overview.md"
+].map(name => [name, readFileSync(new URL('./assets/llm-wiki/' + name, import.meta.url), 'utf8')]);
+
 const context = await esbuild.context({
 	banner: {
 		js: banner,
 	},
 	entryPoints: ['src/main.ts'],
 	bundle: true,
+	platform: 'node',
+	define: { KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)) },
 	external: [
 		'obsidian',
 		'electron',

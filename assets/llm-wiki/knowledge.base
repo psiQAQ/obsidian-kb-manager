@@ -1,0 +1,77 @@
+filters:
+  and:
+    - this.file.path.startsWith("__KB_ROOT__/")
+    - file.path.startsWith("__KB_ROOT__/")
+    - file.ext == "md"
+    - '!file.path.contains("/.git/")'
+    - '!file.path.contains("/.cache/")'
+properties:
+  note.type:
+    displayName: 页面类型
+  note.categories:
+    displayName: 分类
+  note.updated:
+    displayName: 知识更新日期
+  note.sources:
+    displayName: 来源路径
+  note.managed_by:
+    displayName: 维护者
+  note.archived:
+    displayName: 归档日期
+views:
+  - type: table
+    name: 现行知识
+    filters:
+      and:
+        - status != "empty"
+        - managed_by == "agent"
+        - type == "source" || type == "entity" || type == "concept" || type == "analysis" || type == "overview" || type == "category"
+        - file.inFolder("__WIKI_PATH__")
+    order:
+      - file.name
+      - type
+      - categories
+      - updated
+      - sources
+    sort:
+      - property: updated
+        direction: DESC
+  - type: table
+    name: 人工笔记
+    filters:
+      and:
+        - file.inFolder("__NOTES_PATH__")
+    order:
+      - file.name
+      - categories
+      - tags
+      - created
+  - type: table
+    name: 按类别浏览
+    filters:
+      and:
+        - status != "empty"
+        - managed_by == "agent"
+        - type == "source" || type == "entity" || type == "concept" || type == "analysis" || type == "overview" || type == "category"
+        - file.inFolder("__WIKI_PATH__")
+    groupBy:
+      property: categories
+      direction: ASC
+    order:
+      - file.name
+      - type
+      - categories
+  - type: table
+    name: 历史归档
+    filters:
+      and:
+        - file.inFolder("__WIKI_PATH__")
+        - managed_by == "agent"
+        - type == "archive"
+    order:
+      - file.name
+      - archived
+      - sources
+    sort:
+      - property: archived
+        direction: DESC
