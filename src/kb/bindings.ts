@@ -1,3 +1,4 @@
+import { tr } from '../i18n.ts';
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 
 interface Scope { view?: string; expressions: ((root:string)=>string)[] }
@@ -11,7 +12,7 @@ const scopes: Scope[]=[
 
 export function rebind(source:string,previous:string,destination:string) {
 	const doc=parseDocument(source);
-	if(doc.errors.length)throw new Error('Base YAML 无法解析：'+doc.errors[0]?.message);
+	if(doc.errors.length)throw new Error(tr('Base YAML 无法解析：','Unable to parse Base YAML: ')+doc.errors[0]?.message);
 	const edits: {start:number;end:number;old:string;value:string;role:string}[]=[];
 	const manual:string[]=[];
 	for(const scope of scopes){
@@ -27,17 +28,17 @@ export function rebind(source:string,previous:string,destination:string) {
 			const nodes=isSeq(conditions)?conditions.items.filter(isScalar):[];
 			const matches=nodes.filter(n=>n.value===old);
 			if(matches.length!==1 || !matches[0]?.range){
-				if(nodes.filter(n=>n.value===value).length!==1)manual.push((scope.view??'总过滤器')+'：'+old);
+				if(nodes.filter(n=>n.value===value).length!==1)manual.push((scope.view??tr('总过滤器','Global filter'))+'：'+old);
 				continue;
 			}
 			if(old===value)continue;
-			edits.push({start:matches[0].range[0],end:matches[0].range[1],old,value,role:scope.view??'总过滤器'});
+			edits.push({start:matches[0].range[0],end:matches[0].range[1],old,value,role:scope.view??tr('总过滤器','Global filter')});
 		}
 	}
 	let content=source;
 	for(const edit of [...edits].sort((a,b)=>b.start-a.start)){
 		content=content.slice(0,edit.start)+JSON.stringify(edit.value)+content.slice(edit.end);
 	}
-	if(parseDocument(content).errors.length)throw new Error('更新绑定后 YAML 无效');
+	if(parseDocument(content).errors.length)throw new Error(tr('更新绑定后 YAML 无效','Invalid YAML after updating bindings'));
 	return {content,edits,manual};
 }

@@ -1,3 +1,4 @@
+import { tr, fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -25,11 +26,11 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 	for (let i=0; i<parts.length; i++) {
 		const parent = i ? await disk.path(parts.slice(0,i).join('/')) : disk.root;
 		if (await statIfPresent(path.join(parent,identityFile)) || await statIfPresent(path.join(parent,'kb.toml'))) {
-			throw new Error('Nested knowledge base: ' + parts.slice(0,i).join('/'));
+			throw new Error(fromEnglish('Nested knowledge base: ','知识库不能嵌套：') + parts.slice(0,i).join('/'));
 		}
 		const metadata = await statIfPresent(path.join(parent,'.git'));
 		if (!metadata) continue;
-		if (!metadata.isDirectory()) { warnings.push('祖先目录包含特殊 Git 布局，请核对父仓跟踪与忽略规则。'); continue; }
+		if (!metadata.isDirectory()) { warnings.push(tr('祖先目录包含特殊 Git 布局，请核对父仓跟踪与忽略规则。','A parent directory has a special Git layout. Review its tracked files and ignore rules.')); continue; }
 		const repo = repository(parent);
 		const filepath = parts.slice(i).join('/');
 		const reads = [path.join(repo.gitdir,'index'),path.join(repo.gitdir,'info'),path.join(repo.gitdir,'info','exclude')];
@@ -38,26 +39,26 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 		for(const file of reads) {
 			if((await statIfPresent(file))?.isSymbolicLink()){linked=true;break;}
 		}
-		if(linked){warnings.push('父仓使用链接元数据，跟踪和忽略状态需人工核对。');continue;}
+		if(linked){warnings.push(tr('父仓使用链接元数据，跟踪和忽略状态需人工核对。','The parent repository uses linked metadata. Check its tracked files and ignore rules manually.'));continue;}
 		const tracked = (await git.listFiles(repo)).some(file => file === filepath || file.startsWith(filepath+'/'));
 		const ignored = await git.isIgnored({...repo,filepath:filepath+'/'});
-		warnings.push('父仓 ' + (parts.slice(0,i).join('/') || '/') + '：' + (tracked ? '目标已被跟踪' : ignored ? '目标已被忽略' : '目标未被忽略'));
+		warnings.push(tr('父仓 ','Parent repository ') + (parts.slice(0,i).join('/') || '/') + '：' + (tracked ? tr('目标已被跟踪','destination is tracked') : ignored ? tr('目标已被忽略','destination is ignored') : tr('目标未被忽略','destination is not ignored')));
 	}
 	return warnings;
 }
 
 export async function previewCreate(disk: VaultDisk, config: Config, input: CreateInput, skeleton: Record<string,string>): Promise<CreatePreview> {
 	validateFolders(disk,config.parents,config.templates);
-	if (!config.parents.includes(input.parent) || segments(input.name).length !== 1 || !input.displayName.trim()) throw new Error('Invalid destination or display name');
+	if (!config.parents.includes(input.parent) || segments(input.name).length !== 1 || !input.displayName.trim()) throw new Error(fromEnglish('Invalid destination or display name','目标目录或显示名无效'));
 	const location = input.parent + '/' + input.name;
 	const dir = await disk.path(location);
-	if (await statIfPresent(dir)) throw new Error('Destination exists: ' + location);
+	if (await statIfPresent(dir)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
 	const warnings = await ancestorWarnings(disk,location);
 	const vars = {displayName:input.displayName, description:input.description, destination:location};
 	let template: Template;
 	if (!input.source) template = builtinTemplate(skeleton,vars);
 	else {
-		if (!config.templates.includes(input.source)) throw new Error('Select a registered template');
+		if (!config.templates.includes(input.source)) throw new Error(fromEnglish('Select a registered template','请选择已登记的模板'));
 		template = await folderTemplate(await disk.path(input.source),disk.configDir,vars);
 	}
 	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,warnings,
@@ -67,7 +68,7 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 
 export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>) {
 	const fresh = await previewCreate(disk,config,preview.input,skeleton);
-	if (fresh.signature !== preview.signature) throw new Error('Template changed. Preview again.');
+	if (fresh.signature !== preview.signature) throw new Error(fromEnglish('Template changed. Preview again.','模板已变化，请重新预览。'));
 	const parent = await disk.path(fresh.input.parent);
 	await fs.mkdir(parent,{recursive:true});
 	const temporary = await fs.mkdtemp(path.join(parent,'.kb-create-'));
@@ -88,7 +89,7 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 		await initializeRepository(temporary);
 		for (let attempt = 0; ; attempt++) {
 			const destination = await disk.path(location);
-			if (await statIfPresent(destination)) throw new Error('Destination exists: ' + location);
+			if (await statIfPresent(destination)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
 			try { await renameNewDirectory(temporary,destination); break; }
 			catch (error) {
 				if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= 4) throw error;
@@ -97,7 +98,7 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 		}
 		return manifest;
 	} catch(error) {
-		throw new Error(String(error)+'；未发布目录保留在 '+path.basename(temporary)+'，可检查后重试。');
+		throw new Error(String(error)+tr('；未发布目录保留在 ','. The unpublished directory was retained at ')+path.basename(temporary)+tr('，可检查后重试。','. Inspect it before retrying.'));
 	}
 }
 
@@ -115,11 +116,11 @@ export async function legacyBinding(disk: VaultDisk, lib: Library) {
 
 export async function adopt(disk: VaultDisk, config: Config, preview: Library, confirmedWarnings: string[], bindingHash?:string) {
 	const lib = await recheck(disk,config,preview);
-	if (lib.identity || !lib.mapping) throw new Error('Select a valid legacy knowledge base');
-	if (JSON.stringify(await ancestorWarnings(disk,lib.location)) !== JSON.stringify(confirmedWarnings)) throw new Error('Parent repository changed');
+	if (lib.identity || !lib.mapping) throw new Error(fromEnglish('Select a valid legacy knowledge base','请选择有效的旧知识库'));
+	if (JSON.stringify(await ancestorWarnings(disk,lib.location)) !== JSON.stringify(confirmedWarnings)) throw new Error(fromEnglish('Parent repository changed','父仓库已变化'));
 	const manifest = newIdentity(path.posix.basename(lib.location),'',{id:'unknown',version:'unknown'},lib.mapping.index);
 	if (bindingHash) {
-		if(await legacyBinding(disk,lib)!==bindingHash)throw new Error('旧库绑定字段已变化');
+		if(await legacyBinding(disk,lib)!==bindingHash)throw new Error(tr('旧库绑定字段已变化','The legacy library binding changed'));
 		manifest.managed.push({path:'knowledge.base',root:lib.location,fingerprint:bindingHash,role:'overview-bindings'});
 	}
 	const target = await disk.path(lib.location+'/'+identityFile);

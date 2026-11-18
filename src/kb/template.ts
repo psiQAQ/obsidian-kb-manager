@@ -1,3 +1,4 @@
+import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseDocument, isScalar } from 'yaml';
@@ -21,7 +22,7 @@ export function renderBase(source: string, root: string): string {
 	for (const field of filters) {
 		const node = doc.getIn(field, true);
 		if (!isScalar(node) || typeof node.value !== 'string' || !/__KB_ROOT__|__WIKI_PATH__|__NOTES_PATH__/u.test(node.value)) {
-			throw new Error('Invalid built-in Base binding: ' + field.join('.'));
+			throw new Error(fromEnglish('Invalid built-in Base binding: ','内置 Base 绑定无效：') + field.join('.'));
 		}
 		node.value = node.value.replace(/__KB_ROOT__|__WIKI_PATH__|__NOTES_PATH__/gu,
 			token => JSON.stringify(bindings[token]).slice(1, -1));
@@ -47,27 +48,27 @@ interface Declaration {
 
 function declaration(raw: string): Declaration {
 	const value: unknown = JSON.parse(raw);
-	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid template declaration');
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(fromEnglish('Invalid template declaration','模板声明无效'));
 	const data = value as Record<string, unknown>;
 	for (const name of Object.keys(data)) {
-		if (!['id','version','entry','hidden','text','managed'].includes(name)) throw new Error('Unknown template field: ' + name);
+		if (!['id','version','entry','hidden','text','managed'].includes(name)) throw new Error(fromEnglish('Unknown template field: ','未知的模板字段：') + name);
 	}
 	for (const name of ['id','version','entry']) {
-		if (name in data && (typeof data[name] !== 'string' || !data[name])) throw new Error('Invalid template ' + name);
+		if (name in data && (typeof data[name] !== 'string' || !data[name])) throw new Error(fromEnglish('Invalid template ','无效的模板字段：') + name);
 	}
 	if (typeof data.entry === 'string') segments(data.entry);
 	if ('hidden' in data && (!Array.isArray(data.hidden) || !data.hidden.every(v => typeof v === 'string'))) {
-		throw new Error('Invalid hidden file list');
+		throw new Error(fromEnglish('Invalid hidden file list','隐藏文件清单无效'));
 	}
 	if ('managed' in data && (!Array.isArray(data.managed) || data.managed.length !== 1 || data.managed[0] !== 'knowledge.base:overview-bindings')) {
-		throw new Error('Unknown managed field declaration');
+		throw new Error(fromEnglish('Unknown managed field declaration','未知的受管字段声明'));
 	}
 	if ('text' in data) {
-		if (!data.text || typeof data.text !== 'object' || Array.isArray(data.text)) throw new Error('Invalid text declarations');
+		if (!data.text || typeof data.text !== 'object' || Array.isArray(data.text)) throw new Error(fromEnglish('Invalid text declarations','文本声明无效'));
 		for (const [file, fields] of Object.entries(data.text)) {
 			segments(file);
 			if (!Array.isArray(fields) || !fields.every(v => ['kb_name','description','kb_root'].includes(String(v)))) {
-				throw new Error('Invalid variables for ' + file);
+				throw new Error(fromEnglish('Invalid variables for ','文件的变量声明无效：') + file);
 			}
 		}
 	}
@@ -78,7 +79,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 	const specName = 'kb-template.json';
 	const specPath = path.join(root, specName);
 	const specStat = await statIfPresent(specPath);
-	if (specStat && !specStat.isFile()) throw new Error('Expected a regular template declaration');
+	if (specStat && !specStat.isFile()) throw new Error(fromEnglish('Expected a regular template declaration','模板声明必须为常规文件'));
 	const spec = specStat ? declaration(await fs.readFile(specPath,'utf8')) : {};
 	const files: TemplateFile[] = [], folders: string[] = [], excluded: string[] = [];
 	const sourceFiles: string[] = [];
@@ -86,11 +87,11 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 	async function walk(relative: string) {
 		const directory = path.join(root,relative);
 		const names = (await fs.readdir(directory)).sort();
-		if (new Set(names.map(key)).size !== names.length) throw new Error('Template name collision: ' + relative);
+		if (new Set(names.map(key)).size !== names.length) throw new Error(fromEnglish('Template name collision: ','模板路径名称冲突：') + relative);
 		for (const name of names) {
 			const file = relative ? relative + '/' + name : name;
 			const absolute = path.join(root,file);
-			if (key(name) === 'kb-manager.json') throw new Error('Template contains a knowledge base identity: ' + file);
+			if (key(name) === 'kb-manager.json') throw new Error(fromEnglish('Template contains a knowledge base identity: ','模板含知识库身份文件：') + file);
 			if (key(name) === key(configDir) || excludedNames.has(key(name)) || file === specName ||
 				(name.startsWith('.') && !['.gitignore','.gitkeep'].includes(name) && !spec.hidden?.includes(file))) {
 				excluded.push(file); continue;
@@ -98,7 +99,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 			segments(name.startsWith('.') ? 'hidden' + name : name);
 			const stat = await fs.lstat(absolute);
 			if (stat.isDirectory()) { folders.push(file); await walk(file); continue; }
-			if (!stat.isFile()) throw new Error('Expected a regular template file: ' + file);
+			if (!stat.isFile()) throw new Error(fromEnglish('Expected a regular template file: ','模板项必须为常规文件：') + file);
 			let bytes: Uint8Array = await fs.readFile(absolute);
 			sourceFiles.push(file + ':' + digest(bytes));
 			const fields = spec.text?.[file];
@@ -116,7 +117,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 	}
 	await walk('');
 	for (const name of [...Object.keys(spec.text ?? {}), ...(spec.managed?.length ? ['knowledge.base'] : []), ...(spec.entry ? [spec.entry] : [])]) {
-		if (!files.some(file => file.name === name)) throw new Error('Missing declared file: ' + name);
+		if (!files.some(file => file.name === name)) throw new Error(fromEnglish('Missing declared file: ','缺少已声明的文件：') + name);
 	}
 	return { id:spec.id ?? 'folder', version:spec.version ?? digest(JSON.stringify([spec,folders,sourceFiles])),
 		overview:!!spec.managed?.length, entry:spec.entry, files, folders, excluded };

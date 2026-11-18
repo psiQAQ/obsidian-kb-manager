@@ -1,3 +1,4 @@
+import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -24,7 +25,7 @@ export class VaultDisk {
 
 	validate(relative: string) {
 		segments(relative);
-		if (overlaps(relative, this.configDir)) throw new Error('Vault configuration path: ' + relative);
+		if (overlaps(relative, this.configDir)) throw new Error(fromEnglish('Vault configuration path: ','此路径属于 Vault 配置：') + relative);
 	}
 
 	async path(relative: string): Promise<string> {
@@ -33,22 +34,22 @@ export class VaultDisk {
 		for (const part of relative.split('/')) {
 			const parent = await statIfPresent(current);
 			if (parent) {
-				if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error('Unsafe parent: ' + current);
+				if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error(fromEnglish('Unsafe parent: ','父目录不安全：') + current);
 				const alias = (await fs.readdir(current)).find(name => name !== part && key(name) === key(part));
-				if (alias) throw new Error('Conflicting path spelling: ' + alias);
+				if (alias) throw new Error(fromEnglish('Conflicting path spelling: ','路径名称冲突：') + alias);
 			}
 			current = path.join(current, part);
-			if ((await statIfPresent(current))?.isSymbolicLink()) throw new Error('Linked path: ' + relative);
+			if ((await statIfPresent(current))?.isSymbolicLink()) throw new Error(fromEnglish('Linked path: ','路径含文件系统链接：') + relative);
 		}
 		return current;
 	}
 }
 
 export function validateFolders(disk: VaultDisk, parents: string[], templates: string[]) {
-	if (!parents.length) throw new Error('Choose at least one knowledge base parent');
+	if (!parents.length) throw new Error(fromEnglish('Choose at least one knowledge base parent','请至少选择一个知识库父目录'));
 	const paths = [...parents, ...templates];
 	for (const [i, name] of paths.entries()) {
 		disk.validate(name);
-		if (paths.slice(i + 1).some(other => overlaps(name, other))) throw new Error('Overlapping folders: ' + name);
+		if (paths.slice(i + 1).some(other => overlaps(name, other))) throw new Error(fromEnglish('Overlapping folders: ','目录范围重叠：') + name);
 	}
 }

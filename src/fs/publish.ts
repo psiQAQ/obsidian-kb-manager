@@ -1,10 +1,11 @@
+import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import { statIfPresent } from './vault.ts';
 
 // POSIX rename replaces an existing empty directory. Reserve the name first.
 export async function renameNewDirectory(source: string, target: string): Promise<void> {
 	if (process.platform === 'win32') {
-		if (await statIfPresent(target)) throw new Error('目标已存在：' + target);
+		if (await statIfPresent(target)) throw new Error(tr('目标已存在：','Destination already exists: ') + target);
 		await fs.rename(source,target);
 		return;
 	}
@@ -12,7 +13,7 @@ export async function renameNewDirectory(source: string, target: string): Promis
 	const reserved = await fs.lstat(target,{bigint:true});
 	try {
 		const current = await fs.lstat(target,{bigint:true});
-		if (!current.isDirectory() || current.dev!==reserved.dev || current.ino!==reserved.ino) throw new Error('目标预留目录已变化');
+		if (!current.isDirectory() || current.dev!==reserved.dev || current.ino!==reserved.ino) throw new Error(tr('目标预留目录已变化','The reserved destination directory changed'));
 		await fs.rename(source,target);
 	} catch(error) {
 		const remaining=await fs.lstat(target,{bigint:true}).catch(()=>undefined);

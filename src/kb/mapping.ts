@@ -1,3 +1,4 @@
+import { fromEnglish } from '../i18n.ts';
 import { parse } from 'smol-toml';
 import { segments } from '../fs/paths.ts';
 
@@ -15,20 +16,20 @@ export interface Mapping {
 
 export function readMapping(text: string): Mapping {
 	const data = parse(text.replace(/^\uFEFF/u, ''));
-	if (data.version !== 1) throw new Error('kb.toml requires version = 1');
+	if (data.version !== 1) throw new Error(fromEnglish('kb.toml requires version = 1','kb.toml 的 version 必须为 1'));
 	const fields = data.paths;
-	if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new Error('Missing [paths]');
+	if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new Error(fromEnglish('Missing [paths]','缺少 [paths] 段'));
 	const entries = Object.entries(fields);
 	const allowed = ['raw', 'wiki', 'reports', 'templates', 'index', 'log', 'overview', 'clippings'];
 	const values = new Map<string, string>();
 	for (const [key, value] of entries) {
-		if (!allowed.includes(key) || typeof value !== 'string') throw new Error('Invalid paths.' + key);
+		if (!allowed.includes(key) || typeof value !== 'string') throw new Error(fromEnglish('Invalid paths.','无效的 paths.') + key);
 		segments(value);
 		values.set(key, value);
 	}
 	function required(key: string): string {
 		const value = values.get(key);
-		if (!value) throw new Error('Missing paths.' + key);
+		if (!value) throw new Error(fromEnglish('Missing paths.','缺少 paths.') + key);
 		return value;
 	}
 	const mapping: Mapping = {
@@ -42,15 +43,15 @@ export function readMapping(text: string): Mapping {
 	for (const [index, name] of directories.entries()) {
 		const key = canonical(name);
 		if (directories.some((other, i) => i !== index && (canonical(other) + '/').startsWith(key + '/'))) {
-			throw new Error('Overlapping content directories: ' + name);
+			throw new Error(fromEnglish('Overlapping content directories: ','内容目录重叠：') + name);
 		}
 	}
 	const pages = [mapping.index, mapping.log, mapping.overview];
 	for (const page of pages) {
 		if (!page.startsWith(mapping.wiki + '/') || !page.endsWith('.md')) {
-			throw new Error('Expected Markdown entry inside ' + mapping.wiki + ': ' + page);
+			throw new Error(fromEnglish('Expected Markdown entry inside ','Markdown 入口应位于 ') + mapping.wiki + ': ' + page);
 		}
 	}
-	if (new Set(pages.map(canonical)).size !== pages.length) throw new Error('Duplicate wiki entry');
+	if (new Set(pages.map(canonical)).size !== pages.length) throw new Error(fromEnglish('Duplicate wiki entry','wiki 入口重复'));
 	return mapping;
 }

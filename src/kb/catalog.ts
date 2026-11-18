@@ -1,3 +1,4 @@
+import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -24,16 +25,16 @@ export function newIdentity(name: string, description: string, template: Identit
 
 export function parseIdentity(raw: string): Identity {
 	const obj: unknown = JSON.parse(raw);
-	if (!obj || typeof obj !== 'object') throw new Error('Invalid knowledge base identity');
+	if (!obj || typeof obj !== 'object') throw new Error(fromEnglish('Invalid knowledge base identity','知识库身份无效'));
 	const value = obj as Partial<Identity>;
-	if (value.schemaVersion !== 1) throw new Error('Unsupported identity schema: ' + String(value.schemaVersion));
+	if (value.schemaVersion !== 1) throw new Error(fromEnglish('Unsupported identity schema: ','不支持的身份格式：') + String(value.schemaVersion));
 	if (typeof value.id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value.id)
 		|| typeof value.displayName !== 'string' || !value.displayName.trim() || typeof value.description !== 'string'
 		|| typeof value.archived !== 'boolean' || typeof value.template?.id !== 'string' || typeof value.template.version !== 'string'
-		|| !Array.isArray(value.managed)) throw new Error('Invalid identity fields');
+		|| !Array.isArray(value.managed)) throw new Error(fromEnglish('Invalid identity fields','知识库身份字段无效'));
 	if (value.entry !== undefined) segments(value.entry);
 	for (const item of value.managed) {
-		if (!item || typeof item.path !== 'string' || typeof item.fingerprint !== 'string') throw new Error('Invalid managed file');
+		if (!item || typeof item.path !== 'string' || typeof item.fingerprint !== 'string') throw new Error(fromEnglish('Invalid managed file','受管文件声明无效'));
 		segments(item.path);
 	}
 	return value as Identity;
@@ -50,13 +51,13 @@ export async function inspect(disk: VaultDisk, location: string): Promise<Librar
 		lib.git = git ? (git.isDirectory() ? 'local' : 'special') : 'missing';
 		const parts: string[] = [];
 		if (json) {
-			if (!json.isFile()) throw new Error('Expected a regular identity file');
+			if (!json.isFile()) throw new Error(fromEnglish('Expected a regular identity file','知识库身份文件必须为常规文件'));
 			const bytes = await fs.readFile(identity);
 			lib.identity = parseIdentity(bytes.toString('utf8'));
 			parts.push(digest(bytes));
 		}
 		if (config) {
-			if (!config.isFile()) throw new Error('Expected a regular kb.toml');
+			if (!config.isFile()) throw new Error(fromEnglish('Expected a regular kb.toml','kb.toml 必须为常规文件'));
 			const bytes = await fs.readFile(toml);
 			lib.mapping = readMapping(bytes.toString('utf8'));
 			parts.push(digest(bytes));
@@ -98,7 +99,7 @@ export async function discover(disk: VaultDisk, config: Config): Promise<Library
 export async function recheck(disk: VaultDisk, config: Config, expected: Library): Promise<Library> {
 	const current = (await discover(disk,config)).find(lib => lib.location === expected.location);
 	if (!current || current.problem || current.duplicate || !current.signature || current.signature !== expected.signature) {
-		throw new Error('Library changed or identity is ambiguous. Refresh the manager.');
+		throw new Error(fromEnglish('Library changed or identity is ambiguous. Refresh the manager.','知识库已变化或身份不唯一。请刷新管理器。'));
 	}
 	return current;
 }
