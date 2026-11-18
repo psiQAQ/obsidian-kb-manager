@@ -30,7 +30,7 @@ SOFTWARE.
 
 ## Karpathy LLM Wiki 规则来源
 
-本模板的摄入、查询、归档与体检规则改编自 [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki/tree/eafcc77001e496cc43499e4923b663aec722c813)。本仓库独立维护目录映射、属性格式、内容所有权及操作边界。2026-11-17 核对本地原始 Skill 的规则和许可与该固定版本一致；以下保留[上游 MIT 许可](https://github.com/Astro-Han/karpathy-llm-wiki/blob/eafcc77001e496cc43499e4923b663aec722c813/LICENSE)，不据此推断原始 Gist 或中文改版的全文授权。
+本模板的摄入、查询、归档与体检规则改编自 [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki/tree/eafcc77001e496cc43499e4923b663aec722c813)。插件的日期、数值与长引文比对也沿用该版本 MIT 许可的方法，经由 [obsidian-agent-wiki 的 Python 检查器](https://github.com/psiQAQ/obsidian-agent-wiki/tree/592dd626be508e65316368533c980bdf77003969/scripts) 移植为 TypeScript。本仓库独立维护目录映射、属性格式、内容所有权及操作边界。2026-11-17 核对本地原始 Skill 的规则和许可与该固定版本一致；以下保留[上游 MIT 许可](https://github.com/Astro-Han/karpathy-llm-wiki/blob/eafcc77001e496cc43499e4923b663aec722c813/LICENSE)，不据此推断原始 Gist 或中文改版的全文授权。
 
 MIT License
 

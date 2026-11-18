@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 import { VaultDisk } from '../src/fs/vault.ts';
 import { defaults, discover } from '../src/kb/catalog.ts';
 import { ancestorWarnings, legacyBinding, adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
-import { inspectSources } from '../src/kb/sources.ts';
+import { auditLibrary } from '../src/kb/audit.ts';
 import { readMapping } from '../src/kb/mapping.ts';
 
 async function setup(t) {
@@ -117,9 +117,12 @@ test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=
 	assert.equal(execFileSync(process.platform==='win32'?'python':'python3',['-c','import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)',note]).toString().trim(),stamp);
 	const snapshot=path.join(legacy,'raw','快照.md');
 	await fs.writeFile(snapshot,'---\nsnapshot_source_note: "../Notes/原件.md"\nsnapshot_source_mtime_ns: "'+stamp+'"\n---\n');
-	assert.deepEqual(await inspectSources(disk,lib),[]);
+	await fs.mkdir(path.join(legacy,'wiki'));
+	await fs.writeFile(path.join(legacy,'wiki','page.md'),'---\ntype: concept\nmanaged_by: agent\nsources: ["../raw/快照.md"]\n---\n');
+	const snapshots=async()=>(await auditLibrary(disk,lib)).filter(f=>f.code.startsWith('snapshot-'));
+	assert.deepEqual(await snapshots(),[]);
 	await fs.utimes(note,1000,1000);
-	assert.equal((await inspectSources(disk,lib)).length,1);
+	assert.equal((await snapshots()).length,1);
 	assert.ok((await fs.readFile(snapshot,'utf8')).includes(stamp));
 });
 

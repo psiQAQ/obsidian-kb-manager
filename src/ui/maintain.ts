@@ -4,12 +4,12 @@ import type KnowledgeBaseManager from '../main.ts';
 import { digest } from '../fs/vault.ts';
 import { discover, recheck } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
-import { applyRepair,checkIndexLinks,examine } from '../kb/maintenance.ts';
+import { applyRepair,examine } from '../kb/maintenance.ts';
 import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { changeIdentity } from './identity.ts';
-import { inspectSources } from '../kb/sources.ts';
+import { auditLibrary } from '../kb/audit.ts';
 import { Dialog } from './dialog.ts';
 
 function visible(plugin:KnowledgeBaseManager):VisibleFiles {
@@ -55,10 +55,13 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 
 export async function health(plugin:KnowledgeBaseManager,lib:Library){
 	const dialog=new Dialog(plugin.app,tr('知识库体检',"Check library"));
-	const report=await examine(plugin.disk,lib,plugin.skeleton);
-	const links=[...await checkIndexLinks(plugin.disk,lib),...await inspectSources(plugin.disk,lib)];
-	dialog.lines([lib.location, ...report.manual,...links,...report.repairs.flatMap(r=>[r.file,...r.fields])]);
-	if(!report.manual.length && !links.length && !report.repairs.length)dialog.lines([tr('结构检查未发现问题',"No structural issues found")]);
+	const current=lib.problem || lib.duplicate ? lib : await recheck(plugin.disk,plugin.config,lib);
+	const report=current.problem || current.duplicate ? {manual:[],repairs:[]} : await examine(plugin.disk,current,plugin.skeleton);
+	const findings=await auditLibrary(plugin.disk,current);
+	dialog.lines([lib.location,...report.manual,
+		...findings.map(f=>(f.level==='error'?tr('错误','Error'):tr('需复核','Review'))+' · '+f.file+' · '+f.code+' · '+f.message),
+		...report.repairs.flatMap(r=>[r.file,...r.fields])]);
+	if(!report.manual.length && !findings.length && !report.repairs.length)dialog.lines([tr('体检未发现问题',"No issues found")]);
 	for(const item of report.repairs){
 		if(lib.identity?.archived || lib.duplicate || lib.problem)continue;
 		dialog.action(tr('应用此修复：',"Apply repair: ")+item.file,async()=>{

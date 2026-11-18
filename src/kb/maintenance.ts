@@ -1,6 +1,5 @@
 import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { segments } from '../fs/paths.ts';
 import { VaultDisk,digest,statIfPresent } from '../fs/vault.ts';
 import { recheck } from './catalog.ts';
@@ -63,21 +62,4 @@ export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:
 		if(await statIfPresent(absolute))throw new Error(tr('文件已出现，请刷新','The file now exists. Refresh the preview.'));
 		await files.create(relative,item.after);
 	}else await files.replace(relative,item.before,item.after);
-}
-
-export async function checkIndexLinks(disk:VaultDisk,lib:Library):Promise<string[]> {
-	if(!lib.mapping)return [];
-	const index=await disk.path(lib.location+'/'+lib.mapping.index);
-	if(!(await statIfPresent(index))?.isFile())return [];
-	const text=await fs.readFile(index,'utf8'), issues=[];
-	for(const link of text.matchAll(/\[[^\]]*\]\(([^)#]+)(?:#[^)]*)?\)/gu)){
-		const raw=link[1];
-		if(!raw || /^[a-z]+:/iu.test(raw))continue;
-		try{
-			const relative=path.posix.normalize(path.posix.join(path.posix.dirname(lib.mapping.index),decodeURIComponent(raw)));
-			segments(relative);
-			if(!await statIfPresent(await disk.path(lib.location+'/'+relative)))issues.push(tr('索引链接缺少目标：','Missing index link target: ')+raw);
-		}catch{issues.push(tr('索引链接需人工核对：','Review index link: ')+raw);}
-	}
-	return issues;
 }
