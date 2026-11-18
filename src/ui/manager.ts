@@ -4,6 +4,7 @@ import type { Library } from '../kb/catalog.ts';
 import { discover } from '../kb/catalog.ts';
 import { adopt, ancestorWarnings, createLibrary, previewCreate } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
+import { versions } from './versions.ts';
 import { Dialog } from './dialog.ts';
 
 export const managerType='knowledge-base-manager-view';
@@ -54,6 +55,12 @@ export class ManagerView extends ItemView {
 					dialog.open();
 				} catch(error){new Notice(String(error));}
 			})); return;
+		}
+		for(const [mode,label] of [['save','保存版本'],['history','历史']] as const){
+			if(lib.identity.archived && mode==='save')continue;
+			row.addButton(b=>b.setButtonText(label).onClick(async()=>{
+				try{await versions(this.plugin,lib,mode);}catch(error){new Notice(String(error),8000);}
+			}));
 		}
 		row.addButton(b=>b.setButtonText('打开').onClick(async ()=>{
 			const entry=lib.identity?.entry;

@@ -1,7 +1,8 @@
-import { FileSystemAdapter, Plugin, TFolder } from 'obsidian';
+import { FileSystemAdapter, Notice, Plugin, TFolder } from 'obsidian';
 import { VaultDisk } from './fs/vault.ts';
 import { defaults } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
+import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
 
@@ -18,6 +19,12 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
 	}
+	private busy = new Set<string>();
+	async exclusive<T>(location: string, action: ()=>Promise<T>): Promise<T> {
+		if(this.busy.has(location))throw new Error('此知识库正在执行另一项操作');
+		this.busy.add(location);
+		try{return await action();}finally{this.busy.delete(location);}
+	}
 	async onload(){
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
@@ -27,6 +34,11 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.known=saved?.known ?? {};
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		this.addSettingTab(new ManagerSettings(this));
+		for (const [mode,name] of [['save','保存本库版本'],['history','查看本库历史']] as const){
+			this.addCommand({id:'version-'+mode,name,callback:async()=>{
+				try{await activeVersion(this,mode);}catch(error){new Notice(String(error),8000);}
+			}});
+		}
 		this.addRibbonIcon('library','打开知识库管理器',()=>this.openManager());
 		this.addCommand({id:'open-manager',name:'打开知识库管理器',callback:()=>this.openManager()});
 		this.addCommand({id:'create-library',name:'新建知识库',callback:async()=>(await this.openManager()).create()});
