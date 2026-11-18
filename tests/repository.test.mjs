@@ -55,3 +55,17 @@ test('two repositories retain independent same-name files through directory rena
   assert.deepEqual(read(dir,'show','HEAD:同名.md'), Buffer.from(i ? '量子计算' : '光学 研究'));
  }
 });
+
+test('a linked parent cannot redirect a knowledge base operation', async t => {
+ await fs.mkdir('.tmp', { recursive: true });
+ const root = await fs.mkdtemp(path.resolve('.tmp', 'boundary-'));
+ t.after(() => fs.rm(root, { recursive: true, force: true }));
+ const vault = path.join(root, 'vault');
+ const sibling = path.join(root, 'outside-vault');
+ await fs.mkdir(vault);
+ await fs.mkdir(sibling);
+ await fs.mkdir(path.join(sibling, 'library'));
+ await fs.symlink(sibling, path.join(vault, 'redirect'), 'junction');
+ await assert.rejects(existingDirectory(vault, 'redirect/library'), /real directory/);
+ assert.deepEqual(await fs.readdir(path.join(sibling, 'library')), []);
+});
