@@ -50,4 +50,4 @@
 
 在仓库根目录使用 Node.js 24 和 npm。依赖齐备后依次运行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`。测试使用仓库内的隔离 Vault，原生 Git 仅用于独立回读。打包工具使用 Python 标准库，运行 `python scripts/package_plugin.py` 后得到 `dist/knowledge-base-manager.zip`。构建与安装均不读取参考子模块。
 
-参考来源与内置模板许可见 [LICENSES.md](assets/llm-wiki/LICENSES.md)。安装包含随包代码的许可清单。各平台结果、验收条件和剩余项目见 [发布验收记录](docs/verification/v1.md)。Windows 目录改名的应用内验收见 [M0 记录](docs/verification/m0.md)。
+参考来源与内置模板许可见 [LICENSES.md](assets/llm-wiki/LICENSES.md)。安装包含随包代码的许可清单。三系统自动化检查见 [GitHub Actions 运行记录](https://github.com/psiQAQ/obsidian-kb-manager/actions/runs/44349627803)。Windows 已通过 Obsidian 1.15.1 桌面验收；macOS 和原生 Linux 桌面实测待完成。
