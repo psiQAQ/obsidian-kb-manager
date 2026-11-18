@@ -6,14 +6,15 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
 metadata = json.loads((ROOT / "dist/build-inputs.json").read_text(encoding="utf-8"))
-allowed = {"obsidian", "crypto", "buffer", "process", "node:fs", "node:fs/promises",
-           "node:path", "node:crypto", "node:timers/promises"}
+allowed = {"obsidian", "@codemirror/view", "@codemirror/state", "crypto", "buffer", "process", "node:fs", "node:fs/promises",
+           "node:child_process", "node:https", "node:http", "node:os", "node:path", "node:crypto", "node:timers/promises"}
 unexpected = {item["path"] for item in metadata["outputs"]["main.js"]["imports"]} - allowed
 if unexpected:
     raise ValueError(f"Unverified runtime dependencies: {unexpected}")
 if any(name.startswith("references/") for name in metadata["inputs"]):
     raise ValueError("Reference submodule included in bundle")
 notices = [(ROOT / "assets/llm-wiki/LICENSES.md").read_text(encoding="utf-8")]
+notices.append((ROOT / "assets/licenses/obsidian-git.txt").read_text(encoding="utf-8"))
 packages = set()
 for name in metadata["inputs"]:
     if not name.startswith("node_modules/"):
