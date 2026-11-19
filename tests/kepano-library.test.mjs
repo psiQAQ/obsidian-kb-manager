@@ -64,6 +64,7 @@ test('Kepano creation, independent commits, scoped bindings and selective move/r
 	assert.equal((await auditLibrary(disk,first)).filter(f=>f.file.startsWith('Templates/') && f.code==='invalid-metadata').length,0);
 	const repos=[repository(await disk.path(first.location)),repository(await disk.path(second.location))];
 	for(const [i,repo] of repos.entries()){
+		assert.match((await gitResult(repo.dir,['check-ignore','-v','kb.toml'])).stdout.toString(),/\.gitignore:.*:\/kb\.toml/u);
 		await fs.writeFile(path.join(repo.dir,'note.md'),String(i));
 		await gitResult(repo.dir,['config','--local','user.name','Editor']);
 		await gitResult(repo.dir,['config','--local','user.email','test@example.invalid']);
@@ -79,7 +80,7 @@ test('Kepano creation, independent commits, scoped bindings and selective move/r
 	await fs.writeFile(await file(first,'note.md'),manual);
 	await assert.rejects(planMove(disk,config,first,'Moved','ambiguous#link',skeleton),/#/u);
 	const move=await planMove(disk,config,first,'Moved','我的 B',skeleton);
-	assert.ok(move.changes.some(c=>c.file===bookBase));
+	assert.ok(!move.changes.some(c=>c.file===bookBase));
 	assert.ok(move.warnings.some(w=>w.includes(bookBase)));
 	assert.ok(!move.changes.some(c=>c.file==='note.md'));
 	const original=await read(first,category);
@@ -93,7 +94,7 @@ test('Kepano creation, independent commits, scoped bindings and selective move/r
 	assert.ok((await read(moved,category)).includes(moved.location));
 	assert.equal(await read(moved,'note.md'),manual);
 	const filters=parseDocument(await read(moved,bookBase)).getIn(['filters','and']).toJSON();
-	assert.ok(filters.some(filter=>filter.includes(moved.location)));
+	assert.ok(filters.some(filter=>filter.includes(first.location)));
 	assert.ok(filters.includes('file.name == "My books"'));
 	assert.deepEqual(await fs.readFile(path.join(await disk.path(moved.location),'.git/index')),stage);
 	assert.equal(await read(second,category),secondCategory);

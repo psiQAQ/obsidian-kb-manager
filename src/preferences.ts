@@ -83,7 +83,7 @@ function record(value: unknown): Record<string,unknown> {
 	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string,unknown> : {};
 }
 
-function readGit(value: unknown): Partial<GitPreferences> {
+export function readGit(value: unknown): Partial<GitPreferences> {
 	const raw = record(value);
 	const result: Partial<GitPreferences> = {};
 	for (const key of ['commitMessage','autoCommitMessage','commitDateFormat','commitHostname','blameFormat','autoGlobs'] as const) {

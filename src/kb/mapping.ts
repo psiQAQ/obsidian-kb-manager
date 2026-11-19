@@ -17,7 +17,10 @@ export interface Mapping {
 export function readMapping(text: string): Mapping {
 	const data = parse(text.replace(/^\uFEFF/u, ''));
 	if (data.version !== 1) throw new Error(fromEnglish('kb.toml requires version = 1','kb.toml 的 version 必须为 1'));
-	const fields = data.paths;
+	return mappingFromPaths(data.paths);
+}
+
+export function mappingFromPaths(fields: unknown): Mapping {
 	if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new Error(fromEnglish('Missing [paths]','缺少 [paths] 段'));
 	const entries = Object.entries(fields);
 	const allowed = ['raw', 'wiki', 'reports', 'templates', 'index', 'log', 'overview', 'clippings'];

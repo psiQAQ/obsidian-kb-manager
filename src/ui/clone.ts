@@ -2,6 +2,8 @@ import { gitDisabled } from './device.ts';
 import { Notice, Setting } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { cloneTarget, downloadLibrary } from '../kb/clone.ts';
+import type { CloneManifestChoice } from '../kb/clone.ts';
+import { parseIdentity } from '../kb/identity-core.ts';
 import { Dialog } from './dialog.ts';
 
 export function cloneWizard(plugin:KnowledgeBaseManager) {
@@ -35,16 +37,37 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 			}
 			const preview=new ImportPreview(plugin.app,t('导入知识库','Import library'));
 			preview.lines([target.relative,clone.branch+' · '+clone.head,...clone.files]);
-			preview.action(t('导入到新目录','Import into new folder'),async()=>{
+			if(clone.tracked)preview.lines([t('远端跟踪 kb.toml。Git 历史和暂存区将保留；导入后若要同步，请先在 Git 中将清单取消跟踪。','The remote tracks kb.toml. Git history and the index are retained. Untrack the manifest in Git before syncing.')]);
+			preview.lines([t('导入后可从库菜单的“体检”检查路径绑定。','After importing, select Check library from the library menu to review path bindings.')]);
+			const publish=async(choice?:CloneManifestChoice)=>{
 				publishing=true;
 				try{
-					await plugin.exclusiveGit(target.relative,()=>clone.publish(plugin.config));
+					await plugin.exclusiveGit(target.relative,()=>clone.publish(plugin.config,choice));
 					preview.close();await plugin.refresh();
 				}finally{
 					publishing=false;
 					if(!preview.containerEl.isConnected)await clone.cleanup();
 				}
-			});preview.open();
+			};
+			if(clone.identity){
+				preview.lines([clone.identity.displayName+' · '+clone.identity.id]);
+				preview.action(t('保留身份并导入','Import with existing identity'),()=>publish());
+			}else{
+				const picker=preview.contentEl.createEl('input',{attr:{type:'file',accept:'.toml','aria-label':t('原库的 kb.toml','Original library kb.toml')}});
+				preview.action(t('预览原库清单','Preview original manifest'),async()=>{
+					const file=picker.files?.[0];
+					if(!file)throw new Error(t('请选择原库的 kb.toml','Choose kb.toml from the original library'));
+					const raw=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await file.arrayBuffer());
+					const identity=parseIdentity(raw);
+					const original=new Dialog(plugin.app,t('使用原库清单','Use original manifest'));
+					original.lines([identity.displayName+' · '+identity.id, target.relative+'/'+ 'kb.toml',
+						...(clone.tracked?[t('原库清单将替换工作区中的远端清单。','The original manifest will replace the remote manifest in the working tree.')]:[])]);
+					original.action(t('保留此身份并导入','Import with this identity'),async()=>{await publish({kind:'original',raw});original.close();});
+					original.open();
+				});
+				preview.action(t('接管为新库并生成新 ID','Adopt as a new library with a new ID'),()=>publish({kind:'new'}));
+			}
+			preview.open();
 		});confirm.open();
 	});form.open();
 }

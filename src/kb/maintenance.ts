@@ -2,11 +2,12 @@ import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import { segments } from '../fs/paths.ts';
 import { VaultDisk,digest,statIfPresent } from '../fs/vault.ts';
-import { recheck } from './catalog.ts';
+import { identityFile, parseIdentity, recheck, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { isKepano, kepanoBinding, renderBase } from './template.ts';
 import { renderKepano, rebindKepano } from './kepano.ts';
 import { rebind } from './bindings.ts';
+import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 
 export interface Repair {file:string;before:string|null;after:string;fields:string[]}
 export interface Report {manual:string[];repairs:Repair[]}
@@ -42,6 +43,10 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 				}
 				if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('需要独立常规文件','Expected a regular file with a single link'));
 				const text=await fs.readFile(file,'utf8');
+				if(digest(text)!==item.fingerprint){
+					manual.push(tr('受管文件已编辑，需手动检查绑定：','Managed file was edited. Review its bindings manually: ')+item.path);
+					continue;
+				}
 				const previous=item.root??lib.location;
 				let result=rebindKepano(item.path,text,previous,destination,skeleton);
 				if(previous!==lib.location && destination!==lib.location){
@@ -69,8 +74,12 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 		if(source && builtin && binding.role!=='overview-bindings')repairs.push({file:'knowledge.base',before:null,after:renderBase(source,destination),fields:[tr('补齐内置 v1 总览','Restore the built-in v1 overview')]});
 		return {manual,repairs};
 	}
-	if(!status.isFile())throw new Error(tr('预期常规文件 knowledge.base','Expected a regular knowledge.base file'));
+	if(!status.isFile() || status.nlink!==1)throw new Error(tr('knowledge.base 必须为独立常规文件','knowledge.base must be a regular file with a single link'));
 	const source=await fs.readFile(file,'utf8');
+	if(digest(source)!==binding.fingerprint){
+		manual.push(tr('受管文件已编辑，需手动检查绑定：','Managed file was edited. Review its bindings manually: ')+'knowledge.base');
+		return {manual,repairs};
+	}
 	try{
 		const result=rebind(source,binding.root??lib.location,destination);
 		manual.push(...result.manual);
@@ -85,12 +94,21 @@ export interface VisibleFiles {
 	create(relative:string,content:string):Promise<void>;
 }
 export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:Repair,files:VisibleFiles,skeleton:Record<string,string>={}){
-	await recheck(disk,config,lib);
+	const current=await recheck(disk,config,lib);
 	const binding=lib.identity?.managed.find(m=>m.path===item.file);
 	const authorized=isKepano(lib.identity?.template)
 		? binding?.role==='kepano-bindings' && kepanoBinding(skeleton,item.file) && (item.before!==null || item.file.endsWith('.base'))
 		: item.file==='knowledge.base';
 	if(!binding || !authorized || lib.identity?.archived)throw new Error(tr('此文件未授权修复','This file is not managed for repair'));
+	if(item.before!==null && item.before!==binding.fingerprint)
+		throw new Error(tr('受管文件已编辑','Managed file was edited'));
+	const {raw,signature}=await readManifestFile(await disk.path(lib.location+'/'+identityFile));
+	if(signature!==current.signature)throw new Error(tr('清单已变化，请重新预览','Manifest changed. Preview again'));
+	const identity=parseIdentity(raw);
+	const updated=identity.managed.find(entry=>entry.path===item.file)!;
+	updated.root=lib.location;
+	updated.fingerprint=digest(item.after);
+	const manifest=writeIdentity(raw,identity);
 	segments(item.file);
 	const relative=lib.location+'/'+item.file;
 	const absolute=await disk.path(relative);
@@ -98,4 +116,5 @@ export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:
 		if(await statIfPresent(absolute))throw new Error(tr('文件已出现，请刷新','The file now exists. Refresh the preview.'));
 		await files.create(relative,item.after);
 	}else await files.replace(relative,item.before,item.after);
+	await replaceLibraryManifest(disk,lib.location,signature,manifest);
 }

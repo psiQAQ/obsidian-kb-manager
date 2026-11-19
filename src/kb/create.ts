@@ -6,12 +6,14 @@ import { gitResult } from '../git/network-native.ts';
 import { rebind } from './bindings.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
-import { VaultDisk, digest, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
 import { initializeRepository, repository } from '../git/repository.ts';
-import { identityFile, newIdentity, recheck } from './catalog.ts';
+import { identityFile, newIdentity, readManifest, recheck, withManifestIgnore, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
+import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
+import { registerVaultLibrary } from '../registry/discovery.ts';
 
 export interface CreateInput {
 	parent: string; name: string; displayName: string; description: string; source: string;
@@ -25,7 +27,7 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 	const warnings = [];
 	for (let i=0; i<parts.length; i++) {
 		const parent = i ? await disk.path(parts.slice(0,i).join('/')) : disk.root;
-		if (await statIfPresent(path.join(parent,identityFile)) || await statIfPresent(path.join(parent,'kb.toml'))) {
+		if (await statIfPresent(path.join(parent,identityFile))) {
 			throw new Error(fromEnglish('Nested knowledge base: ','知识库不能嵌套：') + parts.slice(0,i).join('/'));
 		}
 		const metadata = await statIfPresent(path.join(parent,'.git'));
@@ -68,6 +70,18 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 		if (!config.templates.includes(input.source)) throw new Error(fromEnglish('Select a registered template','请选择已登记的模板'));
 		template = await folderTemplate(await disk.path(input.source),disk.configDir,vars);
 	}
+	const decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});
+	for(const name of [identityFile,'.gitignore']){
+		if(template.folders.some(folder=>key(folder)===name) || template.files.some(file=>key(file.name)===name && file.name!==name))
+			throw new Error(tr('模板路径冲突：','Conflicting template path: ')+name);
+	}
+	const manifest=template.files.find(file=>file.name===identityFile);
+	if(manifest && readManifest(decoder.decode(manifest.bytes)).identity)
+		throw new Error(tr('模板目录含已有的知识库身份','The template folder already has a library identity'));
+	const ignore=template.files.find(file=>file.name==='.gitignore');
+	const bytes=new TextEncoder().encode(withManifestIgnore(ignore?decoder.decode(ignore.bytes):''));
+	if(ignore)ignore.bytes=bytes;
+	else template.files.push({name:'.gitignore',bytes});
 	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,warnings,
 		template.files.map(file=>[file.name,digest(file.bytes)])]));
 	return {input,location,template,signature,warnings};
@@ -80,10 +94,16 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 	await fs.mkdir(parent,{recursive:true});
 	const temporary = await fs.mkdtemp(path.join(parent,'.kb-create-'));
 	const { template,input,location } = fresh;
+	let published=false;
 	try {
 		const manifest = newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
+		let original='';
 		for (const folder of template.folders) await fs.mkdir(path.join(temporary,folder),{recursive:true});
 		for (const file of template.files) {
+			if(file.name===identityFile) {
+				original=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(file.bytes);
+				continue;
+			}
 			const target = path.join(temporary,file.name);
 			await fs.mkdir(path.dirname(target),{recursive:true});
 			await fs.writeFile(target,file.bytes,{flag:'wx'});
@@ -94,19 +114,21 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 					role:input.source?'overview-bindings':undefined});
 			}
 		}
-		await fs.writeFile(path.join(temporary,identityFile),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});
+		await fs.writeFile(path.join(temporary,identityFile),writeIdentity(original,manifest),{flag:'wx'});
 		await initializeRepository(temporary);
 		for (let attempt = 0; ; attempt++) {
 			const destination = await disk.path(location);
 			if (await statIfPresent(destination)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
-			try { await renameNewDirectory(temporary,destination); break; }
+			try { await renameNewDirectory(temporary,destination); published=true; break; }
 			catch (error) {
 				if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= 4) throw error;
 				await delay(50 * 2 ** attempt);
 			}
 		}
+		await registerVaultLibrary(disk,config,location);
 		return manifest;
 	} catch(error) {
+		if(published)throw new Error(String(error)+tr('；知识库已在此目录创建：','. The library was created at: ')+location);
 		throw new Error(String(error)+tr('；未发布目录保留在 ','. The unpublished directory was retained at ')+path.basename(temporary)+tr('，可检查后重试。','. Inspect it before retrying.'));
 	}
 }
@@ -123,16 +145,25 @@ export async function legacyBinding(disk: VaultDisk, lib: Library) {
 	} catch { return undefined; }
 }
 
+export async function adoptionWarnings(disk:VaultDisk,lib:Library) {
+	const warnings=await ancestorWarnings(disk,lib.location);
+	if(lib.git==='local' && (await gitResult(await disk.path(lib.location),['ls-files','-z','--',identityFile])).stdout.length)
+		warnings.push(tr('Git 已跟踪 kb.toml。接管会修改工作区清单，保留现有暂存区和历史。','Git tracks kb.toml. Adoption edits the working tree manifest and preserves the index and history.'));
+	return warnings;
+}
+
 export async function adopt(disk: VaultDisk, config: Config, preview: Library, confirmedWarnings: string[], bindingHash?:string) {
 	const lib = await recheck(disk,config,preview);
-	if (lib.identity || !lib.mapping) throw new Error(fromEnglish('Select a valid legacy knowledge base','请选择有效的旧知识库'));
-	if (JSON.stringify(await ancestorWarnings(disk,lib.location)) !== JSON.stringify(confirmedWarnings)) throw new Error(fromEnglish('Parent repository changed','父仓库已变化'));
-	const manifest = newIdentity(path.posix.basename(lib.location),'',{id:'unknown',version:'unknown'},lib.mapping.index);
+	if (lib.identity || !lib.signature) throw new Error(fromEnglish('Select a valid legacy knowledge base','请选择有效的旧知识库'));
+	if (JSON.stringify(await adoptionWarnings(disk,lib)) !== JSON.stringify(confirmedWarnings)) throw new Error(fromEnglish('Repository state changed. Preview adoption again.','仓库状态已变化，请重新预览接管。'));
+	const manifest = newIdentity(path.posix.basename(lib.location),'',{id:'unknown',version:'unknown'},lib.mapping?.index);
 	if (bindingHash) {
 		if(await legacyBinding(disk,lib)!==bindingHash)throw new Error(tr('旧库绑定字段已变化','The legacy library binding changed'));
 		manifest.managed.push({path:'knowledge.base',root:lib.location,fingerprint:bindingHash,role:'overview-bindings'});
 	}
 	const target = await disk.path(lib.location+'/'+identityFile);
-	await fs.writeFile(target,JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});
+	const {raw}=await readManifestFile(target);
+	await replaceLibraryManifest(disk,lib.location,lib.signature,writeIdentity(raw,manifest));
+	await registerVaultLibrary(disk,config,lib.location);
 	return manifest;
 }

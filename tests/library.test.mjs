@@ -5,8 +5,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
 import { VaultDisk } from '../src/fs/vault.ts';
-import { defaults, discover } from '../src/kb/catalog.ts';
-import { ancestorWarnings, legacyBinding, adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
+import { defaults, discover, scan, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
+import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
+import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
 import { readMapping } from '../src/kb/mapping.ts';
 
@@ -39,6 +40,8 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.ok(base.views[1].filters.and.includes('file.inFolder("knowledge-base/光学 研究/Notes")'));
 	assert.equal(await fs.readFile(path.join(root,'templates/人工笔记模板.md'),'utf8'),skeleton['templates/人工笔记模板.md']);
 	assert.equal(execFileSync('git',['-C',root,'for-each-ref']).length,0);
+	assert.match(execFileSync('git',['-C',root,'check-ignore','-v','kb.toml']).toString(),/\.gitignore:.*:\/kb\.toml/u);
+	assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith('kb-')),[]);
 	assert.equal((await discover(new VaultDisk(disk.root,'.settings'),config))[0].identity.id,lib.identity.id);
 });
 test('folder template preserves binary bytes, empty directories, excluded paths and preview identity',async t=>{
@@ -49,6 +52,7 @@ test('folder template preserves binary bytes, empty directories, excluded paths 
 	const bytes=Buffer.from([0,255,13,10,128]);
 	await fs.writeFile(path.join(template,'data.pdf'),bytes);
 	await fs.writeFile(path.join(template,'note.md'),'{{kb_name}}');
+	await fs.writeFile(path.join(template,'.gitignore'),'# user ignore\r\ncache/\r\n');
 	input.source='样板';
 	const p=await previewCreate(disk,config,input,skeleton);
 	assert.deepEqual(p.template.excluded,['.settings']);
@@ -59,6 +63,10 @@ test('folder template preserves binary bytes, empty directories, excluded paths 
 	assert.deepEqual(await fs.readFile(path.join(dir,'data.pdf')),bytes);
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'{{kb_name}}!');
 	assert.deepEqual(await fs.readdir(path.join(dir,'empty')),[]);
+	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n/kb.toml\r\n');
+	const {identity,mapping}=readManifest(await fs.readFile(path.join(dir,'kb.toml'),'utf8'));
+	assert.equal(identity.displayName,input.displayName);
+	assert.equal(mapping,undefined);
 });
 test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate ID detected',async t=>{
 	const {disk,config,root,skeleton}=await setup(t);
@@ -73,15 +81,23 @@ test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate 
 	await fs.writeFile(path.join(dir,'note.md'),'index');run('add','note.md');
 	await fs.writeFile(path.join(dir,'note.md'),'work');
 	const index=await fs.readFile(path.join(dir,'.git/index'));
+	assert.deepEqual(await discover(disk,config),[]);
+	const [candidate]=await scan(disk,config);
+	await registerVaultLibrary(disk,config,candidate.location);
 	const [old]=await discover(disk,config);
 	assert.equal(old.mapping.wiki,'知识');
-	await adopt(disk,config,old,[]);
+	const warnings=await adoptionWarnings(disk,old);
+	assert.match(warnings[0],/kb\.toml/u);
+	await adopt(disk,config,old,warnings);
 	assert.deepEqual(await fs.readFile(path.join(dir,'.git/index')),index);
 	assert.deepEqual(run('rev-parse','HEAD'),head);
 	assert.equal(run('branch','--show-current').toString().trim(),'legacy');
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'work');
-	assert.equal(await fs.readFile(path.join(dir,'kb.toml'),'utf8'),toml);
+	const updated=await fs.readFile(path.join(dir,'kb.toml'),'utf8');
+	assert.ok(updated.startsWith(toml));
+	assert.equal(readManifest(updated).identity.displayName,'旧库');
 	await fs.cp(dir,path.join(root,'knowledge-base','副本'),{recursive:true});
+	await registerVaultLibrary(disk,config,'knowledge-base/副本');
 	assert.ok((await discover(disk,config)).every(lib=>lib.duplicate));
 	assert.throws(()=>readMapping(toml.replace('raw = "raw"','raw = "Notes"')),/overlap/iu);
 });
@@ -105,6 +121,7 @@ test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=
 	await fs.writeFile(path.join(legacy,'kb.toml'),skeleton['kb.toml']);
 	const base=await fs.readFile(await disk.path(custom.location+'/knowledge.base'),'utf8');
 	await fs.writeFile(path.join(legacy,'knowledge.base'),base.replaceAll(custom.location,'knowledge-base/旧库'));
+	await registerVaultLibrary(disk,config,'knowledge-base/旧库');
 	const lib=(await discover(disk,config)).find(l=>!l.identity);
 	const candidate=await legacyBinding(disk,lib);
 	assert.ok(candidate);
@@ -124,6 +141,23 @@ test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=
 	await fs.utimes(note,1000,1000);
 	assert.equal((await snapshots()).length,1);
 	assert.ok((await fs.readFile(snapshot,'utf8')).includes(stamp));
+});
+
+test('manifest changes preserve unrelated TOML fields, comments, BOM and CRLF',()=>{
+	const source='\uFEFFversion = 1\r\n# original\r\n[preferences]\r\ntree = false # retain this comment\r\ncustom = ["# annotation", "text"]\r\n[extension]\r\nvalue = """\r\n[manager]\r\nkeep this\r\n"""';
+	const recorded=newIdentity('原库','',{id:'folder',version:'1'});
+	recorded.managed.push({path:'knowledge.base',root:'A/旧库',fingerprint:'old',role:'overview-bindings'});
+	const created=writeIdentity(source,recorded);
+	assert.ok(created.startsWith(source));
+	const next=readManifest(created).identity;
+	next.displayName='Second';
+	next.managed[0].root='B/新库';
+	const edited=writePreferences(writeIdentity(created,next),{diffStyle:'unified'});
+	assert.equal(edited[0],'\uFEFF');
+	assert.equal(/(?<!\r)\n/u.test(edited),false);
+	assert.ok(edited.includes('# retain this comment\r\ncustom = ["# annotation", "text"]'));
+	assert.ok(edited.includes('[extension]\r\nvalue = """\r\n[manager]\r\nkeep this\r\n"""'));
+	assert.deepEqual(readManifest(edited),{identity:next,mapping:undefined,preferences:{diffStyle:'unified'}});
 });
 
 test('parent repository exposure appears in preview without modifying its index',async t=>{
