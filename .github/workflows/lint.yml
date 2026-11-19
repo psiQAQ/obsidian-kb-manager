@@ -1,4 +1,4 @@
-name: Desktop plugin validation
+name: Plugin validation
 on: [push, pull_request]
 permissions:
   contents: read
@@ -20,4 +20,5 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: node scripts/verify-mobile.mjs
       - run: python scripts/package_plugin.py

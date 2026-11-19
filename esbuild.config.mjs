@@ -2,8 +2,7 @@ import esbuild from 'esbuild';
 import esbuildSvelte from 'esbuild-svelte';
 import process from 'process';
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
-import { builtinModules } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const upstreamLicense = readFileSync(new URL('./assets/licenses/obsidian-git.txt', import.meta.url), 'utf8');
@@ -74,11 +73,26 @@ const context = await esbuild.context({
 	banner: {
 		js: banner,
 	},
-	entryPoints: ['src/main.ts'],
+	stdin: {
+		contents: `const platform = require('obsidian').Platform;
+module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default : require('./src/main.ts').default;`,
+		resolveDir: fileURLToPath(new URL('.', import.meta.url)),
+		sourcefile: 'platform-entry.cjs',
+	},
 	bundle: true,
-	platform: 'node',
+	platform: 'browser',
+	alias: {buffer:'buffer/'},
 	conditions: ['browser', prod ? 'production' : 'development'],
-	plugins: [esbuildSvelte({compilerOptions: {css: 'injected'}})],
+	plugins: [
+		esbuildSvelte({compilerOptions: {css: 'injected'}}),
+		// isomorphic-git's browser module expects Buffer. Scope the shim to that module.
+		{name:'mobile-git-buffer',setup(build) {
+			build.onLoad({filter:/[\\/]isomorphic-git[\\/]index\.js$/}, ({path}) => ({
+				contents: "import { Buffer } from 'buffer/';\n" + readFileSync(path,'utf8'),
+				resolveDir: dirname(path), loader:'js', watchFiles:[path],
+			}));
+		}},
+	],
 	metafile: prod,
 	define: {
 		KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)),
@@ -98,7 +112,7 @@ const context = await esbuild.context({
 		'@lezer/common',
 		'@lezer/highlight',
 		'@lezer/lr',
-		...builtinModules,
+		'node:*',
 	],
 	format: 'cjs',
 	target: 'es2021',

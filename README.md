@@ -1,6 +1,6 @@
 # Knowledge Base Manager
 
-在一个 Obsidian Vault 中为不同研究方向建立独立知识库。每个库有自己的首页、资料、人工笔记、身份清单和本地 Git 历史。支持桌面版，最低版本为 1.15.1。插件随包提供 Git 和内置模板，最终用户只需 Obsidian。默认在本机保存版本。为某个知识库配置 HTTPS 远端后，可手动拉取和推送。自动操作需要按库授权。
+在一个 Obsidian Vault 中为不同研究方向建立独立知识库。每个库有自己的首页、资料、人工笔记和 Git 历史。桌面版需要 Obsidian 1.15.1 或以上版本以及已安装的系统 Git。插件随包提供建库模板，可离线使用。
 
 ## 离线安装
 
@@ -16,7 +16,7 @@
 
 在管理器选择 **新建**，将物理目录名填为「光学研究」，保留内置 LLM Wiki 模板，填写简介后选择 **预览**。核对目标 `knowledge-base/光学研究`、文件列表和父仓库提示，再选择 **创建**。管理器出现该库后，选择 **打开** 进入知识索引。新库的 `main` 分支此时没有提交。
 
-首次提交前，打开「光学研究」的 **本库 Git 设置 → 身份与凭据**，填写姓名和邮箱，预览后保存到本库的 `.git/config`。如果已用命令行配置这两项，插件会直接读取。在本库目录运行 `git config --local user.name` 和 `git config --local user.email` 可以核对。升级到 1.3.1 会清理插件 `data.json` 中的旧姓名和邮箱，保留各库已有的 Git 配置。
+在知识库目录执行 `git config --show-origin --get user.name` 和 `git config --show-origin --get user.email` 可核对身份来源。若要为「光学研究」使用单独的署名，打开 **本库 Git 设置 → 身份与凭据**，预览后写入该库的 `.git/config`。清空其中一项并保存，即恢复该项继承。姓名和邮箱会随提交进入 Git 历史。 如果另外设置的作者、提交者或环境变量使实际身份与预览不同，插件会在暂存前提示使用命令行完成该提交。修订已有提交会保留原作者。
 
 在 `光学研究/Notes/` 写一条笔记。在右侧栏的「光学研究」行点击分支图标 **Git 状态**，填写说明并点 **预览提交**，核对库路径、增删改、提交说明、作者和邮箱。保存后会显示 SHA，可在 **历史** 中查看。若已有暂存内容，按钮改为 **提交已暂存内容**。同一个文件在暂存后继续编辑时，本次提交保留原暂存版本，其余编辑留在工作区。
 
@@ -28,9 +28,9 @@
 
 设置首页的 **界面语言** 支持跟随 Obsidian、简体中文和 English。全局 Git 设置按分类打开。在知识库行点击 **… → 本库 Git 设置** 可覆盖个别选项，使用恢复按钮重新继承。库目录移动后，同一 ID 继续使用原偏好。
 
-要把一个库推到远端，展开它的 **Git 状态 → 本库远端与凭据**，填写 HTTPS 地址、远端名称和上游分支，再用推送按钮核对目标。该操作会把本库提交历史发送到配置的服务器。凭据保存在 Obsidian 秘密存储中。需要定时运行时，先在 **自动化** 设置间隔，再在该库的时钟按钮确认分支、远端与文件范围。归档、部分暂存、冲突或授权目标变化会暂停后台写入。
+在 **Git 状态 → 本库远端与凭据** 配置 HTTPS 或 SSH 地址及上游分支。桌面 HTTPS 默认使用系统 Git 凭据助手，SSH 使用本机 SSH 配置与代理；也可以为指定知识库和 HTTPS 目标明确选用 Obsidian SecretStorage 中的令牌。推送前核对目标，推送会发送本库提交历史。原有自动推拉授权在升级时暂停，请在本库的时钟按钮重新核对目标和授权范围。
 
-内置 Git 支持本地提交、分支、HTTPS 获取与推送、快进拉取。需要变基、原生合并或逐行作者信息时，在 **高级** 选择原生后端，确保本设备可以运行 Git。Vault 根仓库可继续由独立的 Obsidian Git 插件管理。逐项支持情况见[功能对照](docs/git-compatibility.md)。
+桌面 Git 默认通过系统 PATH 查找。Windows 可运行 `where.exe git` 查看已安装的位置；需要指定时，在 **设置 → Knowledge Base Manager → 高级** 填写 Git 可执行文件的绝对路径，只保存在本设备。Vault 根仓可继续使用 Obsidian Git。[功能对照](docs/git-compatibility.md)
 
 原生变基需要干净的工作区和暂存区。如果变基中断，请先在该知识库的目录用 Git 完成或中止变基。普通合并冲突可以直接在笔记中预览并选择保留的内容，再回到本库面板明确暂存解决结果。
 
@@ -64,8 +64,12 @@
 
 本地 Git 写入目前支持普通自包含仓库。遇到 Git 锁、冲突、linked worktree、过滤器或尚未兼容的索引布局时，界面会报告原因。插件卸载后库目录、Markdown、附件和 `.git/` 均可独立使用。
 
+## 移动端适配
+
+当前安装清单仅开放桌面端。Android 与 iOS 的独立入口使用 Obsidian 文件接口和内置 Git，不调用系统 Git。移动端验收覆盖建库、目录模板、状态、历史、暂存、提交和 HTTPS 同步。手机上各库可分别覆盖姓名和邮箱，缺少的字段来自本设备为当前 Vault 保存的默认身份。默认身份和远端登录凭据使用 Obsidian SecretStorage。移动 HTTPS 要求服务器允许 WebView 的跨域请求并提供无需重定向的仓库 URL；SSH 仓库请在桌面操作。
+
 ## 开发验证
 
-在仓库根目录使用 Node.js 24 和 npm。依赖齐备后依次运行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`。测试使用仓库内的隔离 Vault，原生 Git 用于互操作回读和可选后端测试。打包工具使用 Python 标准库，运行 `python scripts/package_plugin.py` 后得到 `dist/knowledge-base-manager.zip`。构建与安装均不读取参考子模块。
+在仓库根目录使用 Node.js 24 和 npm。依赖齐备后依次运行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`。测试使用仓库内的隔离 Vault，使用系统 Git 验证桌面后端和命令行互操作。打包工具使用 Python 标准库，运行 `python scripts/package_plugin.py` 后得到 `dist/knowledge-base-manager.zip`。构建与安装均不读取参考子模块。
 
 参考来源与内置模板许可见 [LICENSES.md](assets/llm-wiki/LICENSES.md)。安装包含随包代码的许可清单。1.0.0 三系统自动化记录见 [GitHub Actions 运行记录](https://github.com/psiQAQ/obsidian-kb-manager/actions/runs/44349627803)。1.0.0 已在 Windows Obsidian 1.15.1 实测；macOS 和原生 Linux 桌面实测待完成。

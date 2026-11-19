@@ -1,6 +1,6 @@
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type { Node } from 'yaml';
-import { segments } from '../fs/paths.ts';
+import { segments } from '../fs/segments.ts';
 import { tr } from '../i18n.ts';
 
 const rootToken = '__KB_ROOT__';

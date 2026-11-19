@@ -18,5 +18,5 @@
 		"allowSyntheticDefaultImports": true,
 		"lib": ["ES2021", "DOM"]
 	},
-	"include": ["src/**/*.ts", "tests/*.mjs"]
+	"include": ["src/**/*.ts", "tests/*.mjs", "scripts/verify-mobile.mjs"]
 }

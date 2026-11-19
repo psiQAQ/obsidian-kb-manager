@@ -1,6 +1,6 @@
 import { fromEnglish } from '../i18n.ts';
 import { parse } from 'smol-toml';
-import { segments } from '../fs/paths.ts';
+import { segments } from '../fs/segments.ts';
 
 export interface Mapping {
 	raw: string;
