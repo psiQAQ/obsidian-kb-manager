@@ -26,7 +26,7 @@ export async function reviewTemplateFilter(vault:Vault,dialog:Dialog,source:stri
 	const read=()=>{
 		const list:unknown=config.getConfig('userIgnoreFilters')??[];
 		if(!Array.isArray(list)|| !list.every((v:unknown)=>typeof v==='string'))throw new Error(tr('Vault 排除规则格式无效','Invalid vault exclusions'));
-		return list as string[];
+		return list;
 	};
 	const path=vault.configDir+'/app.json';
 	const persisted=async()=>{
@@ -34,7 +34,7 @@ export async function reviewTemplateFilter(vault:Vault,dialog:Dialog,source:stri
 		const data=JSON.parse(await vault.adapter.read(path)) as {userIgnoreFilters?:unknown};
 		const filters=data.userIgnoreFilters??[];
 		if(!Array.isArray(filters)|| !filters.every((v:unknown)=>typeof v==='string'))throw new Error(tr('Vault 排除规则格式无效','Invalid vault exclusions'));
-		return filters as string[];
+		return filters;
 	};
 	const plan=await planTemplateFilter(source,{read:persisted,async append(){
 		const previous=await persisted();
@@ -48,7 +48,7 @@ export async function reviewTemplateFilter(vault:Vault,dialog:Dialog,source:stri
 				const data=JSON.parse(await vault.adapter.read(path)) as {userIgnoreFilters?:string[]};
 				if(data.userIgnoreFilters?.includes(templateIgnoreRule))return;
 			}
-			await new Promise(resolve=>setTimeout(resolve,100));
+			await new Promise(resolve=>window.setTimeout(resolve,100));
 		}
 		throw new Error(tr('保存 Vault 模板排除规则失败，请检查 app.json 后重试。','Saving the vault template exclusion failed. Check app.json and retry.'));
 	}});
