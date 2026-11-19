@@ -4,8 +4,8 @@ import { cloneWizard } from './clone.ts';
 import { ItemView, Menu, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
-import { discover } from '../kb/catalog.ts';
-import { adopt, legacyBinding, ancestorWarnings, createLibrary, previewCreate } from '../kb/create.ts';
+import { discover, identityFile } from '../kb/catalog.ts';
+import { adopt, legacyBinding, adoptionWarnings, createLibrary, previewCreate } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
 import { kepanoSource } from '../kb/template.ts';
 import { edit,health,move,resumeMove } from './maintain.ts';
@@ -14,6 +14,9 @@ import { networkPanel } from './network.ts';
 import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
+import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
+import { registryPath } from '../registry/paths.ts';
+import { applyIgnoreRule, previewRegistryIgnore, readVaultRegistry } from '../registry/desktop.ts';
 
 export const managerType='knowledge-base-manager-view';
 export class ManagerView extends ItemView {
@@ -56,6 +59,7 @@ export class ManagerView extends ItemView {
 		new Setting(el).setName(tr('知识库',"Knowledge bases")).setHeading()
 			.addButton(b=>b.setButtonText(tr('新建',"New")).onClick(()=>this.create()))
 			.addExtraButton(b=>b.setIcon('download').setTooltip(tr('克隆知识库','Clone library')).onClick(()=>cloneWizard(this.plugin)))
+			.addButton(b=>b.setButtonText(tr('登记','Registry')).onClick(()=>manageRegistry(this.plugin)))
 			.addButton(b=>b.setButtonText(tr('刷新',"Refresh")).onClick(()=>this.render()));
 		try {
 			for(const record of Object.values(this.plugin.moves)){
@@ -66,19 +70,20 @@ export class ManagerView extends ItemView {
 			}
 			const libraries=await discover(this.plugin.disk,this.plugin.config);
 			if(signal.aborted)return;
-			if (!libraries.length) el.createEl('p',{text:tr('尚未发现知识库。可以新建知识库，或在设置中登记旧库的父目录。',"No libraries found. Create one or add its parent folder in settings.")});
-			const before=JSON.stringify(this.plugin.known);
-			for(const lib of libraries) {
-				if(lib.identity && !lib.duplicate && !lib.problem)this.plugin.known[lib.identity.id]=lib.location;
-				this.row(lib,signal);
-			}
-			for(const [id,location] of Object.entries(this.plugin.known)) {
-				if(!libraries.some(lib=>lib.identity?.id===id)) el.createEl('p',{text:tr('失联：',"Missing: ")+location+' · '+id+tr('。在设置中登记当前位置的父目录并刷新，以库内 ID 重新定位。',". Register its current parent in settings and refresh to locate it by ID.")});
-			}
-			if(before!==JSON.stringify(this.plugin.known))await this.plugin.persist();
+			if (!libraries.length) el.createEl('p',{text:tr('尚未登记知识库。可以新建，或选择现有 kb.toml 登记。',"No libraries registered. Create a library or register an existing kb.toml.")});
+			this.plugin.observeLibraries(libraries);
+			for(const lib of libraries)this.row(lib,signal);
 		} catch(error) { el.createEl('p',{text:String(error)}); }
 	}
 	row(lib: Library,signal:AbortSignal){
+		if(lib.missing){
+			new Setting(this.contentEl).setName(lib.location).setDesc(tr('登记路径下找不到 kb.toml','The registered path has no kb.toml'))
+				.addButton(b=>b.setButtonText(tr('重新定位','Relocate')).onClick(()=>relocateRegistryEntry(this.plugin,lib.location)))
+				.addButton(b=>b.setButtonText(tr('移除登记','Remove')).onClick(async()=>{
+					try{await removeRegistryEntry(this.plugin,lib.location);}catch(error){new Notice(String(error));}
+				}));
+			return;
+		}
 		const detail=[lib.location,lib.identity?.template.id ?? tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(this.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
@@ -95,7 +100,12 @@ export class ManagerView extends ItemView {
 			this.contentEl.createDiv({cls:'kb-library-git',text:reason});
 		}
 		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('体检',"Check library")).onClick(async()=>{try{await health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
-		if(lib.problem)return;
+		if(lib.problem){
+			row.addButton(b=>b.setButtonText(tr('移除登记','Remove')).onClick(async()=>{
+				try{await removeRegistryEntry(this.plugin,lib.location);}catch(error){new Notice(String(error));}
+			}));
+			return;
+		}
 		if(lib.duplicate){
 			row.addButton(b=>b.setButtonText(tr('标记为副本',"Mark as copy")).onClick(async()=>{
 				try {await resolveDuplicate(this.plugin,lib);} catch(error){new Notice(String(error));}
@@ -104,9 +114,9 @@ export class ManagerView extends ItemView {
 		if(!lib.identity) {
 			row.addButton(b=>b.setButtonText(tr('预览接管',"Preview adoption")).onClick(async ()=>{
 				try {
-					const warnings=await ancestorWarnings(this.plugin.disk,lib.location);
+					const warnings=await adoptionWarnings(this.plugin.disk,lib);
 					const dialog=new Dialog(this.app,tr('接管旧知识库',"Adopt legacy library"));
-					dialog.lines([lib.location,tr('新增 kb-manager.json',"Add kb-manager.json"),'Git：'+lib.git,...Object.entries(lib.mapping ?? {}).map(([k,v])=>k+' → '+String(v)),...warnings]);
+					dialog.lines([lib.location,tr('在 kb.toml 中新增 [manager]',"Add [manager] to kb.toml"),'Git · '+lib.git,...Object.entries(lib.mapping ?? {}).map(([k,v])=>k+' → '+String(v)),...warnings]);
 					const candidate=await legacyBinding(this.plugin.disk,lib);
 					const confirm=async(hash?:string)=>{
 						await this.plugin.exclusive(lib.location,()=>adopt(this.plugin.disk,this.plugin.config,lib,warnings,hash));
@@ -133,11 +143,13 @@ export class ManagerView extends ItemView {
 			action(tr('编辑','Edit'),'pencil',()=>edit(this.plugin,lib));
 			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib));
 			action(tr('体检','Check library'),'activity',()=>health(this.plugin,lib));
+			action(tr('预览登记及路径绑定','Preview registration and bindings'),'map-pin',()=>showImportPreview(this.plugin,lib.location));
+			action(tr('移除登记','Remove registration'),'list-x',()=>removeRegistryEntry(this.plugin,lib.location));
 			const bounds=button.extraSettingsEl.getBoundingClientRect();
 			menu.showAtPosition({x:bounds.left,y:bounds.bottom});
 		}));
 		row.addButton(b=>b.setButtonText(tr('打开',"Open")).onClick(async ()=>{
-			const entry=lib.identity?.entry;
+			const entry=lib.identity?.entry ?? lib.mapping?.index;
 			if(!entry){
 				const choices=new Dialog(this.app,lib.location);
 				const files=this.app.vault.getMarkdownFiles().filter(f=>f.path.startsWith(lib.location+'/'));
@@ -182,13 +194,20 @@ export class ManagerView extends ItemView {
 		dialog.text(tr('显示名（默认使用目录名）',"Display name (defaults to folder name)"),'',v=>{input.displayName=v;});
 		dialog.text(tr('简介',"Description"),'',v=>{input.description=v;});
 		dialog.action(tr('预览',"Preview"),async()=>{
+			await readVaultRegistry(disk);
 			const skeleton=input.source===kepanoSource?this.plugin.kepanoSkeleton:this.plugin.skeleton;
 			const preview=await previewCreate(disk,config,{...input,displayName:input.displayName||input.name},skeleton);
+			const ignore=await previewRegistryIgnore(disk);
 			const confirm=new Dialog(this.app,tr('确认创建',"Confirm creation"));
 			confirm.lines([preview.location,tr('模板','Template')+' · '+preview.template.id,...preview.warnings,...preview.template.folders.map(p=>p+'/'),
-				...preview.template.files.map(f=>f.name), 'kb-manager.json',tr('.git/（main，空历史）',".git/ (main, empty history)"),
+				...new Set([...preview.template.files.map(f=>f.name),identityFile]),registryPath,tr('.git/（main，空历史）',".git/ (main, empty history)"),
+				...(ignore.before===ignore.after ? [] : [tr('Vault 根目录 .gitignore 添加规则','Add to Vault root .gitignore')+' · '+ignore.rule]),
 				...preview.template.excluded.map(p=>tr('排除 ',"Exclude ")+p)]);
-			confirm.action(tr('创建',"Create"),async()=>{await createLibrary(disk,this.plugin.config,preview,skeleton);confirm.close();dialog.close();await this.render();});
+			confirm.action(tr('创建',"Create"),async()=>{
+				if(ignore.before!==ignore.after)await applyIgnoreRule(disk,ignore);
+				await createLibrary(disk,this.plugin.config,preview,skeleton);
+				confirm.close();dialog.close();await this.render();
+			});
 			confirm.open();
 		});dialog.open();
 	}

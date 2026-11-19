@@ -12,7 +12,7 @@ import { changeIdentity } from './identity.ts';
 import { auditLibrary } from '../kb/audit.ts';
 import { Dialog } from './dialog.ts';
 
-function visible(plugin:KnowledgeBaseManager):VisibleFiles {
+export function visible(plugin:KnowledgeBaseManager):VisibleFiles {
 	const vault=plugin.app.vault;
 	return {
 		create:async(relative,content)=>{await plugin.disk.path(relative);await vault.create(relative,content);},
@@ -33,11 +33,11 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 	const previous=lib.identity;
 	let name=previous.displayName,description=previous.description;
 	const dialog=new Dialog(plugin.app,tr('编辑知识库',"Edit knowledge base"));
-	dialog.lines([lib.location+'/kb-manager.json']);
+	dialog.lines([lib.location+'/kb.toml']);
 	dialog.text(tr('显示名',"Display name"),name,v=>{name=v;});dialog.text(tr('简介',"Description"),description,v=>{description=v;});
 	const confirm=(archive:boolean)=>{
 		const next=new Dialog(plugin.app,tr('确认清单修改',"Confirm manifest changes"));
-		next.lines([lib.location+'/kb-manager.json',previous.displayName+' → '+name,previous.description+' → '+description,
+		next.lines([lib.location+'/kb.toml',previous.displayName+' → '+name,previous.description+' → '+description,
 			tr('归档：',"Archived: ")+String(previous.archived)+' → '+String(archive)]);
 		next.action(tr('应用',"Apply"),async()=>{
 			if(!name.trim())throw new Error(tr('请输入显示名',"Enter a display name"));
@@ -82,9 +82,10 @@ export async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
 
 export function move(plugin:KnowledgeBaseManager,lib:Library){
 	const old=lib.location.split('/'), original=old.pop()!;
-	let parent=old.join('/'), name=original, additional='';
+	const originalParent=old.join('/');
+	let parent=plugin.config.parents.includes(originalParent)?originalParent:plugin.config.parents[0]??'', name=original, additional='';
 	const dialog=new Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"));
-	const choices=[parent,...plugin.config.parents.filter(p=>p!==parent)];
+	const choices=[parent,...plugin.config.parents.filter(p=>p!==parent)].filter(Boolean);
 	dialog.choice(tr('目标父目录',"Destination parent folder"),Object.fromEntries(choices.map(p=>[p,p])),v=>{parent=v;});
 	dialog.text(tr('或登记已存在的新父目录',"Or register an existing parent folder"),'',v=>{additional=v.trim();});
 	dialog.text(tr('目标目录名',"Destination folder name"),name,v=>{name=v;});

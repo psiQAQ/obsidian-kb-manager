@@ -6,6 +6,7 @@ import { Dialog } from './dialog.ts';
 import { gitDisabled,pluginNotice } from './device.ts';
 import { commitAndSync } from './sync.ts';
 import { cloneWizard } from './clone.ts';
+import { manageRegistry } from './manager-registry.ts';
 
 const operations=[
 	['status','本库 Git 状态','Library Git status',''],
@@ -22,6 +23,8 @@ const operations=[
 
 export function registerLibraryCommands(plugin:KnowledgeBaseManager,reload:boolean){
 	const t=plugin.t;
+	if(reload)plugin.removeCommand('library-registry');
+	plugin.addCommand({id:'library-registry',name:t('管理 Vault 知识库登记','Manage Vault library registry'),callback:()=>manageRegistry(plugin)});
 	for(const [key,zh,en,icon] of operations){
 		const id='library-'+key;
 		if(reload)plugin.removeCommand(id);
