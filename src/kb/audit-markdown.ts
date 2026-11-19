@@ -11,6 +11,12 @@ const destination = (s:string)=>s.startsWith('<') && s.endsWith('>') ? s.slice(1
 const definition = /^ {0,3}\[([^[\]\n]+)\]:[ \t]*(<[^<>\n]*>|[^\s<>]+?)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gmu;
 const linkPattern = /!?\[([^[\]\n]*)\](?:\([ \t]*(<[^<>\n]*>|[^\s()]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\)|\[([^[\]\n]*)\])/gu;
 export const wikiPattern = /!?\[\[([^\]\n]+)\]\]/gu;
+const inlineLink = new RegExp('^'+linkPattern.source+'$','u');
+
+export function inlineDestination(text:string) {
+	const url = inlineLink.exec(text)?.[2];
+	return url === undefined ? undefined : destination(url);
+}
 
 // Keep line positions for log records and link findings. Pair equal-length
 // backtick runs only; an unmatched run remains ordinary visible text.

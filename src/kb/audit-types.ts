@@ -1,3 +1,17 @@
+import type { Repair } from './maintenance.ts';
+
+export const auditChecks = ['identity','properties','links','index','ingestion','bindings'] as const;
+export type AuditCheck = typeof auditChecks[number];
+
+export interface AuditResult {
+	check: AuditCheck;
+	status: 'clean' | 'findings' | 'not-applicable' | 'failed';
+	findings: AuditFinding[];
+	repairs: Repair[];
+	reason?: string;
+	details?: string[];
+}
+
 export interface AuditNote {
 	metadata: Record<string, unknown>;
 	body: string;

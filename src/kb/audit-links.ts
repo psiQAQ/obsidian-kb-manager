@@ -2,14 +2,15 @@ import {posix as path} from 'node:path';
 import {tr} from '../i18n.ts';
 import type {Mapping} from './mapping.ts';
 import type {AuditNote, AuditReport} from './audit-types.ts';
-import {parseMarkdown, prose, wikiPattern} from './audit-markdown.ts';
+import {inlineDestination, prose, wikiPattern} from './audit-markdown.ts';
+import type {ParsedMarkdown} from './audit-markdown.ts';
 
 interface LinkInput {
 	location:string;
 	mapping?:Mapping;
 	files:ReadonlySet<string>;
 	notes:ReadonlyMap<string,AuditNote>;
-	articles:ReadonlySet<string>;
+	parsed:(file:string,note:AuditNote)=>ParsedMarkdown;
 	readBody:(file:string)=>Promise<string>;
 	report:AuditReport;
 }
@@ -21,13 +22,29 @@ const withExtension=(file:string,files:ReadonlySet<string>)=>!files.has(file) &&
 
 // Use virtual, library-relative paths. Never resolve a link against the host
 // filesystem or use another library's files to disambiguate a short title.
-function markdownTarget(from:string,url:string,files:ReadonlySet<string>):Target|undefined {
+export function markdownTarget(from:string,url:string,files:ReadonlySet<string>):Target|undefined {
 	if((/^[A-Za-z][\w+.-]*:/u.test(url) && !/^[A-Za-z]:[\\/]/u.test(url)) || url.startsWith('//'))return;
 	const hash=url.indexOf('#');
 	const fragment=decodeURIComponent(hash<0?'':url.slice(hash+1));
 	const name=decodeURIComponent((hash<0?url:url.slice(0,hash)).split('?')[0]!);
 	const relative=outsideAbsolute(name) ? name : name ? path.join(path.dirname(from),name) : from;
 	return {file:withExtension(relative,files),fragment};
+}
+
+export function referenceTarget(from:string,value:string,location:string,files:ReadonlySet<string>):string|undefined {
+	const wiki=/^\[\[([^\]\n]+)\]\]$/u.exec(value.trim());
+	if(wiki){
+		const name=wiki[1]!.split(/[|#]/u)[0]!.trim(), full=path.normalize(name);
+		if(!outsideAbsolute(name) && inside(full,location))return withExtension(full.slice(location.length+1),files);
+		return;
+	}
+	const destination=inlineDestination(value.trim());
+	if(destination!==undefined){
+		try{return markdownTarget(from,destination,files)?.file;}catch{return;}
+	}
+	if(value && !outsideAbsolute(value) && !value.startsWith('[[') && !/^[A-Za-z][\w+.-]*:/u.test(value))
+		return path.join(path.dirname(from),value);
+	return undefined;
 }
 
 function fragments(body:string){
@@ -43,16 +60,14 @@ function fragments(body:string){
 	return {headings,blocks};
 }
 
-export async function checkLinks({location,mapping,files,notes,articles,readBody,report}:LinkInput):Promise<Set<string>> {
-	const parsedNotes=new Map([...notes].map(([name,note])=>[name,parseMarkdown(note.body)]));
+export async function checkLinks({location,mapping,files,notes,parsed,readBody,report}:LinkInput) {
 	const byName=new Map<string,string[]>(),anchors=new Map<string,ReturnType<typeof fragments>>();
 	for(const file of files){
 		const name=path.basename(file),existing=byName.get(name);
 		if(existing)existing.push(file);else byName.set(name,[file]);
 	}
-	const indexed=new Set<string>(),noMaterial=new Set<string>();
-	for(const [from,parsed] of parsedNotes){
-		const note=notes.get(from)!;
+	for(const [from,note] of notes){
+		const body=parsed(from,note);
 		const strict=!!mapping && (from===mapping.index || from===mapping.log || inside(from,mapping.reports) || note.metadata.managed_by==='agent');
 		const level=strict?'error':'review';
 		async function check(target:Target){
@@ -79,22 +94,17 @@ export async function checkLinks({location,mapping,files,notes,articles,readBody
 				if(!valid)report(level,'broken-fragment',from,tr('未找到标题或块引用 ','Missing heading or block: ')+file+'#'+fragment);
 			}
 		}
-		for(const {target:url} of parsed.links){
+		for(const {target:url} of body.links){
 			let target:Target|undefined;
 			try{target=markdownTarget(from,url,files);}catch{
 				report(level,'broken-link',from,tr('无效的链接转义 ','Invalid URL encoding: ')+url);continue;
 			}
 			if(!target)continue;
-			if(mapping && from===mapping.index){
-				if(!inside(target.file,mapping.wiki))report('error','index-scope',from,tr('索引指向 wiki 以外的文件 ','Index target outside wiki: ')+target.file);
-				if(indexed.has(target.file))report('error','index-duplicate',from,tr('索引条目重复 ','Duplicate index entry: ')+target.file);
-				indexed.add(target.file);
-			}
 			await check(target);
 		}
 		const short=new Set<string>();
 		const values=Object.values(note.metadata).flatMap((v:unknown):unknown[]=>Array.isArray(v)?v as unknown[]:[v]).filter((v):v is string=>typeof v==='string');
-		for(const match of [parsed.text,...values].join('\n').matchAll(wikiPattern)){
+		for(const match of [body.text,...values].join('\n').matchAll(wikiPattern)){
 			const raw=match[1]!.split('|')[0]!.replace(/\\$/u,'').trim();
 			const hash=raw.indexOf('#'),name=hash<0?raw:raw.slice(0,hash),fragment=hash<0?'':raw.slice(hash+1);
 			let target=from;
@@ -117,38 +127,22 @@ export async function checkLinks({location,mapping,files,notes,articles,readBody
 			await check({file:target,fragment});
 		}
 		if(short.size)report('review','human-wikilink-scope',from,tr('短链接仅在本库内核对 ','Short links checked in this library only: ')+[...short].join(', '));
-		if(mapping && from===mapping.log){
-			const lines=parsed.text.split('\n');
-			const rawLinksByLine=new Map<number,string[]>();
-			for(const {line,target} of parsed.links){
-				if(!/^- Raw:\s*/u.test(lines[line-1]!))continue;
-				const values=rawLinksByLine.get(line) ?? [];
-				values.push(target);
-				rawLinksByLine.set(line,values);
-			}
-			for(let i=0;i<lines.length;){
-				if(!/^## \[\d{4}-\d{2}-\d{2}\]\s+ingest\s*\|/u.test(lines[i]!)){i++;continue;}
-				const start=i++;
-				while(i<lines.length && !/^## \[/u.test(lines[i]!))i++;
-				if(!lines.slice(start,i).some(l=>/^- Disposition:\s*No material\s*$/iu.test(l)))continue;
-				const refs:string[]=[];
-				for(let line=start+1;line<=i;line++)refs.push(...rawLinksByLine.get(line) ?? []);
-				if(!refs.length)report('error','log-raw-missing',from,tr('No material 记录缺少 Raw 链接','No material entry requires a Raw link'));
-				for(const ref of refs){
-					let file:string|undefined;
-					try{file=markdownTarget(from,ref,files)?.file;}catch{/* A malformed target is reported below. */}
-					if(!file || outside(file) || !files.has(file) || !(inside(file,mapping.raw) || mapping.clippings && inside(file,mapping.clippings))){
-						report('error','log-raw-invalid',from,tr('Raw 链接未指向本库来源文件 ','Raw must point to a source in this library: ')+ref);
-					}else noMaterial.add(file);
-				}
-			}
-		}
 	}
-	if(mapping && parsedNotes.has(mapping.index)){
-		for(const file of articles){
-			if(file===mapping.overview && notes.get(file)?.metadata.status==='empty')continue;
-			if(!indexed.has(file))report('error','index-missing',file,tr('知识页未收录于索引 ','Page is absent from the index: ')+mapping.index);
-		}
+}
+
+export function checkIndex(mapping:Mapping, index:ParsedMarkdown, files:ReadonlySet<string>,
+	articles:ReadonlyMap<string,AuditNote>, report:AuditReport) {
+	const from=mapping.index, indexed=new Set<string>();
+	for(const {target:url} of index.links){
+		let target:Target|undefined;
+		try{target=markdownTarget(from,url,files);}catch{continue;}
+		if(!target)continue;
+		if(!inside(target.file,mapping.wiki))report('error','index-scope',from,tr('索引指向 wiki 以外的文件 ','Index target outside wiki: ')+target.file);
+		if(indexed.has(target.file))report('error','index-duplicate',from,tr('索引条目重复 ','Duplicate index entry: ')+target.file);
+		indexed.add(target.file);
 	}
-	return noMaterial;
+	for(const [file,note] of articles){
+		if(file===mapping.overview && note.metadata.status==='empty')continue;
+		if(!indexed.has(file))report('error','index-missing',file,tr('知识页未收录于索引 ','Page is absent from the index: ')+mapping.index);
+	}
 }

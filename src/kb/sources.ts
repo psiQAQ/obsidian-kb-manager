@@ -7,6 +7,7 @@ import { within } from './audit-types.ts';
 import type { AuditNote, AuditReport } from './audit-types.ts';
 import { candidates, contains, sourceBody } from './audit-markdown.ts';
 import { validDate } from './audit-notes.ts';
+import { referenceTarget } from './audit-links.ts';
 
 function relative(value: string) {
 	return value.length > 0 && !value.startsWith('/') && !value.includes('\\') &&
@@ -14,6 +15,17 @@ function relative(value: string) {
 }
 
 interface Snapshot { file: string; stamp: string }
+
+export function inspectLocalReferences(location:string, files:ReadonlySet<string>, notes:ReadonlyMap<string,AuditNote>, report:AuditReport) {
+	for(const [file,{metadata:m}] of notes) {
+		if(m.type==='operation' || !('sources' in m))continue;
+		const values=Array.isArray(m.sources) ? m.sources : [m.sources];
+		for(const value of new Set(values)){
+			const target=typeof value==='string' ? referenceTarget(file,value,location,files) : undefined;
+			if(!target || !files.has(target))report('review','source-unverified',file,tr('未能在本库找到该来源 ','Could not find the source in this library: ')+String(value));
+		}
+	}
+}
 
 function registerSnapshot(raw: AuditNote, file: string, mapping: Mapping, grouped: Map<string, Snapshot[]>, report: AuditReport) {
 	const m = raw.metadata;
@@ -51,11 +63,11 @@ export async function inspectArticleSources(disk: VaultDisk, location: string, m
 		}
 		const evidence: string[] = [];
 		for (const value of new Set(sources)) {
-			if (!relative(value)) {
-				report('error','source-path',file,tr('来源须为相对文件路径','Expected a literal relative source path') + ': ' + value);
+			const target = referenceTarget(file,value,location,files);
+			if (!target) {
+				report('error','source-path',file,tr('来源须为本库文件链接或相对路径','Expected a link or relative path to a file in this library') + ': ' + value);
 				continue;
 			}
-			const target = path.posix.join(path.posix.dirname(file),value);
 			if (target === file || !(type === 'archive' ? [mapping.wiki] : roots).some(root => within(target,root))) {
 				report('error','source-scope',file,tr('来源超出允许的本库目录','Source outside the allowed library folder') + ': ' + value);
 				continue;

@@ -29,7 +29,7 @@ export function readNote(text: string): AuditNote {
 	});
 	const header: unknown = doc.toJS();
 	if (header != null && !object(header)) throw new Error(tr('属性必须是键值映射','Frontmatter must be a mapping'));
-	if (object(header)) for (const field of ['created','updated','archived']) {
+	if (object(header)) for (const field of ['created','updated','archived','date']) {
 		const value = doc.get(field,true);
 		if (isScalar(value) && value.value instanceof Date && validDate(value.source)) header[field] = value.source;
 	}
@@ -45,20 +45,38 @@ export function validDate(value: unknown): value is string {
 const articleTypes = new Set(['source','entity','concept','analysis','archive','overview','category']);
 const adminTypes = new Set(['index','log','report','document','dashboard']);
 
-export function inspectPage(file: string, {metadata:m}: AuditNote, mapping: Mapping, report: AuditReport): boolean {
+export function isArticle(file:string, {metadata:m}:AuditNote, mapping:Mapping) {
+	return m.managed_by==='agent' && articleTypes.has(String(m.type)) &&
+		![mapping.index,mapping.log].includes(file) && !within(file,mapping.reports);
+}
+
+export function inspectPage(file: string, {metadata:m}: AuditNote, mapping: Mapping | undefined, report: AuditReport) {
 	const type = m.type;
+	if (!mapping && type !== 'operation') return;
 	if (type != null && typeof type !== 'string') {
 		report('error','page-type',file,tr('type 必须是文本','type must be text'));
-		return false;
+		return;
 	}
 	if (m.managed_by != null && m.managed_by !== 'human' && m.managed_by !== 'agent')
 		report('error','managed-by',file,tr('managed_by 应为 agent 或 human','Expected agent or human for managed_by'));
-	if (['README.md','LICENSES.md','AGENTS.md',mapping.index,mapping.log].includes(file) || within(file,mapping.reports) || adminTypes.has(String(type))) return false;
+	if (type === 'operation') {
+		if (mapping && !within(file,mapping.wiki)) report('error','operation-location',file,tr('操作记录应位于 wiki 目录','Operation records belong inside the wiki folder'));
+		if (!validDate(m.date)) report('error','date-format',file,tr('date 日期须为 YYYY-MM-DD','date must be a YYYY-MM-DD date'));
+		for (const key of ['operation','disposition']) {
+			const value=m[key];
+			if (typeof value !== 'string' || !value.trim()) report('error','operation-property',file,key+tr(' 应为非空文本',' must be nonempty text'));
+		}
+		for (const key of ['sources','related']) {
+			const value=m[key];
+			if (!Array.isArray(value) || !value.every(x => typeof x === 'string')) report('error','property-type',file,key+tr(' 应为字符串列表',' must be a list of strings'));
+		}
+		return;
+	}
+	if (!mapping || ['README.md','LICENSES.md','AGENTS.md',mapping.index,mapping.log].includes(file) || within(file,mapping.reports) || adminTypes.has(String(type))) return;
 	const owned = m.managed_by === 'agent';
-	const article = owned && articleTypes.has(String(type));
 	if (owned) {
 		if (!within(file,mapping.wiki)) report('error','generated-location',file,tr('知识页位于 wiki 映射之外','Generated knowledge is outside the wiki folder'));
-		if (!article) report('error','page-type',file,tr('知识页类型无效','Unknown knowledge page type') + ': ' + String(type));
+		if (!articleTypes.has(String(type))) report('error','page-type',file,tr('知识页类型无效','Unknown knowledge page type') + ': ' + String(type));
 	} else {
 		if (!within(file,mapping.notes)) report('review','human-location',file,tr('请确认受保护笔记的位置和归属','Review the location and ownership of the protected note'));
 		const missing = ['type','managed_by','categories','tags','aliases','created'].filter(key => !(key in m));
@@ -77,7 +95,6 @@ export function inspectPage(file: string, {metadata:m}: AuditNote, mapping: Mapp
 			if (!validDate(m[key])) report('error','date-missing',file,tr('缺少有效日期','Missing valid date') + ': ' + key);
 		}
 	}
-	return article;
 }
 
 export function inspectBase(file: string, text: string, checkBindings: boolean, report: AuditReport) {

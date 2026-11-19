@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {checkLinks} from '../src/kb/audit-links.ts';
+import {checkIndex,checkLinks} from '../src/kb/audit-links.ts';
+import {checkOperations} from '../src/kb/audit-operations.ts';
 import {parseMarkdown,candidates,contains,sourceBody} from '../src/kb/audit-markdown.ts';
 
 test('reference links and images use the first normalized definition and retain line numbers',()=>{
@@ -30,11 +31,16 @@ test('only visible values are candidates; dates and numbers have exact boundarie
 const mapping={raw:'raw',wiki:'wiki',notes:'Notes',reports:'reports',clippings:'clip',index:'wiki/index.md',log:'wiki/log.md',templates:'templates',overview:'wiki/overview.md'};
 async function run(notes,extras=[],articles=[],strict=true){
 	const findings=[],reads=[];
-	const noMaterial=await checkLinks({location:'knowledge-base/A',mapping:strict?mapping:undefined,
-		files:new Set([...Object.keys(notes),...extras]),articles:new Set(articles),
-		notes:new Map(Object.entries(notes).map(([name,body])=>[name,{metadata:name==='wiki/p.md'?{managed_by:'agent'}:{},body}])),
+	const location='knowledge-base/A',files=new Set([...Object.keys(notes),...extras]);
+	const parsed=(_,note)=>parseMarkdown(note.body);
+	const rows=new Map(Object.entries(notes).map(([name,body])=>[name,{metadata:name==='wiki/p.md'?{managed_by:'agent'}:{},body}]));
+	const report=(level,code,file)=>findings.push([level,code,file]);
+	await checkLinks({location,mapping:strict?mapping:undefined,files,notes:rows,parsed,
 		readBody:async file=>{reads.push(file);return '# A B!\nSome text ^ok';},
-		report:(level,code,file)=>findings.push([level,code,file])});
+		report});
+	if(strict && rows.has(mapping.index))checkIndex(mapping,parsed(mapping.index,rows.get(mapping.index)),files,
+		new Map(articles.map(file=>[file,rows.get(file)])),report);
+	const noMaterial=strict ? checkOperations(location,mapping,files,rows,parsed,report) : new Set();
 	return {findings,reads,noMaterial};
 }
 

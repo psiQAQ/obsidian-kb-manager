@@ -12,7 +12,7 @@ import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 export interface Repair {file:string;before:string|null;after:string;fields:string[]}
 export interface Report {manual:string[];repairs:Repair[]}
 export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location):Promise<Report>{
-	const manual:string[]=[], repairs:Repair[]=[];
+	const manual:string[]=[];
 	if(lib.problem)manual.push(lib.problem);
 	if(lib.duplicate)manual.push(tr('ID 重复','Duplicate library ID'));
 	if(lib.git!=='local')manual.push('Git：'+lib.git);
@@ -25,6 +25,12 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 			if(!valid)manual.push(tr('检查映射 ','Check mapping: ')+role+' → '+relative);
 		}
 	}
+	const bindings=await examineBindings(disk,lib,skeleton,destination);
+	return {manual:[...manual,...bindings.manual],repairs:bindings.repairs};
+}
+
+export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location):Promise<Report>{
+	const manual:string[]=[], repairs:Repair[]=[];
 	if(lib.identity && isKepano(lib.identity.template)){
 		const bindingAssets=kepanoBindingAssets(skeleton,lib.identity.template.version);
 		let originals:Record<string,string>|undefined;
