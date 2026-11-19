@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import git from 'isomorphic-git';
 import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
-import { segments } from '../fs/paths.ts';
+import { existingDirectory, segments } from '../fs/paths.ts';
 import { guardGit } from '../git/guard.ts';
 import { repository } from '../git/repository.ts';
 import { ancestorWarnings } from './create.ts';
@@ -13,6 +13,8 @@ import { discover, identityFile, parseIdentity, recheck } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { examine } from './maintenance.ts';
 import type { Repair, VisibleFiles } from './maintenance.ts';
+import { isKepano, kepanoBinding } from './template.ts';
+import { validateKepanoRoot } from './kepano.ts';
 
 export interface MoveRecord {
 	token:string; id:string; source:string; destination:string; git:string; manifest:string;
@@ -33,6 +35,7 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 	await recheck(disk,config,lib);
 	if(!lib.identity || lib.identity.archived || !config.parents.includes(parent) || segments(name).length!==1)throw new Error(tr('无效的移动目标或库状态','Invalid move destination or library state'));
 	const destination=parent+'/'+name, source=lib.location;
+	if(isKepano(lib.identity.template))validateKepanoRoot(destination);
 	if(source===destination)throw new Error(tr('源和目标相同','Source and destination are identical'));
 	const parentPath=await disk.path(parent);
 	const dir=await disk.path(source);
@@ -45,16 +48,19 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 	const manifestFile=path.join(dir,identityFile);
 	const previous=await fs.readFile(manifestFile,'utf8');
 	const next=parseIdentity(previous);
-	const base=next.managed.find(m=>m.path==='knowledge.base');
 	const changes=report.repairs.filter(r=>r.before!==null);
-	if(base && changes[0]){base.root=destination;base.fingerprint=digest(changes[0].after);}
-	const afterManifest=JSON.stringify(next,null,2)+'\n';
-	if(base && changes[0])changes.push({file:identityFile,before:digest(previous),after:afterManifest,fields:[tr('记录新 Base 绑定位置','Record the new Base binding location')]});
+	for(const change of changes){
+		const binding=next.managed.find(m=>m.path===change.file);
+		if(!binding)throw new Error(tr('未登记的受管文件：','Unregistered managed file: ')+change.file);
+		binding.root=destination;
+		binding.fingerprint=digest(change.after);
+	}
+	if(changes.length)changes.push({file:identityFile,before:digest(previous),after:JSON.stringify(next,null,2)+'\n',fields:[tr('记录新绑定位置','Record the new binding locations')]});
 	return {token:randomUUID(),id:lib.identity.id,source,destination,git:await gitStamp(dir),manifest:digest(previous),
 		changes,warnings:[...warnings,...report.manual],phase:'prepared'};
 }
 
-export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>){
+export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={}){
 	const parent=(file:string)=>path.posix.dirname(file);
 	for(const file of [record.source,record.destination]){
 		if(!config.parents.includes(parent(file)))throw new Error(tr('父目录登记已变化','Registered parent folders changed'));
@@ -74,15 +80,20 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	const manifestPath=path.join(current,identityFile);
 	if(!(await fs.lstat(manifestPath)).isFile())throw new Error(tr('无效的身份文件','Invalid library identity file'));
 	const manifest=await fs.readFile(manifestPath,'utf8');
-	if(parseIdentity(manifest).id!==record.id || (await gitStamp(current))!==record.git)throw new Error(tr('ID、HEAD 或索引变化，请人工复核','Library ID, HEAD or the index changed. Review the library before continuing.'));
+	const identity=parseIdentity(manifest);
+	if(identity.id!==record.id || (await gitStamp(current))!==record.git)throw new Error(tr('ID、HEAD 或索引变化，请人工复核','Library ID, HEAD or the index changed. Review the library before continuing.'));
 	const manifestEdit=record.changes.find(c=>c.file===identityFile);
 	if(digest(manifest)!==record.manifest && !(current===destination && manifestEdit && digest(manifestEdit.after)===digest(manifest)))throw new Error(tr('清单已变化','The library manifest changed'));
 	const duplicate=(await discover(disk,config)).some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
 	if(duplicate)throw new Error(tr('ID 重复','Duplicate library ID'));
 	for(const item of record.changes){
-		if(!['knowledge.base',identityFile].includes(item.file))throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
+		const binding=identity.managed.find(m=>m.path===item.file);
+		const allowed=isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(kepanoSkeleton,item.file):item.file==='knowledge.base' && !!binding;
+		if(item.file!==identityFile && !allowed)throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
+		if(item.file.includes('/'))await existingDirectory(current,path.posix.dirname(item.file));
 		const f=path.join(current,item.file);
-		if(!(await fs.lstat(f)).isFile())throw new Error(tr('受管路径发生变化：','Managed path changed: ')+item.file);
+		const stat=await fs.lstat(f);
+		if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('受管路径发生变化：','Managed path changed: ')+item.file);
 		const hash=digest(await fs.readFile(f));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}

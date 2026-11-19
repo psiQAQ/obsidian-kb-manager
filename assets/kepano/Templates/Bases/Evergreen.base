@@ -1,0 +1,19 @@
+filters:
+  and:
+    - file.path.startsWith("__KB_ROOT__/")
+    - tags.contains("0🌲")
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Name
+  note.created:
+    displayName: Created
+views:
+  - type: table
+    name: Evergreen
+    order:
+      - file.name
+      - created
+    sort:
+      - column: note.created
+        direction: DESC

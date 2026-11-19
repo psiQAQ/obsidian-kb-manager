@@ -1,0 +1,13 @@
+filters:
+  and:
+    - file.path.startsWith("__KB_ROOT__/")
+    - file.inFolder("__KB_ROOT__/Templates")
+views:
+  - type: table
+    name: Table
+    order:
+      - file.name
+      - categories
+    sort: []
+    columnSize:
+      file.name: 234

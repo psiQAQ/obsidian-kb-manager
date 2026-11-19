@@ -1,0 +1,39 @@
+filters:
+  and:
+    - file.path.startsWith("__KB_ROOT__/")
+    - note.categories.contains(link("__KB_ROOT__/Categories/Trips"))
+    - '!file.name.contains("Template")'
+properties:
+  note.start:
+    displayName: Start
+  note.end:
+    displayName: End
+  file.name:
+    displayName: Trip
+  note.loc:
+    displayName: Location
+views:
+  - type: table
+    name: All trips
+    filters:
+      and:
+        - '!file.name.contains("Planning")'
+    order:
+      - file.name
+      - start
+      - end
+      - loc
+    sort:
+      - property: end
+        direction: DESC
+    columnSize:
+      file.name: 255
+  - type: table
+    name: Location
+    filters:
+      and:
+        - list(loc).contains(this)
+    order:
+      - file.name
+      - start
+      - end

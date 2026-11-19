@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { parseDocument, isScalar } from 'yaml';
 import { segments } from '../fs/paths.ts';
 import { digest, key, statIfPresent } from '../fs/vault.ts';
+import { renderKepano } from './kepano.ts';
 
 export interface TemplateFile { name: string; bytes: Uint8Array }
 export interface Template {
@@ -11,6 +12,20 @@ export interface Template {
 	overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
 }
 export interface Variables { displayName: string; description: string; destination: string }
+
+export const kepanoSource = 'builtin:kepano';
+export function isKepano(template?: {id:string;version:string}) {
+	return template?.id === 'kepano' && template.version === '1';
+}
+export function kepanoBinding(skeleton:Record<string,string>, name:string) {
+	return /\.(?:md|base)$/iu.test(name) && Object.prototype.hasOwnProperty.call(skeleton,name) && skeleton[name]!.includes('__KB_ROOT__');
+}
+export function kepanoTemplate(skeleton:Record<string,string>, root:string):Template {
+	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
+		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
+	const files = Object.entries(renderKepano(skeleton,root)).map(([name,text]) => ({name,bytes:Buffer.from(text)}));
+	return {id:'kepano',version:'1',entry:'README.md',files,folders:[],excluded:[]};
+}
 
 export function renderBase(source: string, root: string): string {
 	const doc = parseDocument(source, { keepSourceTokens: true });

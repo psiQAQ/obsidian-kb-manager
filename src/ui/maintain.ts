@@ -56,7 +56,8 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 export async function health(plugin:KnowledgeBaseManager,lib:Library){
 	const dialog=new Dialog(plugin.app,tr('知识库体检',"Check library"));
 	const current=lib.problem || lib.duplicate ? lib : await recheck(plugin.disk,plugin.config,lib);
-	const report=current.problem || current.duplicate ? {manual:[],repairs:[]} : await examine(plugin.disk,current,plugin.skeleton);
+	const skeleton=plugin.templateAssets(current);
+	const report=current.problem || current.duplicate ? {manual:[],repairs:[]} : await examine(plugin.disk,current,skeleton);
 	const findings=await auditLibrary(plugin.disk,current);
 	dialog.lines([lib.location,...report.manual,
 		...findings.map(f=>(f.level==='error'?tr('错误','Error'):tr('需复核','Review'))+' · '+f.file+' · '+f.code+' · '+f.message),
@@ -65,7 +66,7 @@ export async function health(plugin:KnowledgeBaseManager,lib:Library){
 	for(const item of report.repairs){
 		if(lib.identity?.archived || lib.duplicate || lib.problem)continue;
 		dialog.action(tr('应用此修复：',"Apply repair: ")+item.file,async()=>{
-			await plugin.exclusive(lib.location,()=>applyRepair(plugin.disk,plugin.config,lib,item,visible(plugin)));
+			await plugin.exclusive(lib.location,()=>applyRepair(plugin.disk,plugin.config,lib,item,visible(plugin),skeleton));
 			dialog.close();
 			const current=(await discover(plugin.disk,plugin.config)).find(l=>l.location===lib.location);
 			if(current)await health(plugin,current);
@@ -75,7 +76,7 @@ export async function health(plugin:KnowledgeBaseManager,lib:Library){
 }
 
 export async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
-	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v)),true);
+	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v),plugin.kepanoSkeleton),true);
 	await plugin.refresh();
 }
 
@@ -90,7 +91,8 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 	dialog.action(tr('预览',"Preview"),async()=>{
 		const target=additional || parent;
 		const proposedConfig=()=>({...plugin.config,parents:[...new Set([...plugin.config.parents,target])]});
-		const plan=await planMove(plugin.disk,proposedConfig(),lib,target,name,plugin.skeleton);
+		const skeleton=plugin.templateAssets(lib);
+		const plan=await planMove(plugin.disk,proposedConfig(),lib,target,name,skeleton);
 		const links=new Set<string>();
 		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
 			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
@@ -99,7 +101,7 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 		confirm.lines([...(plugin.config.parents.includes(target)?[]:[tr('登记已有父目录：',"Register existing parent: ")+target]),plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
 			tr('以下已解析的链接可能失效。外部剪藏、脚本与动态查询需人工核对。',"These links may break. Review external clippings, scripts and dynamic queries."),...links]);
 		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
-			const fresh=await planMove(plugin.disk,proposedConfig(),lib,target,name,plugin.skeleton);
+			const fresh=await planMove(plugin.disk,proposedConfig(),lib,target,name,skeleton);
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error(tr('预览已变化',"Preview has changed"));
 			plugin.config=proposedConfig();
 			await plugin.recordMove(plan);

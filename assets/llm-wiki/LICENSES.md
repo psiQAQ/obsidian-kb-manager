@@ -54,4 +54,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-骨架改编自 [obsidian-agent-wiki 固定版本](https://github.com/psiQAQ/obsidian-agent-wiki/tree/592dd626be508e65316368533c980bdf77003969/knowledge-base-template/llm-wiki)。本插件调整了实例说明和创建流程。
+骨架改编自 [obsidian-agent-wiki 固定版本](https://github.com/psiQAQ/obsidian-agent-wiki/tree/592dd626be508e65316368533c980bdf77003969/knowledge-base-template/llm-wiki)。本插件调整了实例说明和创建流程，并合入[旧融合模板的使用手册与体检规则](https://github.com/psiQAQ/obsidian-agent-wiki/tree/59815e95664091d0f4bc5524467ed62d653fe098/knowledge-base-template/llm-wiki)。

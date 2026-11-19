@@ -8,7 +8,7 @@ import { readMapping } from './mapping.ts';
 import type { Mapping } from './mapping.ts';
 
 export const identityFile = 'kb-manager.json';
-export interface ManagedFile { path: string; fingerprint: string; root?: string; role?: 'overview-bindings' }
+export interface ManagedFile { path: string; fingerprint: string; root?: string; role?: 'overview-bindings' | 'kepano-bindings' }
 export interface Identity {
 	schemaVersion: 1; id: string; displayName: string; description: string; archived: boolean;
 	template: {id: string; version: string}; managed: ManagedFile[]; entry?: string;

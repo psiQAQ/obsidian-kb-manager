@@ -10,7 +10,7 @@ import { VaultDisk, digest, statIfPresent, validateFolders } from '../fs/vault.t
 import { initializeRepository, repository } from '../git/repository.ts';
 import { identityFile, newIdentity, recheck } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
-import { builtinTemplate, folderTemplate } from './template.ts';
+import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
 
 export interface CreateInput {
@@ -57,6 +57,7 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	const vars = {displayName:input.displayName, description:input.description, destination:location};
 	let template: Template;
 	if (!input.source) template = builtinTemplate(skeleton,vars);
+	else if (input.source===kepanoSource) template=kepanoTemplate(skeleton,location);
 	else {
 		if (!config.templates.includes(input.source)) throw new Error(fromEnglish('Select a registered template','请选择已登记的模板'));
 		template = await folderTemplate(await disk.path(input.source),disk.configDir,vars);
@@ -80,7 +81,9 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 			const target = path.join(temporary,file.name);
 			await fs.mkdir(path.dirname(target),{recursive:true});
 			await fs.writeFile(target,file.bytes,{flag:'wx'});
-			if ((!input.source || template.overview) && file.name === 'knowledge.base') {
+			if (input.source===kepanoSource && kepanoBinding(skeleton,file.name)) {
+				manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'kepano-bindings'});
+			} else if ((!input.source || template.overview) && file.name === 'knowledge.base') {
 				manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,
 					role:input.source?'overview-bindings':undefined});
 			}

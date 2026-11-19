@@ -1,0 +1,19 @@
+filters:
+  and:
+    - file.path.startsWith("__KB_ROOT__/")
+    - categories.contains(link("__KB_ROOT__/Categories/Board games"))
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Game
+  note.rating:
+    displayName: Rating
+  note.last:
+    displayName: Last
+views:
+  - type: table
+    name: Table
+    order:
+      - file.name
+      - rating
+      - last

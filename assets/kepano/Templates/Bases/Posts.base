@@ -1,0 +1,24 @@
+filters:
+  and:
+    - file.path.startsWith("__KB_ROOT__/")
+properties:
+  file.name:
+    displayName: Title
+  note.status:
+    displayName: Status
+  note.published:
+    displayName: Published
+views:
+  - type: table
+    name: All
+    filters:
+      and:
+        - list(categories).contains(link("__KB_ROOT__/Categories/Posts"))
+        - '!file.name.contains("Template")'
+    order:
+      - file.name
+      - status
+      - published
+    sort:
+      - column: note.published
+        direction: DESC

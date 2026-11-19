@@ -8,6 +8,7 @@ import { inspectBase, inspectPage, readNote } from './audit-notes.ts';
 import { within } from './audit-types.ts';
 import type { AuditFinding, AuditNote, AuditReport } from './audit-types.ts';
 import { inspectArticleSources } from './sources.ts';
+import { isKepano } from './template.ts';
 
 const adminFiles = new Set(['README.md','AGENTS.md','LICENSES.md']);
 
@@ -55,6 +56,7 @@ export async function auditLibrary(disk: VaultDisk, lib: Library): Promise<Audit
 	const builtin = template?.id === 'llm-wiki' && template.version === '1';
 	const adopted = template?.id === 'unknown' && template.version === 'unknown';
 	const wiki = !template || builtin || adopted ? lib.mapping : undefined;
+	const templates = lib.mapping?.templates ?? (isKepano(template) ? 'Templates' : 'templates');
 	if ((builtin || adopted) && !wiki) report('error','mapping-missing','kb.toml',tr('缺少知识库目录映射','Missing library path mapping'));
 	const sources = [lib.mapping?.raw ?? 'raw',lib.mapping?.clippings ?? 'Clippings'];
 	if (wiki) {
@@ -87,7 +89,7 @@ export async function auditLibrary(disk: VaultDisk, lib: Library): Promise<Audit
 			try { inspectBase(file,await readText(file),wiki,report); }
 			catch (error) { report('error','invalid-base',file,String(error)); }
 		}
-		if (!/\.md$/iu.test(file) || within(file,lib.mapping?.templates ?? 'templates')) continue;
+		if (!/\.md$/iu.test(file) || within(file,templates)) continue;
 		try {
 			const note = await read(file);
 			if (!wiki || !adminFiles.has(file)) notes.set(file,note);

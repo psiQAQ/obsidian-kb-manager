@@ -4,7 +4,8 @@ import { segments } from '../fs/paths.ts';
 import { VaultDisk,digest,statIfPresent } from '../fs/vault.ts';
 import { recheck } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
-import { renderBase } from './template.ts';
+import { isKepano, kepanoBinding, renderBase } from './template.ts';
+import { renderKepano, rebindKepano } from './kepano.ts';
 import { rebind } from './bindings.ts';
 
 export interface Repair {file:string;before:string|null;after:string;fields:string[]}
@@ -22,6 +23,38 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 			const valid=['index','log','overview'].includes(role)?status?.isFile():status?.isDirectory();
 			if(!valid)manual.push(tr('检查映射 ','Check mapping: ')+role+' → '+relative);
 		}
+	}
+	if(lib.identity && isKepano(lib.identity.template)){
+		let originals:Record<string,string>|undefined;
+		for(const item of lib.identity.managed){
+			if(item.role!=='kepano-bindings' || !kepanoBinding(skeleton,item.path)){
+				manual.push(tr('检查未知绑定：','Review unrecognized binding: ')+item.path);
+				continue;
+			}
+			try{
+				const file=await disk.path(lib.location+'/'+item.path), stat=await statIfPresent(file);
+				if(!stat){
+					if(item.path.endsWith('.base')){
+						originals??=renderKepano(skeleton,destination);
+						repairs.push({file:item.path,before:null,after:originals[item.path]!,fields:[tr('恢复内置 Base','Restore built-in Base')]});
+					}else manual.push(tr('缺少受管页面：','Missing managed page: ')+item.path);
+					continue;
+				}
+				if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('需要独立常规文件','Expected a regular file with a single link'));
+				const text=await fs.readFile(file,'utf8');
+				const previous=item.root??lib.location;
+				let result=rebindKepano(item.path,text,previous,destination,skeleton);
+				if(previous!==lib.location && destination!==lib.location){
+					// Health checks after an external move can already have rebound a file to its current location.
+					const current=rebindKepano(item.path,result.content,lib.location,destination,skeleton);
+					result={content:current.content,edits:[...result.edits,...current.edits],manual:current.manual};
+				}
+				manual.push(...result.manual);
+				if(result.edits.length)repairs.push({file:item.path,before:digest(text),after:result.content,
+					fields:result.edits.map(edit=>edit.role+' · '+edit.old+' → '+edit.value)});
+			}catch(error){manual.push(item.path+' · '+String(error));}
+		}
+		return {manual,repairs};
 	}
 	const binding=lib.identity?.managed.find(item=>item.path==='knowledge.base');
 	const builtin=lib.identity?.template.id==='llm-wiki' && lib.identity.template.version==='1';
@@ -51,10 +84,13 @@ export interface VisibleFiles {
 	replace(relative:string,before:string,after:string):Promise<void>;
 	create(relative:string,content:string):Promise<void>;
 }
-export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:Repair,files:VisibleFiles){
+export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:Repair,files:VisibleFiles,skeleton:Record<string,string>={}){
 	await recheck(disk,config,lib);
-	if(lib.identity?.archived || item.file!=='knowledge.base' || !lib.identity ||
-		!lib.identity.managed.some(m=>m.path===item.file))throw new Error(tr('此文件未授权修复','This file is not managed for repair'));
+	const binding=lib.identity?.managed.find(m=>m.path===item.file);
+	const authorized=isKepano(lib.identity?.template)
+		? binding?.role==='kepano-bindings' && kepanoBinding(skeleton,item.file) && (item.before!==null || item.file.endsWith('.base'))
+		: item.file==='knowledge.base';
+	if(!binding || !authorized || lib.identity?.archived)throw new Error(tr('此文件未授权修复','This file is not managed for repair'));
 	segments(item.file);
 	const relative=lib.location+'/'+item.file;
 	const absolute=await disk.path(relative);

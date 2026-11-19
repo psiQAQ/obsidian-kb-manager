@@ -3,6 +3,8 @@ import esbuildSvelte from 'esbuild-svelte';
 import process from 'process';
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const upstreamLicense = readFileSync(new URL('./assets/licenses/obsidian-git.txt', import.meta.url), 'utf8');
 const banner = `/*
@@ -52,6 +54,22 @@ function inspectSkeleton(relative = '') {
 inspectSkeleton();
 const skeleton = skeletonPaths.map(name => [name, readFileSync(new URL('./assets/llm-wiki/' + name, import.meta.url), 'utf8')]);
 
+function readKepano(relative = '') {
+	const root = fileURLToPath(new URL('./assets/kepano/', import.meta.url));
+	const files = [];
+	for (const entry of readdirSync(join(root,relative), {withFileTypes: true})) {
+		const name = relative + entry.name;
+		if (entry.isDirectory() && !entry.name.startsWith('.')) {
+			files.push(...readKepano(name + '/'));
+		} else if (entry.isFile() && (/\.(?:md|base)$/iu.test(entry.name) || entry.name === '.gitkeep')) {
+			files.push([name, readFileSync(join(root,name),'utf8')]);
+		} else {
+			throw new Error('Unexpected Kepano template resource: ' + name);
+		}
+	}
+	return files;
+}
+
 const context = await esbuild.context({
 	banner: {
 		js: banner,
@@ -62,7 +80,10 @@ const context = await esbuild.context({
 	conditions: ['browser', prod ? 'production' : 'development'],
 	plugins: [esbuildSvelte({compilerOptions: {css: 'injected'}})],
 	metafile: prod,
-	define: { KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)) },
+	define: {
+		KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)),
+		KB_KEPANO: JSON.stringify(Object.fromEntries(readKepano())),
+	},
 	external: [
 		'obsidian',
 		'electron',

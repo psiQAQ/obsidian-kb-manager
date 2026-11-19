@@ -2,6 +2,7 @@ import { gitDisabled } from './ui/device.ts';
 import { registerAuthorship,refreshAuthorship } from './ui/authorship.ts';
 import { registerLibraryCommands } from './ui/library-commands.ts';
 import { registerFileCommands } from './ui/file-commands.ts';
+import { registerLibraryTemplates } from './ui/insert-template.ts';
 import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.ts';
 import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
@@ -15,6 +16,8 @@ import { FileSystemAdapter, Notice, Plugin, TFolder, TFile, getLanguage, setTool
 import { VaultDisk } from './fs/vault.ts';
 import { defaults, discover, recheck } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
+import { isKepano } from './kb/template.ts';
+import type { Library } from './kb/catalog.ts';
 import type { SaveRecord } from './git/versions.ts';
 import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
@@ -22,11 +25,14 @@ import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
 
 declare const KB_BUILTIN: Record<string,string>;
+declare const KB_KEPANO: Record<string,string>;
 
 export default class KnowledgeBaseManager extends Plugin {
 	disk!: VaultDisk;
 	config!: Config;
 	readonly skeleton=KB_BUILTIN;
+	readonly kepanoSkeleton=KB_KEPANO;
+	templateAssets(lib:Library){return isKepano(lib.identity?.template)?this.kepanoSkeleton:this.skeleton;}
 	readonly t = tr;
 	prefs = readPreferences(undefined);
 	grants: Record<string,AutomationGrant> = {};
@@ -102,12 +108,13 @@ export default class KnowledgeBaseManager extends Plugin {
 	private updateLanguage(){
 		const lang=this.prefs.language==='system' ? getLanguage() : this.prefs.language;
 		if(this.language===lang)return false;
-		if(this.language)for(const id of ['version-save','version-history','open-manager','create-library','line-author'])this.removeCommand(id);
+		if(this.language)for(const id of ['version-save','version-history','open-manager','create-library','line-author','insert-library-template'])this.removeCommand(id);
 		const reload=Boolean(this.language);
 		this.language=lang;
 		setLanguage(lang);
 		registerFileCommands(this,reload);
 		registerLibraryCommands(this,reload);
+		registerLibraryTemplates(this);
 		if(this.ribbon)setTooltip(this.ribbon,tr('打开知识库管理器','Open knowledge base manager'));
 		for (const [mode,name] of [['save',tr('保存本库版本',"Save a library version")],['history',tr('查看本库历史',"View library history")]] as const){
 			this.addCommand({id:'version-'+mode,name,callback:async()=>{
