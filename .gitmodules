@@ -10,3 +10,6 @@
 [submodule "references/obsidian-git"]
 	path = references/obsidian-git
 	url = https://github.com/Vinzent03/obsidian-git.git
+[submodule "references/kepano-obsidian"]
+	path = references/kepano-obsidian
+	url = https://github.com/kepano/kepano-obsidian.git
