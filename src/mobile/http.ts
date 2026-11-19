@@ -1,6 +1,11 @@
 import type {HttpClient} from 'isomorphic-git';
 import {tr} from '../i18n.ts';
-import {endpoint} from './remote.ts';
+
+export function endpoint(raw:string){
+	const url=new URL(raw);
+	if(raw.trim()!==raw || /[\s\\?#]/u.test(raw) || url.protocol!=='https:' || url.username || url.password || url.pathname==='/' || url.search || url.hash)throw new Error(tr('请输入不含凭据的 HTTPS 地址','Enter an HTTPS URL without embedded credentials'));
+	return url.href;
+}
 
 // requestUrl does not expose redirect controls. Authenticated Git traffic must
 // fail closed instead of transparently forwarding a request to a new URL.

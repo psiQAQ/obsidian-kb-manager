@@ -50,8 +50,10 @@ export function registryIgnoreLines(plan:IgnorePreview){
 	return plan && plan.before!==plan.after?[tr('Vault 根目录 .gitignore · ','Vault root .gitignore · ')+registryIgnoreRule]:[];
 }
 
-export async function applyMobileRegistryIgnore(ctx:Catalog,plan:IgnorePreview){
-	if(JSON.stringify(await previewMobileRegistryIgnore(ctx))!==JSON.stringify(plan))throw new Error(tr('Vault Git 忽略规则已变化，请重新预览','Vault Git ignore rules changed. Review them again.'));
+export async function applyMobileRegistryIgnore(ctx:Catalog,plan:IgnorePreview,allowApplied=false){
+	const current=await previewMobileRegistryIgnore(ctx);
+	if(allowApplied && plan && current?.before===plan.after && current.after===plan.after)return;
+	if(JSON.stringify(current)!==JSON.stringify(plan))throw new Error(tr('Vault Git 忽略规则已变化，请重新预览','Vault Git ignore rules changed. Review them again.'));
 	if(plan)await replaceText(ctx.disk,plan.path,plan.before,plan.after);
 }
 

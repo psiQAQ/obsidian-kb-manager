@@ -4,12 +4,13 @@ import {readManifest} from '../kb/identity-core.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {createPreview,instantiate} from './catalog.ts';
 import type {Library} from './catalog.ts';
+import {initialBranch,initialMessage} from './create-git.ts';
 import {bindingLines} from './bindings.ts';
 import {decode} from './disk.ts';
 import {branchName,configure,localAuthor,mobileStatus} from './git.ts';
-import {download,endpoint,secretKey,upstream} from './remote.ts';
+import {download,secretKey,upstream} from './remote.ts';
 import type {CloneChoice} from './remote.ts';
-import {mobileHttp} from './http.ts';
+import {endpoint,mobileHttp} from './http.ts';
 import {registryIgnoreLines} from './registration.ts';
 import type MobilePlugin from './plugin.ts';
 
@@ -24,20 +25,40 @@ function selector(dialog:Dialog,label:string,values:string[],change:(v:string)=>
 }
 export function createForm(plugin:MobilePlugin) {
 	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('创建知识库','Create knowledge base'));
-	const input={parent:ctx.parents[0]??'',name:'',displayName:'',description:'',source:''};
+	const input={parent:ctx.parents[0]??'',name:'',displayName:'',description:'',source:'',author:plugin.deviceAuthor(),origin:''};
 	selector(dlg,tr('父目录','Parent directory'),ctx.parents,v=>{input.parent=v;});
 	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;});
 	dlg.text(tr('显示名','Display name'),'',v=>{input.displayName=v;});
 	dlg.text(tr('简介','Description'),'',v=>{input.description=v;});
 	dlg.choice(tr('模板','Template'),{'':'LLM Wiki','builtin:kepano':'Kepano',...Object.fromEntries(ctx.templates.map(v=>[v,v]))},v=>{input.source=v;});
+	dlg.text(tr('提交姓名','Commit author name'),input.author.name,v=>{input.author.name=v;});
+	dlg.text(tr('提交邮箱','Commit author email'),input.author.email,v=>{input.author.email=v;});
+	dlg.text(tr('origin HTTPS 地址（可选）','origin HTTPS URL (optional)'),'',v=>{input.origin=v;});
 	dlg.action(tr('预览','Preview'),async()=>{
 		plugin.assertEnabled();
 		const p=await createPreview(ctx,{...input,displayName:input.displayName||input.name},plugin.templates);
-		confirm(plugin,tr('确认创建知识库','Confirm library creation'),[p.location,p.template.id,...registryIgnoreLines(p.registryIgnore),
-			...new Set(['kb.toml','.gitignore',...p.template.files.map(f=>f.name)])],async()=>{
+		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
+		const {author,origin,files}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
+		review.lines([p.location,p.template.id,initialBranch+' · '+initialMessage,
+			author.name+' <'+author.email+'>',
+			tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
+			...(origin?['origin · '+origin,tr('创建时只保存远端地址。','Creation only saves the remote URL.')]:[]),...registryIgnoreLines(p.registryIgnore)]);
+		review.contentEl.createEl('h3',{text:tr('初始提交文件','Files in the initial commit')});
+		review.lines(tracked);
+		review.contentEl.createEl('h3',{text:tr('仅保存在本库的文件','Files kept in the library working tree')});
+		review.lines([...new Set(['kb.toml',...p.template.files.map(file=>file.name)])].filter(file=>!trackedSet.has(file)));
+		review.action(tr('创建并提交','Create and commit'),async()=>{
 			plugin.assertEnabled();
-			await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates));
-		},()=>dlg.close());
+			const result=await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates));
+			review.close();dlg.close();
+			const receipt=new Dialog(plugin.app,tr('知识库已创建','Knowledge base created'));
+			receipt.lines([result.location,result.branch+' · '+initialMessage,result.head,
+				result.author.name+' <'+result.author.email+'>',...(result.origin?['origin · '+result.origin]:[]),
+				tr('初始提交已验证，工作区干净，知识库已登记。','Verified the initial commit, clean working tree and library registration.')]);
+			receipt.action(tr('关闭','Close'),()=>{receipt.close();return Promise.resolve();});
+			receipt.open();await plugin.refresh();
+		});
+		review.open();
 	});
 	dlg.open();
 }

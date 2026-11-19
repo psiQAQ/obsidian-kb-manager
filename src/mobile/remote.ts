@@ -10,12 +10,8 @@ import type {Catalog} from './catalog.ts';
 import {applyMobileRegistryIgnore,previewMobileRegistryIgnore,readMobileRegistry,updateMobileRegistry} from './registration.ts';
 import {applyCloneBindings,previewBindings} from './bindings.ts';
 import type {BindingPreview} from './bindings.ts';
+import {endpoint} from './http.ts';
 
-export function endpoint(raw:string){
-	const url=new URL(raw);
-	if(raw.trim()!==raw || /[\s\\?#]/u.test(raw) || url.protocol!=='https:' || url.username || url.password || url.pathname==='/' || url.search || url.hash)throw new Error(tr('请输入不含凭据的 HTTPS 地址','Enter an HTTPS URL without embedded credentials'));
-	return url.href;
-}
 export async function secretKey(id:string,url:string){return 'kb-manager-'+id+'-'+(await hash(endpoint(url))).slice(0,24);}
 export async function upstream(s:Store,branch:string){
 	const r=repo(s);
