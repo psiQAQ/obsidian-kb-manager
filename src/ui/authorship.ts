@@ -97,7 +97,7 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 				const lib = (await discover(plugin.disk,plugin.config)).find(l => l.location === location);
 				if (!lib?.identity || lib.problem || lib.duplicate || lib.git !== 'local') { set(emptyMarkers); return; }
 				const prefs = plugin.preferences(lib.identity.id);
-				if (!prefs.lineAuthor || prefs.backend !== 'native' || revision !== this.revision) { set(emptyMarkers); return; }
+				if (!prefs.lineAuthor || revision !== this.revision) { set(emptyMarkers); return; }
 				eligible = true;
 				const doc = view.state.doc;
 				const lastContentLine = doc.lines - (doc.line(doc.lines).length === 0 ? 1 : 0);

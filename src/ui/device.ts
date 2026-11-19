@@ -20,11 +20,10 @@ export function pluginNotice(plugin: KnowledgeBaseManager, kind: 'info'|'unchang
 	if (enabled) new Notice(message,timeout);
 }
 
-export function diagnostics(plugin: KnowledgeBaseManager,id?: string) {
-	const prefs = plugin.preferences(id);
+export function diagnostics(plugin: KnowledgeBaseManager) {
 	return {
 		plugin:plugin.manifest.id, version:plugin.manifest.version, obsidian:apiVersion,
-		platform:process.platform, language:plugin.prefs.language, backend:prefs.backend,
+		platform:process.platform, language:plugin.prefs.language, backend:'native',
 		pausedOnDevice:gitDisabled(plugin), registeredParents:plugin.config.parents.length,
 		registeredTemplates:plugin.config.templates.length, knownLibraries:Object.keys(plugin.known).length,
 		authorizedLibraries:Object.keys(plugin.grants).length,

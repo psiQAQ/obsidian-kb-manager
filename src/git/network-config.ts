@@ -1,12 +1,12 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {repository} from './repository.ts';
+
 import {digest} from '../fs/vault.ts';
 import {tr} from '../i18n.ts';
 
 // Publish multi-key changes with Git's config.lock protocol.
-export async function updateConfig(dir:string,expected:string,modify:(repo:ReturnType<typeof repository>)=>Promise<void>){
-	const repo=repository(dir),config=path.join(repo.gitdir,'config'),lockPath=config+'.lock';
+export async function updateConfig(dir:string,expected:string,modify:(repo:{dir:string;gitdir:string})=>Promise<void>){
+	const repo={dir,gitdir:path.join(dir,'.git')},config=path.join(repo.gitdir,'config'),lockPath=config+'.lock';
 	const lock=await fs.open(lockPath,'wx');let shadow:string|undefined,published=false;
 	try{
 		const bytes=await fs.readFile(config),stat=await fs.stat(config);

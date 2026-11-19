@@ -36,11 +36,11 @@
 | 界面 | `showFileMenu` | 已接入。决定知识库文件右键菜单是否提供本库 Git 状态入口。 |
 | 界面 | `disablePopups`、`showErrorNotices`、`disablePopupsForNoChanges` | 已接入。可控制 Git 信息、错误、无改动通知。上游界面也使用 `showInformationalNotifications`、`showNoChangesNotifications` 两个反向显示键。对话框内的操作结果独立展示。 |
 | 界面 | `showStatusBar`、`showBranchStatusBar`、`changedFilesInStatusBar` | 已接入。状态栏跟随当前文件所属库，分支和变更数量可独立控制。 |
-| 身份 | `user.name`、`user.email` | 从本库 `.git/config` 读取，设置修改也写回本库。缺少任一项时提示补齐；命令行 Git 另有自己的全局回退规则。 |
-| 身份 | `username`、`gitServerPasswordSecret` | 已接入。本库远端面板用 Obsidian Secret Storage 保存按库及远端区分的凭据。 |
+| 身份 | `user.name`、`user.email` | 从本库 `.git/config` 读取，设置修改也写回本库。桌面按字段继承系统 Git 的有效配置，清空库内覆盖后恢复继承。 |
+| 身份 | `username`、`gitServerPasswordSecret` | 桌面 HTTPS 默认交给系统凭据助手，SSH 使用系统 SSH。可按库和 HTTPS 远端明确选用 SecretStorage 备用凭据。 |
 | 高级 | `limitToVault`、`basePath`、`gitDir` | 边界限制。仓库位置来自已验证的知识库，Git 元数据固定在该库的 `.git`。 |
 | 高级 | `updateSubmodules`、`submoduleRecurseCheckout` | 边界限制。不递归操作嵌套仓库。 |
-| 高级 | `gitPath`、`PATHPaths`、`envVars`、重载环境 | 部分对应。可选择系统 Git；目前没有自定义可执行文件选择器。可重定向仓库的环境变量受限。 |
+| 高级 | `gitPath`、`PATHPaths`、`envVars`、重载环境 | 部分对应。桌面使用系统 Git；可在高级设置中指定本机的 Git 可执行文件绝对路径。可重定向仓库的环境变量受限。 |
 | 高级 | `pluginDisabled`、复制调试信息、调试日志 | 部分对应。在本设备暂停知识库 Git 并保留管理器设置入口。可复制版本、后端和数量诊断；原始路径、内容和凭据不在诊断中。 |
 
 上游还包含已废弃的 `mergeOnPull`、`autoCommitOnlyStaged`、明文 `password` 迁移和移动端标记 `showedMobileNotice`。本插件在桌面独立保存设置，不导入另一插件的数据。上游的支持与捐助链接可在其项目页查看。

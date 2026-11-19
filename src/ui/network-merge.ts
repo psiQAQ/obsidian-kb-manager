@@ -13,14 +13,9 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 	if(await statIfPresent(path.join(metadata,'rebase-merge'))||await statIfPresent(path.join(metadata,'rebase-apply'))){
 		el.createEl('p',{text:t('变基正在进行。请在该知识库中完成或中止变基，然后刷新。','Rebase in progress. Complete or abort it in this library, then refresh.')});return true;
 	}
-	const prefs=plugin.preferences(lib.identity!.id);
 	if(!await statIfPresent(path.join(metadata,'MERGE_HEAD'))){
 		const index=path.join(metadata,'index');
 		if(!((await statIfPresent(index))?.isFile()) || !(await fs.readFile(index)).includes('REUC'))return false;
-		if(prefs.backend!=='native'){
-			el.createEl('p',{text:t('索引保留了解决冲突前的版本。选择原生后端可查看。','The index retains previous conflict versions. Select native Git to review them.')});
-			return true;
-		}
 		const preview=await undoInfo(dir);
 		if(!preview.entries.length)return false;
 		new Setting(el).setName(t('Git 已保留冲突撤销记录','Git retained resolve-undo entries'))
@@ -33,10 +28,6 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 					modal.close();await plugin.refresh();
 				});modal.open();
 			}));
-		return true;
-	}
-	if(prefs.backend!=='native'){
-		el.createEl('p',{text:t('处理现有合并请在本库设置选择原生 Git，或用原有 Git 工具完成。','To finish this merge, select native Git for this library or complete it with your existing Git tool.')});
 		return true;
 	}
 	const inspect=async()=>{await recheck(plugin.disk,plugin.config,lib);return inspectMerge(dir);};

@@ -1,11 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import git from 'isomorphic-git';
+
 import {digest,statIfPresent} from '../fs/vault.ts';
-import {repository} from './repository.ts';
-import {checkedNative} from './network-native.ts';
+
+import {checkedNative,gitResult} from './network-native.ts';
 import {tr} from '../i18n.ts';
-import {readRepositoryIdentity,requireIdentity} from './identity.ts';
+import {checkedIdentityArgs,readRepositoryIdentity} from './identity.ts';
 import type {GitIdentity} from './identity.ts';
 
 interface Stage {stage:number; oid:string; mode:string}
@@ -17,11 +17,11 @@ export interface MergePlan {
 
 export async function inspectMerge(dir:string):Promise<MergePlan> {
 	const run=await checkedNative(dir,true);
-	const repo=repository(dir);
+	const gitdir=path.join(dir,'.git');
 	const branch=(await run(['symbolic-ref','--short','HEAD'])).trim();
 	const head=(await run(['rev-parse','HEAD'])).trim();
-	const other=(await fs.readFile(path.join(repo.gitdir,'MERGE_HEAD'),'utf8')).trim();
-	const index=digest(await fs.readFile(path.join(repo.gitdir,'index')));
+	const other=(await fs.readFile(path.join(gitdir,'MERGE_HEAD'),'utf8')).trim();
+	const index=digest(await fs.readFile(path.join(gitdir,'index')));
 	const groups=new Map<string,Stage[]>();
 	for(const row of (await run(['ls-files','--unmerged','-z'])).split('\0').filter(Boolean)){
 		const match=/^(100644|100755) ([a-f0-9]{40}) ([123])\t([\s\S]+)$/u.exec(row);
@@ -55,7 +55,7 @@ export async function markResolved(dir:string,plan:MergePlan,file:string) {
 	}
 	const bytes=await fs.readFile(path.join(dir,file));
 	if(digest(bytes)!==entry.work)throw new Error(tr('文件已变化','File changed'));
-	const oid=await git.writeBlob({...repository(dir),blob:bytes});
+	const oid=(await gitResult(dir,['hash-object','-w','--stdin'],{stdin:bytes})).stdout.toString().trim();
 	let mode=entry.stages.find(s=>s.stage===2)?.mode??entry.stages[entry.stages.length-1]!.mode;
 	if(process.platform!=='win32')mode=(await fs.stat(path.join(dir,file))).mode&0o111?'100755':'100644';
 	await run(['update-index','--add','--cacheinfo',mode,oid,file]);
@@ -64,9 +64,9 @@ export async function markResolved(dir:string,plan:MergePlan,file:string) {
 export async function finishMerge(dir:string,plan:MergePlan,message:string) {
 	if(plan.conflicts.length || !message.trim())throw new Error(tr('请先解决所有冲突，并填写合并说明','Resolve conflicts and enter a merge message.'));
 	const run=await stillMerging(dir,plan);
-	const identity=requireIdentity(plan.identity);
+	const identityArgs=await checkedIdentityArgs(dir,plan.identity);
 	if(plan.stagedPaths.includes('kb-manager.json'))throw new Error(tr('合并将改变库身份，请在外部核对','The merge would change the library identity. Review externally.'));
-	await run(['-c','user.name='+identity.name,'-c','user.email='+identity.email,'commit','--no-verify','--no-gpg-sign','-m',message]);
+	await run([...identityArgs,'commit','--no-verify','--no-gpg-sign','-m',message]);
 	return (await run(['rev-parse','HEAD'])).trim();
 }
 

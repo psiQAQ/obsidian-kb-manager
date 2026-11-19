@@ -69,6 +69,7 @@ test('hunk stage and unstage preserve CRLF, BOM and remaining worktree bytes; hi
 	const original='\uFEFF'+Array.from({length:25},(_,i)=>'line '+i).join('\r\n')+'\r\n';
 	await fs.writeFile(target,original);
 	const native=(...args)=>execFileSync('git',['-C',dir,...args]).toString();
+	native('config','core.autocrlf','false');
 	native('config','user.name','Test');native('config','user.email','test@example.invalid');
 	const first=await saveVersion(dir,await previewVersion(dir),'first');
 	assert.equal((await commitFiles(dir,first)).files[0].file,'target.md');

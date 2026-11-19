@@ -2,7 +2,7 @@ import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import git from 'isomorphic-git';
+import { gitResult } from '../git/network-native.ts';
 import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { existingDirectory, segments } from '../fs/paths.ts';
@@ -24,8 +24,7 @@ export interface MoveRecord {
 async function gitStamp(dir:string) {
 	if(!await statIfPresent(path.join(dir,'.git')))return 'missing';
 	const branch=await guardGit(dir),repo=repository(dir);
-	let head='';
-	try{head=await git.resolveRef({...repo,ref:'HEAD'});}catch(e){if(!(e instanceof git.Errors.NotFoundError))throw e;}
+	const head=(await gitResult(dir,['rev-parse','--verify','--quiet','HEAD'],{allowedExitCodes:[0,1]})).stdout.toString().trim();
 	const index=path.join(repo.gitdir,'index');
 	return JSON.stringify([branch,head,await statIfPresent(index)?digest(await fs.readFile(index)):'']);
 }

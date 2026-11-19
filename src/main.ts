@@ -7,11 +7,13 @@ import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.t
 import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
 import { registerSourceDiff, refreshSourceTabs } from './ui/source-diff.ts';
-import { clearLegacyAuthors, effectivePreferences, readPreferences } from './preferences.ts';
+import { migrateGitSettings } from './git/settings-migration.ts';
+import { effectivePreferences, readPreferences } from './preferences.ts';
 import { setLanguage, tr } from './i18n.ts';
 import { startAutomation } from './ui/network.ts';
 import type { AutomationGrant } from './git/network.ts';
-import { blameLine } from './git/network-native.ts';
+import { deviceGitPath } from './ui/git-path.ts';
+import { blameLine, configureGitExecutable } from './git/network-native.ts';
 import { FileSystemAdapter, Notice, Plugin, TFolder, TFile, getLanguage, setTooltip } from 'obsidian';
 import { VaultDisk } from './fs/vault.ts';
 import { defaults, discover, recheck } from './kb/catalog.ts';
@@ -68,11 +70,13 @@ export default class KnowledgeBaseManager extends Plugin {
 		try{return await action();}finally{this.busy.delete(location);}
 	}
 	async onload(){
+		try { configureGitExecutable(deviceGitPath(this)); }
+		catch (error) { configureGitExecutable(''); new Notice(String(error)); }
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
-		if(clearLegacyAuthors(saved))await this.saveData(saved);
+		if(migrateGitSettings(saved))await this.saveData(saved);
 		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? []};
 		this.prefs=readPreferences(saved?.prefs);
 		this.grants=readGrants(saved?.grants);
@@ -133,7 +137,7 @@ export default class KnowledgeBaseManager extends Plugin {
 				const lib=(await discover(this.disk,this.config)).find(l=>file.path.startsWith(l.location+'/'));
 				if(!lib?.identity)throw new Error(tr('文件不在知识库中','File is outside a managed library'));
 				const settings=this.preferences(lib.identity.id);
-				if(!settings.lineAuthor || settings.backend!=='native')throw new Error(tr('请启用原生 Git 和行作者功能','Enable native Git and line author information'));
+				if(!settings.lineAuthor)throw new Error(tr('请启用行作者功能','Enable line author information'));
 				await recheck(this.disk,this.config,lib);
 				const info=await blameLine(await this.disk.path(lib.location),file.path.slice(lib.location.length+1),line);
 				new Notice(info.author+' · '+info.oid.slice(0,10)+' · '+info.summary);

@@ -2,7 +2,7 @@ import { tr, fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import git from 'isomorphic-git';
+import { gitResult } from '../git/network-native.ts';
 import { rebind } from './bindings.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
@@ -40,8 +40,14 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 			if((await statIfPresent(file))?.isSymbolicLink()){linked=true;break;}
 		}
 		if(linked){warnings.push(tr('父仓使用链接元数据，跟踪和忽略状态需人工核对。','The parent repository uses linked metadata. Check its tracked files and ignore rules manually.'));continue;}
-		const tracked = (await git.listFiles(repo)).some(file => file === filepath || file.startsWith(filepath+'/'));
-		const ignored = await git.isIgnored({...repo,filepath:filepath+'/'});
+		let tracked:boolean, ignored:boolean;
+		try {
+			tracked=(await gitResult(parent,['ls-files','-z','--',filepath])).stdout.length>0;
+			ignored=(await gitResult(parent,['check-ignore','--quiet','--',filepath+'/'],{allowedExitCodes:[0,1]})).code===0;
+		} catch {
+			warnings.push(tr('父仓跟踪与忽略状态无法读取，请手动核对。','Unable to read parent tracking and ignore rules. Review them manually.'));
+			continue;
+		}
 		warnings.push(tr('父仓 ','Parent repository ') + (parts.slice(0,i).join('/') || '/') + '：' + (tracked ? tr('目标已被跟踪','destination is tracked') : ignored ? tr('目标已被忽略','destination is ignored') : tr('目标未被忽略','destination is not ignored')));
 	}
 	return warnings;

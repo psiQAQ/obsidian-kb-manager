@@ -1,3 +1,4 @@
+import {digest} from '../fs/vault.ts';
 import {fromEnglish} from '../i18n.ts';
 import {gitDisabled,pluginNotice} from './device.ts';
 import {moment,Notice,Setting} from 'obsidian';
@@ -21,9 +22,14 @@ export function recordPull(plugin:KnowledgeBaseManager,id:string,files:string[])
 	records.set(id,files);
 }
 
-export function credential(plugin:KnowledgeBaseManager,id:string,target:RemoteTarget):Credentials|undefined {
-	const raw=plugin.app.secretStorage.getSecret(secretKey(id,target.url));
-	if(!raw)return undefined;
+function mode(plugin:KnowledgeBaseManager,id:string,url:string){
+ return url.startsWith('https://') && plugin.app.loadLocalStorage(secretKey(id,url)+'-enabled')===true?'fallback':'system';
+}
+export function credential(plugin:KnowledgeBaseManager,id:string,target:RemoteTarget,push=false):Credentials|undefined {
+ const url=push?target.pushUrl:target.url;
+ if(mode(plugin,id,url)==='system')return undefined;
+ const raw=plugin.app.secretStorage.getSecret(secretKey(id,url));
+ if(!raw)throw new Error(plugin.t('未找到已选用的备用凭据','The selected fallback credential is unavailable'));
 	const data:unknown=JSON.parse(raw);
 	if(typeof data!=='object'||!data||!('username' in data)||!('password' in data)||
 		typeof data.username!=='string'||typeof data.password!=='string')throw new Error(fromEnglish('Invalid repository credential','本库凭据无效'));
@@ -32,8 +38,9 @@ export function credential(plugin:KnowledgeBaseManager,id:string,target:RemoteTa
 
 function grantFor(plugin:KnowledgeBaseManager,lib:Library,state:Awaited<ReturnType<typeof remoteState>>):AutomationGrant {
 	const p=plugin.preferences(lib.identity!.id);
-	return {location:lib.location,branch:state.preview.branch,remote:state.target?.remote??'',url:state.target?.url??'',
-		remoteBranch:state.target?.remoteBranch??'',backend:p.backend,commit:p.autoCommitMinutes,pull:p.autoPullMinutes,push:p.autoPushMinutes,
+	return {location:lib.location,branch:state.preview.branch,remote:state.target?.remote??'',
+		routeDigest:state.target && (p.autoPullMinutes || p.autoPushMinutes || p.autoPullOnStart)?digest(JSON.stringify([state.target.signature,mode(plugin,lib.identity!.id,state.target.url),mode(plugin,lib.identity!.id,state.target.pushUrl)])):'',
+		remoteBranch:state.target?.remoteBranch??'',commit:p.autoCommitMinutes,pull:p.autoPullMinutes,push:p.autoPushMinutes,
 		autoGlobs:p.autoGlobs,autoGlobMode:p.autoGlobMode,autoAfterEdits:p.autoAfterEdits,autoFromLastCommit:p.autoFromLastCommit,autoPullOnStart:p.autoPullOnStart};
 }
 
@@ -78,18 +85,18 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 			const {state,dialog,confirm}=await preview(title);
 			const target=state.target;
 			if(!target)throw new Error(t('请先配置本库远端','Configure this library’s remote first.'));
-			dialog.lines([target.url,target.remote+' / '+target.remoteBranch]);
+			dialog.lines([op==='push'?target.pushDisplay:target.fetchDisplay,target.remote+' / '+target.remoteBranch,mode(plugin,id,op==='push'?target.pushUrl:target.url)]);
 			confirm(op==='pull'?t('获取并预览','Fetch and preview'):title,async dir=>{
-				await transfer(dir,op==='push'?'push':'fetch',target,prefs.backend,credential(plugin,id,target));
+				await transfer(dir,op==='push'?'push':'fetch',target,credential(plugin,id,target,op==='push'));
 				if(op==='pull'){
 					const plan=await changePlan(dir,'refs/remotes/'+target.remote+'/'+target.remoteBranch);
 					const next=new Dialog(plugin.app,t('确认拉取','Confirm pull'));
 					next.lines([lib.location,plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod,
-						...(prefs.backend==='native'&&prefs.syncMethod==='merge'?[t('冲突策略','Conflict strategy')+' · '+prefs.mergeStrategy]:[]),...plan.changes]);
+						...(prefs.syncMethod==='merge'?[t('冲突策略','Conflict strategy')+' · '+prefs.mergeStrategy]:[]),...plan.changes]);
 					next.action(t('应用','Apply'),async()=>{
 						await write(async folder=>{
 							if(JSON.stringify((await remoteState(folder)).target)!==JSON.stringify(target))throw new Error(fromEnglish('Remote changed','远端已变化'));
-							await applyChange(folder,plan,'pull',prefs.backend,prefs.syncMethod,prefs.mergeStrategy);
+							await applyChange(folder,plan,'pull',prefs.syncMethod,prefs.mergeStrategy);
 							recordPull(plugin,id,plan.changes);
 						});
 						next.close();await plugin.refresh();
@@ -109,7 +116,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 				const next=new Dialog(plugin.app,t('切换分支','Switch branch'));
 				next.lines([lib.location,state.preview.branch+' → '+branch,...plan.changes]);
 				next.action(t('切换','Switch'),async()=>{
-					await write(folder=>applyChange(folder,plan,'switch',prefs.backend,prefs.syncMethod));
+					await write(folder=>applyChange(folder,plan,'switch',prefs.syncMethod));
 					next.close();dialog.close();await plugin.refresh();
 				});next.open();
 			});
@@ -143,22 +150,41 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	button('settings-2',t('本库远端与凭据','Library remote and credentials'),async()=>{
 		const {dir,state,dialog,confirm}=await preview(t('本库远端与凭据','Library remote and credentials'));
 		let remote=state.target?.remote??'origin',url=state.target?.url??'',branch=state.target?.remoteBranch??state.preview.branch;
-		let user='',token='';
 		dialog.lines(state.remotes.map(r=>r.remote));
 		dialog.text(t('远端名称','Remote name'),remote,v=>{remote=v;});
 		dialog.text('URL',url,v=>{url=v;});
 		dialog.text(t('上游分支','Upstream branch'),branch,v=>{branch=v;});
-		dialog.text(t('用户名','Username'),user,v=>{user=v;});
-		new Setting(dialog.contentEl).setName(t('访问令牌（留空保留已有凭据）','Token (leave empty to retain credentials)')).addText(input=>{
-			input.inputEl.type='password';input.onChange(v=>{token=v;});
-		});
-		confirm(t('保存本库上游','Save library upstream'),async dir=>{
-			await bindRemote(dir,state.preview.branch,remote,url,branch);
-			if(token)plugin.app.secretStorage.setSecret(secretKey(id,url),JSON.stringify({username:user||'git',password:token}));
-		});
-		if(state.target)confirm(t('清除已保存的凭据','Clear stored credentials'),async()=>{
-			plugin.app.secretStorage.setSecret(secretKey(id,state.target!.url),'');await Promise.resolve();
-		});
+		confirm(t('保存本库上游','Save library upstream'),folder=>bindRemote(folder,state.preview.branch,remote,url,branch));
+		const urls=new Set(state.target?[state.target.url,state.target.pushUrl]:[]);
+		for(const endpoint of urls){
+			if(!endpoint.startsWith('https://'))continue;
+			dialog.action(t('认证方式','Authentication')+' · '+endpoint,async()=>{
+				const form=new Dialog(plugin.app,t('本库 HTTPS 认证','Library HTTPS authentication'));
+				const key=secretKey(id,endpoint);
+				let enabled=mode(plugin,id,endpoint)==='fallback',user='',token='';
+				form.lines([lib.location,endpoint,t('默认使用系统 Git 凭据助手。备用令牌只用于此库和此 HTTPS 地址。','System Git credential helpers are the default. The fallback applies only to this library and HTTPS endpoint.')]);
+				new Setting(form.contentEl).setName(t('使用备用凭据','Use fallback credentials')).addToggle(b=>b.setValue(enabled).onChange(v=>{enabled=v;}));
+				form.text(t('备用用户名','Fallback username'),'',v=>{user=v;});
+				new Setting(form.contentEl).setName(t('备用令牌（留空保留）','Fallback token (leave empty to keep)')).addText(field=>{
+					field.inputEl.type='password';field.onChange(v=>{token=v;});
+				});
+				form.action(t('保存认证方式','Save authentication mode'),async()=>{
+					await write(async dir=>{
+						const now=(await remoteState(dir)).target;
+						if(!now || (now.url!==endpoint && now.pushUrl!==endpoint))throw new Error(t('端点已变化','Endpoint changed'));
+						if(enabled && !token && !plugin.app.secretStorage.getSecret(key))throw new Error(t('需要备用令牌','A fallback token is required'));
+						if(token)plugin.app.secretStorage.setSecret(key,JSON.stringify({username:user||'git',password:token}));
+						plugin.app.saveLocalStorage(key+'-enabled',enabled);
+					});
+					form.close();dialog.close();await plugin.refresh();
+				});
+				form.action(t('清除备用凭据并使用系统认证','Clear fallback and use system authentication'),async()=>{
+					plugin.app.saveLocalStorage(key+'-enabled',false);plugin.app.secretStorage.setSecret(key,'');
+					form.close();dialog.close();await plugin.refresh();
+				});
+				form.open();await Promise.resolve();
+			});
+		}
 		for(const item of state.remotes)dialog.action(t('移除本地远端配置','Remove local remote configuration')+' · '+item.remote,async()=>{
 			const plan=await remoteRemoval(dir,item.remote);
 			const next=new Dialog(plugin.app,t('确认移除本库远端配置','Confirm removal of library remote'));
@@ -173,14 +199,14 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	button('timer',t('授权本库自动操作','Authorize library automation'),async()=>{
 		const {state,dialog,confirm}=await preview(t('本库自动操作','Library automation'));
 		const grant=grantFor(plugin,lib,state),previous=plugin.grants[id];
-		dialog.lines([grant.url+' '+grant.remoteBranch,t('自动暂存的文件规则','Automatic staging rules')+' · '+grant.autoGlobMode+' · '+grant.autoGlobs,
+		dialog.lines([...(state.target?[state.target.fetchDisplay,state.target.pushDisplay,mode(plugin,id,state.target.url)+' / '+mode(plugin,id,state.target.pushUrl)]:[]),grant.remoteBranch,t('自动暂存的文件规则','Automatic staging rules')+' · '+grant.autoGlobMode+' · '+grant.autoGlobs,
 			t('当前匹配的变更','Currently matching changes')+': '+selectPaths(grant.autoGlobMode,grant.autoGlobs,state.preview.changes.map(c=>c.file)).join(', '),
 			t('推送会发送此分支的待推送提交','Push sends all unpublished commits on this branch.'),
 			t('停止编辑后计时 / 从上次提交计时 / 启动拉取','After edits / from last commit / pull on startup')+' · '+[grant.autoAfterEdits,grant.autoFromLastCommit,grant.autoPullOnStart].join(' / '),
 			t('间隔（分钟）：提交 / 拉取 / 推送','Minutes: commit / pull / push')+' · '+[grant.commit,grant.pull,grant.push].join(' / '),
-			previous?.paused || (previous?t('已授权','Authorized'):t('未授权','Not authorized'))]);
+			(previous?.paused?t('已暂停，请复核后重新授权','Paused. Review and authorize again.'):undefined) || (previous?t('已授权','Authorized'):t('未授权','Not authorized'))]);
 		if(grant.commit || grant.pull || grant.push || grant.autoPullOnStart)confirm(t('授权以上范围','Authorize this scope'),async dir=>{
-			if((grant.pull||grant.push||grant.autoPullOnStart)&&!grant.url)throw new Error(t('请先配置本库远端','Configure the library remote first.'));
+			if((grant.pull||grant.push||grant.autoPullOnStart)&&!state.target)throw new Error(t('请先配置本库远端','Configure the library remote first.'));
 			if((await remoteState(dir)).preview.staged)throw new Error(t('请先处理暂存内容','Resolve staged changes first.'));
 			plugin.grants[id]=grant;await plugin.persist();
 		});
@@ -244,11 +270,11 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 								},'smart',new Set(selected));
 							}else if(op!=='commit'){
 								if(!state.target)throw new Error(fromEnglish('No upstream configured','尚未设置上游分支'));
-								await transfer(dir,op==='pull'?'fetch':'push',state.target,prefs.backend,credential(plugin,id,state.target));
+								await transfer(dir,op==='pull'?'fetch':'push',state.target,credential(plugin,id,state.target,op==='push'));
 								if(op==='pull' && !stopped && !gitDisabled(plugin) && plugin.grants[id]===grant){
 									const plan=await changePlan(dir,'refs/remotes/'+grant.remote+'/'+grant.remoteBranch);
 									await recheck(plugin.disk,plugin.config,lib);
-									await applyChange(dir,plan,'pull',prefs.backend,'ff-only');
+									await applyChange(dir,plan,'pull','ff-only');
 									recordPull(plugin,id,plan.changes);
 								}
 							}
@@ -257,8 +283,8 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 					});
 				}catch(error){
 					if(plugin.grants[id]===grant){
-						grant.paused=String(error);await plugin.persist();
-						pluginNotice(plugin,'error',plugin.t('自动操作已暂停','Automation paused')+' · '+grant.location+' · '+grant.paused,id,8000);
+						grant.paused='failed';await plugin.persist();
+						pluginNotice(plugin,'error',plugin.t('自动操作已暂停','Automation paused')+' · '+grant.location+' · '+String(error),id,8000);
 					}
 				}
 			}

@@ -13,6 +13,7 @@ test('native Git interoperates with previews, partially staged bytes, delete and
 	const run=(...args)=>execFileSync('git',['-C',dir,...args]);
 	const index=path.join(dir,'.git/index'),file=path.join(dir,'note.md');
 	await initializeRepository(dir);
+	run('config','core.autocrlf','false');
 	run('config','user.name','Local');run('config','user.email','local@example.invalid');
 	assert.equal((await history(dir)).entries.length,0);
 	await fs.writeFile(file,Buffer.from([239,187,191,65,13,10]));

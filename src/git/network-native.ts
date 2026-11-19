@@ -1,47 +1,147 @@
-import {fromEnglish} from '../i18n.ts';
 import {execFile} from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import {createHash} from 'node:crypto';
 import {guardGit} from './guard.ts';
+import {fromEnglish,tr} from '../i18n.ts';
 
-const allowedConfig = /^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|symlinks|precomposeunicode)|user\.(name|email)|remote\.[\w.-]+\.(url|fetch)|branch\..+\.(remote|merge)|init\.defaultbranch)$/iu;
+let configured='';
+export function configureGitExecutable(value:string){
+	if(value && (!path.isAbsolute(value)||/[\r\n\0]/u.test(value)))throw new Error(tr('请输入 Git 可执行文件的绝对路径','Enter an absolute Git executable path'));
+	configured=value;
+}
 
-// Child processes receive no inherited Git overrides, credential helpers or shell.
-function execute(dir:string, args:string[], auth?:string,stdin?:string): Promise<string> {
-	const env:NodeJS.ProcessEnv = {};
-	for (const key of ['PATH','SystemRoot','WINDIR','COMSPEC','TEMP','TMP','LANG','LC_ALL']){
-		const value = process.env[key];
-		if(value) env[key] = value;
+async function program(name:'git'|'ssh',override='',dir?:string){
+	const nameOnDisk=process.platform==='win32'?name+'.exe':name;
+	const paths=override?[override]:(process.env.PATH??'').split(path.delimiter).map(folder=>folder.replace(/^"|"$/gu,''))
+		.filter(p=>path.isAbsolute(p)).map(p=>path.join(p,nameOnDisk));
+	for(const file of paths){
+		try{
+			const real=await fs.realpath(file);
+			if(dir && (real===dir || real.startsWith(dir+path.sep)))continue;
+			if((await fs.stat(real)).isFile()){await fs.access(real,fs.constants.X_OK);return real;}
+		}catch{/* Continue locating the selected program. */}
 	}
-	Object.assign(env,{GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0',
-		GIT_NO_REPLACE_OBJECTS:'1',GIT_LITERAL_PATHSPECS:'1',GIT_ALLOW_PROTOCOL:'http:https'});
-	if(auth) Object.assign(env,{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_VALUE_0:'Authorization: Basic '+auth});
-	const prefix = ['--git-dir='+path.join(dir,'.git'),'--work-tree='+dir,'-c','core.hooksPath=/dev/null',
-		'-c','http.followRedirects=false','-c','protocol.ext.allow=never','-c','gc.auto=0','-c','core.fsmonitor=false'];
-	return new Promise((resolve,reject)=>{
-		const child=execFile('git',[...prefix,...args],{
-			cwd:path.dirname(process.execPath),env,windowsHide:true,timeout:120000,maxBuffer:16*1024*1024
-		},(error,stdout,stderr)=>{
-			if(error) reject(new Error((stderr || error.message).replace(/Authorization:[^\r\n]*/giu,'[redacted]').slice(0,1500)));
-			else resolve(stdout);
+	throw new Error(name==='git'?tr('找不到系统 Git。请安装 Git 或在插件高级设置中指定绝对路径。','System Git was not found. Install Git or set its absolute path in Advanced settings.'):tr('找不到 OpenSSH 客户端','OpenSSH executable was not found'));
+}
+
+function environment():NodeJS.ProcessEnv{
+	const env:NodeJS.ProcessEnv={};
+	for(const key of ['PATH','HOME','XDG_CONFIG_HOME','USERPROFILE','HOMEDRIVE','HOMEPATH','SystemRoot','WINDIR','COMSPEC',
+		'TEMP','TMP','TMPDIR','LANG','LC_ALL','APPDATA','LOCALAPPDATA','ProgramFiles','ProgramFiles(x86)','ProgramW6432','ProgramData',
+		'GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_CONFIG_NOSYSTEM','SSH_AUTH_SOCK','GNOME_KEYRING_CONTROL','DBUS_SESSION_BUS_ADDRESS','XDG_RUNTIME_DIR','HTTPS_PROXY','HTTP_PROXY','ALL_PROXY','NO_PROXY',
+		'https_proxy','http_proxy','all_proxy','no_proxy','SSL_CERT_FILE','SSL_CERT_DIR']){
+		if(process.env[key])env[key]=process.env[key];
+	}
+	return Object.assign(env,{GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_OPTIONAL_LOCKS:'0',
+		GIT_NO_REPLACE_OBJECTS:'1',GIT_LITERAL_PATHSPECS:'1',GIT_ALLOW_PROTOCOL:'http:https:ssh',GIT_PAGER:'',PAGER:''});
+}
+
+async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEnv,input?:Buffer|string,allowed=[0]){
+	return new Promise<{stdout:Buffer;code:number}>((resolve,reject)=>{
+		const child=execFile(file,args,{cwd,env,encoding:'buffer',windowsHide:true,timeout:120000,maxBuffer:64*1024*1024},(error,stdout,stderr)=>{
+			const code=error ? error.code : 0;
+			if(typeof code==='number' && allowed.includes(code)){resolve({stdout,code});return;}
+			const reason=stderr.toString().toLowerCase();
+			const category=reason.includes('authentication')||reason.includes('could not read username')||reason.includes('403')||reason.includes('permission denied')
+				?tr('认证失败','authentication failed')
+				:reason.includes('host key')?tr('SSH 主机密钥校验失败','SSH host key verification failed')
+				:reason.includes('non-fast-forward')||reason.includes('fetch first')?tr('远端不能快进','remote rejected a non-fast-forward update')
+				:reason.includes('conflict')?tr('存在冲突，请检查本库状态','conflict, inspect the library status')
+				:tr('命令未完成','command did not complete');
+			reject(new Error('Git · '+category+' ('+(typeof code==='number'?code:'process')+')'));
 		});
-		if(stdin!==undefined){
-			child.stdin?.on('error',(error:NodeJS.ErrnoException)=>{if(error.code!=='EPIPE')reject(error);});
-			child.stdin?.end(stdin);
-		}
+		child.stdin?.on('error',(error:NodeJS.ErrnoException)=>{if(error.code!=='EPIPE')reject(new Error('Git stdin · '+String(error.code)));});
+		child.stdin?.end(input);
 	});
 }
 
-export async function checkedNative(dir:string,merging:boolean|'resolved'=false) {
-	await guardGit(dir,new Set(),false,merging);
-	const raw=await execute(dir,['config','--local','--no-includes','--null','--list']);
-	for(const item of raw.split('\0').filter(Boolean)){
-		const key=item.split('\n')[0] ?? '';
-		if(!allowedConfig.test(key))throw new Error(fromEnglish('Unsupported native Git configuration: ','原生 Git 配置不受支持：')+key);
-	}
-	return (args:string[],auth?:string,stdin?:string)=>execute(dir,args,auth,stdin);
+export async function probeGitExecutable(value=configured){
+	if(value && !path.isAbsolute(value))throw new Error(tr('需要绝对路径','Absolute path required'));
+	const binary=await program('git',value);
+	const result=await execute(binary,['--version'],path.dirname(binary),environment());
+	const version=result.stdout.toString().trim();
+	if(!/^git version \d+\.\d+(?:\.[\w.-]+)?$/u.test(version))throw new Error(tr('程序未返回 Git 版本','Executable did not report a Git version'));
+	return version;
 }
 
-export async function blameLine(dir:string,file:string,line:number) {
+const allowedConfig=/^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|symlinks|precomposeunicode|autocrlf|safecrlf|eol|quotepath)|(?:user|author|committer)\.(name|email)|remote\.[\w.-]+\.(url|pushurl|fetch)|branch\..+\.(remote|merge|rebase|description)|init\.defaultbranch)$/iu;
+const checkedConfigs=new Map<string,string>();
+export interface RunOptions{
+	stdin?:Uint8Array|string; indexFile?:string; allowedExitCodes?:number[];
+	author?:{name:string;email:string;date:string};
+	network?:{url:string;basic?:string};
+}
+const defaults=['-c','core.hooksPath=/dev/null','-c','http.followRedirects=false','-c','protocol.ext.allow=never',
+	'-c','gc.auto=0','-c','maintenance.auto=false','-c','core.fsmonitor=false','-c','submodule.recurse=false','-c','commit.gpgsign=false'];
+export async function gitResult(dir:string|undefined,args:string[],options:RunOptions={}){
+	const binary=await program('git',configured,dir);
+	const cwd=dir??path.dirname(binary),env=environment();
+	if(args.length===2 && args[0]==='var' && (args[1]==='GIT_AUTHOR_IDENT' || args[1]==='GIT_COMMITTER_IDENT')){
+		for(const key of ['GIT_AUTHOR_NAME','GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL']){
+			const value=process.env[key];
+			if(value!==undefined)env[key]=value;
+		}
+	}
+	if(args[0]==='check-ignore')delete env.GIT_LITERAL_PATHSPECS;
+	const base=dir?['--git-dir='+path.join(dir,'.git'),'--work-tree='+dir]:[];
+	if(dir){
+		const gd=path.join(dir,'.git'),file=path.join(gd,'config');
+		const gdStat=await fs.lstat(gd).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='ENOENT')throw e;});
+		if(gdStat && !gdStat.isDirectory())throw new Error(tr('需要库内独立 Git 目录','Expected a standalone Git directory'));
+		const stat=await fs.lstat(file).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='ENOENT')throw e;});
+		const identityQuery=args[0]==='config' && ['user.name','user.email'].includes(args[args.length-1]??'') && args.includes('--get-all') && args.slice(1,-1).every(a=>['--show-scope','--show-origin','--null','--get-all','--includes'].includes(a));
+		if(stat && (!stat.isFile() || stat.nlink!==1))throw new Error(tr('Git 配置不是独立普通文件','Git config is not a standalone regular file'));
+		if(stat && !identityQuery){
+			const bytes=await fs.readFile(file),fingerprint=createHash('sha256').update(bytes).digest('hex');
+			if(checkedConfigs.get(file)!==fingerprint){
+				const result=await execute(binary,[...base,...defaults,'config','--file','-','--no-includes','--null','--name-only','--list'],cwd,env,bytes);
+				for(const key of result.stdout.toString().split('\0').filter(Boolean))if(!allowedConfig.test(key))
+					throw new Error(tr('此库包含需要手动核对的 Git 配置','This repository has Git configuration that needs manual review'));
+				if(checkedConfigs.size>=128)checkedConfigs.clear();
+				checkedConfigs.set(file,fingerprint);
+			}
+		}
+	}
+	if(options.indexFile){
+		if(!dir || !path.isAbsolute(options.indexFile) || !path.resolve(options.indexFile).startsWith(path.join(dir,'.git')+path.sep))throw new Error('Invalid private index');
+		env.GIT_INDEX_FILE=options.indexFile;
+	}
+	if(options.author)Object.assign(env,{GIT_AUTHOR_NAME:options.author.name,GIT_AUTHOR_EMAIL:options.author.email,GIT_AUTHOR_DATE:options.author.date});
+	const extra:string[]=[];
+	if(options.network){
+		const {url,basic}=options.network;
+		if(basic){
+			if(!url.startsWith('https://'))throw new Error(tr('备用令牌只可用于 HTTPS','Fallback tokens require HTTPS'));
+			env.GIT_CONFIG_COUNT='1';env.GIT_CONFIG_KEY_0='http.'+url+'.extraHeader';env.GIT_CONFIG_VALUE_0='Authorization: Basic '+basic;
+			extra.push('-c','credential.helper=','-c','http.'+url+'.sslVerify=true');
+		}
+		if(/^https?:\/\//u.test(url))extra.push('-c','http.'+url+'.followRedirects=false');
+		else{
+			const ssh=await program('ssh','',dir);
+			env.GIT_SSH_VARIANT='ssh';env.GIT_SSH_COMMAND="'"+ssh.replace(/\\/gu,'/').replace(/'/gu,"'\\''")+"' -o BatchMode=yes -o StrictHostKeyChecking=yes";
+		}
+	}
+	return execute(binary,[...base,...defaults,...extra,...args],cwd,env,
+		typeof options.stdin==='string'?options.stdin:options.stdin&&Buffer.from(options.stdin),options.allowedExitCodes);
+}
+
+export async function sshRoute(url:URL,dir?:string){
+	const binary=await program('ssh','',dir),host=(url.username?url.username+'@':'')+url.hostname;
+	const result=await execute(binary,['-G','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',...(url.port?['-p',url.port]:[]),'--',host],
+		path.dirname(binary),environment());
+	const lines=result.stdout.toString().split(/\r?\n/u);
+	const selected=lines.filter(l=>/^(?:hostname|port|user|hostkeyalias|proxyjump|proxycommand|canonicalizehostname|identityfile|identitiesonly) /iu.test(l));
+	const hostname=selected.find(l=>l.startsWith('hostname '))?.slice(9),port=selected.find(l=>l.startsWith('port '))?.slice(5),
+		user=selected.find(l=>l.startsWith('user '))?.slice(5);
+	if(!hostname || !port || !user)throw new Error(tr('未能确定 SSH 目标','Could not resolve SSH destination'));
+	return {display:user+'@'+hostname+':'+port,signature:selected.join('\n')};
+}
+export async function checkedNative(dir:string,merging:boolean|'resolved'=false){
+	await guardGit(dir,new Set(),false,merging);
+	return async(args:string[],_auth?:undefined,stdin?:string)=>(await gitResult(dir,args,{stdin})).stdout.toString();
+}
+export async function blameLine(dir:string,file:string,line:number){
 	if(!Number.isSafeInteger(line)||line<1 || path.isAbsolute(file) || /[\\:\0]/u.test(file) ||
 		file.split('/').some(p=>!p || p==='.' || p==='..' || p.toLowerCase()==='.git')) throw new Error(fromEnglish('Invalid file or line','文件或行号无效'));
 	const run=await checkedNative(dir);

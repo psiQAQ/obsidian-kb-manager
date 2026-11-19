@@ -1,24 +1,22 @@
 import {fromEnglish} from '../i18n.ts';
-import git from 'isomorphic-git';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {createHash} from 'node:crypto';
-import {repository} from './repository.ts';
 import {previewVersion} from './versions.ts';
-import {checkedNative} from './network-native.ts';
-import {endpoint,transport} from './network-http.ts';
+import {checkedNative,gitResult} from './network-native.ts';
+import {endpoint,address,isSsh} from './network-http.ts';
 import {digest,statIfPresent} from '../fs/vault.ts';
 import {updateConfig} from './network-config.ts';
-import {requireIdentity} from './identity.ts';
+import {checkedIdentityArgs} from './identity.ts';
 
-export type Backend='builtin'|'native';
+export type AuthMode='system'|'fallback';
 export type SyncMethod='ff-only'|'merge'|'rebase';
 export interface AutomationGrant {
-	location:string; branch:string; remote:string; url:string; remoteBranch:string;
-	backend:Backend; commit:number; pull:number; push:number; paused?:string;
+	location:string; branch:string; remote:string; routeDigest:string; remoteBranch:string;
+	commit:number; pull:number; push:number; paused?:'review'|'failed';
 	autoGlobs:string; autoGlobMode:'exclude'|'include'; autoAfterEdits:boolean; autoFromLastCommit:boolean; autoPullOnStart:boolean;
 }
-export interface RemoteTarget {remote:string;url:string;remoteBranch:string}
+export interface RemoteTarget {remote:string;url:string;pushUrl:string;remoteBranch:string;fetchDisplay:string;pushDisplay:string;signature:string}
 export interface Credentials {username:string;password:string}
 
 export function secretKey(id:string,url:string){
@@ -32,79 +30,78 @@ export function refName(name:string,remote=false){
 	return name;
 }
 
+export async function resolveRef(dir:string,ref:string){return (await gitResult(dir,['rev-parse','--verify','--end-of-options',ref+'^{commit}'])).stdout.toString().trim();}
+export async function ancestor(dir:string,older:string,newer:string){return (await gitResult(dir,['merge-base','--is-ancestor',older,newer],{allowedExitCodes:[0,1]})).code===0;}
+export async function localConfig(dir:string){
+ const items=(await gitResult(dir,['config','--local','--null','--list'])).stdout.toString().split('\0').filter(Boolean);
+ return items.map(row=>{const i=row.indexOf('\n');return [row.slice(0,i),row.slice(i+1)] as const;});
+}
 export async function remoteState(dir:string) {
-	const preview=await previewVersion(dir),repo=repository(dir);
-	refName(preview.branch);
-	const remotes=await git.listRemotes(repo),branches=await git.listBranches(repo);
-	const currentRemote:unknown=await git.getConfig({...repo,path:'branch.'+preview.branch+'.remote'});
-	const merge:unknown=await git.getConfig({...repo,path:'branch.'+preview.branch+'.merge'});
-	const remote=remotes.find(r=>r.remote===(currentRemote??'origin'));
-	let target:RemoteTarget|undefined;
-	if(remote && (merge===undefined || typeof merge==='string' && merge.startsWith('refs/heads/'))){
-		target={remote:refName(remote.remote,true),url:endpoint(remote.url),remoteBranch:refName(merge?.slice(11)??preview.branch)};
-	}
-	return {preview,branches,remotes,target,config:digest(await fs.readFile(path.join(repo.gitdir,'config')))};
+ const preview=await previewVersion(dir),branch=refName(preview.branch);
+ const fields=await localConfig(dir);
+ const get=(key:string)=>fields.filter(([k])=>k===key).map(([,value])=>value);
+ const names=(await gitResult(dir,['remote'])).stdout.toString().trim().split(/\r?\n/u).filter(Boolean);
+ const remotes=names.map(remote=>({remote,url:get('remote.'+remote+'.url')[0]??''}));
+ const branches=(await gitResult(dir,['for-each-ref','--format=%(refname:strip=2)','refs/heads/'])).stdout.toString().trim().split(/\r?\n/u).filter(Boolean);
+ const name=get('branch.'+branch+'.remote')[0]??'origin',merge=get('branch.'+branch+'.merge')[0];
+ let target:RemoteTarget|undefined;
+ const remote=remotes.find(r=>r.remote===name);
+ if(remote && (!merge || merge.startsWith('refs/heads/'))){
+  const fetch=await address(dir,remote.url,name),push=await address(dir,get('remote.'+name+'.pushurl')[0]??remote.url,name,true);
+  target={remote:refName(name,true),url:fetch.url,pushUrl:push.url,remoteBranch:refName(merge?.slice(11)??branch),
+   fetchDisplay:fetch.display,pushDisplay:push.display,signature:digest(JSON.stringify([fetch.signature,push.signature]))};
+ }
+ return {preview,branches,remotes,target,config:digest(await fs.readFile(path.join(dir,'.git','config')))};
 }
 export async function bindRemote(dir:string,branch:string,remote:string,url:string,remoteBranch:string) {
-	const state=await remoteState(dir);
-	if(state.preview.branch!==branch)throw new Error(fromEnglish('Branch changed','分支已变化'));
-	refName(remote,true);refName(remoteBranch);
-	const canonical=endpoint(url);
-	const existing=state.remotes.find(r=>r.remote===remote);
-	if(existing && endpoint(existing.url)!==canonical)throw new Error(fromEnglish('Remote already has a different URL. Choose a new name.','同名远端已绑定其他 URL，请选择新名称。'));
-	await updateConfig(dir,state.config,async repo=>{
-		if(!existing)await git.addRemote({...repo,remote,url:canonical});
-		await git.setConfig({...repo,path:'branch.'+branch+'.remote',value:remote});
-		await git.setConfig({...repo,path:'branch.'+branch+'.merge',value:'refs/heads/'+remoteBranch});
-	});
+ const state=await remoteState(dir);
+ if(state.preview.branch!==branch)throw new Error(fromEnglish('Branch changed','分支已变化'));
+ refName(remote,true);refName(remoteBranch);
+ const canonical=endpoint(url),existing=state.remotes.find(r=>r.remote===remote);
+ if(existing && endpoint(existing.url)!==canonical)throw new Error(fromEnglish('Remote already has a different URL. Choose a new name.','同名远端已绑定其他 URL，请选择新名称。'));
+ await address(dir,canonical);
+ await updateConfig(dir,state.config,async tmp=>{
+  const put=(key:string,value:string)=>gitResult(dir,['config','--file',path.join(tmp.gitdir,'config'),key,value]);
+  if(!existing){
+   await put('remote.'+remote+'.url',canonical);
+   await put('remote.'+remote+'.fetch','+refs/heads/*:refs/remotes/'+remote+'/*');
+  }
+  await put('branch.'+branch+'.remote',remote);await put('branch.'+branch+'.merge','refs/heads/'+remoteBranch);
+ });
 }
-
-export async function transfer(dir:string,operation:'fetch'|'push',target:RemoteTarget,backend:Backend,credentials?:Credentials){
-	const {preview,target:current}=await remoteState(dir);
-	if(!current || JSON.stringify(current)!==JSON.stringify(target))throw new Error(fromEnglish('Remote target changed','远端目标已变化'));
-	if(operation==='push'&&!preview.head)throw new Error(fromEnglish('There are no commits to push','尚无可推送的提交'));
-	const repo=repository(dir);
-	const fetchRules=await git.getConfigAll({...repo,path:'remote.'+target.remote+'.fetch'});
-	if(fetchRules.length!==1 || fetchRules[0]!=='+refs/heads/*:refs/remotes/'+target.remote+'/*')throw new Error(fromEnglish('Custom fetch refspec requires manual review','自定义获取引用映射需要人工核对'));
-	if((await git.getConfigAll({...repo,path:'remote.'+target.remote+'.pushurl'})).length)throw new Error(fromEnglish('Separate push URL requires manual review','请核对单独配置的推送 URL'));
-	const remoteRef='refs/heads/'+target.remoteBranch;
-	const tracking='refs/remotes/'+target.remote+'/'+target.remoteBranch;
-	if(backend==='native'){
-		const run=await checkedNative(dir);
-		const auth=credentials && Buffer.from(credentials.username+':'+credentials.password).toString('base64');
-		if(operation==='push')await run(['push','--no-verify','--porcelain',target.url,preview.head+':'+remoteRef],auth);
-		else await run(['fetch','--no-tags','--no-recurse-submodules',target.url,remoteRef+':'+tracking],auth);
-	}else{
-		const args={...repo,http:transport(target.url),url:target.url,remote:target.remote,remoteRef:target.remoteBranch,
-			onAuth:()=>credentials,ref:preview.branch};
-		if(operation==='push')await git.push(args);
-		else await git.fetch({...args,tags:false,singleBranch:true});
-	}
+export function authOptions(url:string,credentials?:Credentials){
+ if(credentials && isSsh(url))throw new Error(fromEnglish('SSH uses system authentication.','SSH 使用系统认证。'));
+ return {network:{url,basic:credentials?Buffer.from(credentials.username+':'+credentials.password).toString('base64'):undefined}};
 }
-
-export async function tree(dir:string,oid:string) {
-	const repo=repository(dir),files=new Map<string,string>(),names=new Set<string>();
-	async function visit(prefix:string,ref:string) {
-		for(const entry of (await git.readTree({...repo,oid:ref})).tree){
-			const name=entry.path, relative=prefix+name;
-			if(!name || Array.from(name).some(c=>c.charCodeAt(0)<32) || /[<>:"/\\|?*]/u.test(name) || /[. ]$/u.test(name) ||
-				/^(?:\.git(?:attributes|modules)?|git~\d+|\.\.?|(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?)$/iu.test(name) ||
-				!['040000','100644','100755'].includes(entry.mode))throw new Error(fromEnglish('Unsupported path in target tree: ','目标树包含不受支持的路径：')+relative);
-			const key=relative.normalize('NFC').toLowerCase();
-			if(names.has(key))throw new Error(fromEnglish('Path collision: ','路径冲突：')+relative);
-			names.add(key);
-			if(entry.type==='tree')await visit(relative+'/',entry.oid);
-			else files.set(relative,entry.oid+':'+entry.mode);
-		}
-	}
-	await visit('',oid);
-	return files;
+export async function transfer(dir:string,operation:'fetch'|'push',target:RemoteTarget,credentials?:Credentials){
+ const {preview,target:current}=await remoteState(dir);
+ if(!current || JSON.stringify(current)!==JSON.stringify(target))throw new Error(fromEnglish('Remote target changed','远端目标已变化'));
+ if(operation==='push'&&!preview.head)throw new Error(fromEnglish('There are no commits to push','尚无可推送的提交'));
+ const remoteRef='refs/heads/'+target.remoteBranch,tracking='refs/remotes/'+target.remote+'/'+target.remoteBranch;
+ const url=operation==='push'?target.pushUrl:target.url;
+ if(operation==='push')await gitResult(dir,['push','--no-verify','--no-follow-tags','--recurse-submodules=no','--porcelain','--',target.remote,preview.head+':'+remoteRef],authOptions(url,credentials));
+ else await gitResult(dir,['fetch','--refmap=','--no-tags','--no-recurse-submodules','--',target.remote,remoteRef+':'+tracking],authOptions(url,credentials));
 }
-
+export async function tree(dir:string,oid:string){
+ if(!/^[a-f0-9]{40,64}$/u.test(oid))throw new Error('Invalid object ID');
+ const data=(await gitResult(dir,['ls-tree','-rtz',oid])).stdout;
+ const files=new Map<string,string>(),seen=new Set<string>();
+ const text=new TextDecoder('utf-8',{fatal:true}).decode(data);
+ for(const row of text.split('\0').filter(Boolean)){
+  const hit=/^(040000 tree|100644 blob|100755 blob) ([a-f0-9]+)\t([\s\S]+)$/u.exec(row);
+  if(!hit)throw new Error(fromEnglish('Unsupported target tree entry','目标树包含不支持的条目'));
+  const file=hit[3]!,parts=file.split('/');
+  if(parts.some(name=>!name || Array.from(name).some(c=>c.charCodeAt(0)<32) || /[<>:"\\|?*]/u.test(name) || /[. ]$/u.test(name) ||
+   /^(?:\.git(?:attributes|modules)?|git~\d+|\.\.?|(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?)$/iu.test(name)))throw new Error(fromEnglish('Unsupported target tree path','目标树包含不支持的路径'));
+  const key=file.normalize('NFC').toLowerCase();if(seen.has(key))throw new Error(fromEnglish('Path collision','路径冲突'));seen.add(key);
+  if(!hit[1]!.startsWith('040000'))files.set(file,hit[2]+':'+hit[1]!.slice(0,6));
+ }
+ return files;
+}
 export async function changePlan(dir:string,ref:string){
-	const {preview}=await remoteState(dir),repo=repository(dir);
+	const preview=await previewVersion(dir);
 	if(preview.changes.length || !preview.head)throw new Error(fromEnglish('Commit or store all changes before switching or pulling.','切换或拉取前请先提交或妥善保存所有变更。'));
-	const oid=await git.resolveRef({...repo,ref});
+	const oid=await resolveRef(dir,ref);
 	const [before,after]=await Promise.all([tree(dir,preview.head),tree(dir,oid)]);
 	if(!before.has('kb-manager.json') || before.get('kb-manager.json')!==after.get('kb-manager.json'))throw new Error(fromEnglish('Incoming history changes the knowledge base identity. Review externally.','目标历史会修改知识库身份，请在外部核对。'));
 	const changes=[...new Set([...before.keys(),...after.keys()])].filter(f=>before.get(f)!==after.get(f));
@@ -116,49 +113,26 @@ export async function changePlan(dir:string,ref:string){
 	return {ref,oid,head:preview.head,branch:preview.branch,changes,identity:preview.identity};
 }
 
-export async function applyChange(dir:string,plan:Awaited<ReturnType<typeof changePlan>>,operation:'switch'|'pull',backend:Backend,method:SyncMethod,strategy:'none'|'ours'|'theirs'='none'){
+export async function applyChange(dir:string,plan:Awaited<ReturnType<typeof changePlan>>,operation:'switch'|'pull',method:SyncMethod,strategy:'none'|'ours'|'theirs'='none'){
 	const fresh=await changePlan(dir,plan.ref);
 	if(JSON.stringify(fresh)!==JSON.stringify(plan))throw new Error(fromEnglish('Repository changed. Preview again.','仓库已变化，请重新预览。'));
-	const repo=repository(dir);
+
 	if(operation==='switch'){
 		if(!plan.ref.startsWith('refs/heads/'))throw new Error(fromEnglish('Choose a local branch','请选择本地分支'));
 		const branch=refName(plan.ref.slice(11));
-		if(backend==='native')await (await checkedNative(dir))(['switch','--no-recurse-submodules',branch]);
-		else await git.checkout({...repo,ref:branch});
+		await (await checkedNative(dir))(['switch','--no-recurse-submodules',branch]);
 		return;
 	}
-	if(plan.oid===plan.head || await git.isDescendent({...repo,oid:plan.head,ancestor:plan.oid}))return;
-	if(backend==='native'){
-		const run=await checkedNative(dir);
-		const overrides:string[]=[];
-		const needsIdentity=method!=='ff-only' && !await git.isDescendent({...repo,oid:plan.oid,ancestor:plan.head});
-		if(needsIdentity){
-			const identity=requireIdentity(fresh.identity);
-			overrides.push('-c','user.name='+identity.name,'-c','user.email='+identity.email);
-		}
-		if(method==='rebase')await run([...overrides,'rebase','--no-autostash',plan.oid]);
-		else await run([...overrides,'merge','--no-edit',method==='ff-only'?'--ff-only':'--ff',
-			...(method==='merge' && strategy!=='none'?['-X',strategy]:[]),plan.oid]);
-		return;
-	}
-	if(method!=='ff-only')throw new Error(fromEnglish('This pull method requires native Git','此拉取方式需要原生 Git'));
-	if(!await git.isDescendent({...repo,oid:plan.oid,ancestor:plan.head}))throw new Error(fromEnglish('Branches diverged. Fast-forward is unavailable.','分支已分叉，无法快进。'));
-	const ref='refs/heads/'+plan.branch;
-	const dest=path.join(repo.gitdir,ref);
-	await fs.mkdir(path.dirname(dest),{recursive:true});
-	const lock=await fs.open(dest+'.lock','wx');
-	try{
-		if(await git.resolveRef({...repo,ref})!==plan.head)throw new Error(fromEnglish('Current branch changed','当前分支已变化'));
-		await lock.writeFile(plan.oid+'\n');
-		await git.checkout({...repo,ref:plan.oid,noUpdateHead:true});
-		await lock.close();
-		await fs.rename(dest+'.lock',dest);
-	}catch(error){
-		await lock.close();await fs.rm(dest+'.lock',{force:true});throw error;
-	}
+	if(plan.oid===plan.head || await ancestor(dir,plan.oid,plan.head))return;
+	const run=await checkedNative(dir);
+	const needsIdentity=method!=='ff-only' && !await ancestor(dir,plan.head,plan.oid);
+	const overrides=needsIdentity?await checkedIdentityArgs(dir,fresh.identity):[];
+	if(method==='rebase')await run([...overrides,'rebase','--no-autostash',plan.oid]);
+	else await run([...overrides,'merge','--no-edit',method==='ff-only'?'--ff-only':'--ff',
+		...(method==='merge' && strategy!=='none'?['-X',strategy]:[]),plan.oid]);
 }
 
 export async function createBranch(dir:string,name:string){
 	if(!(await remoteState(dir)).preview.head)throw new Error(fromEnglish('Create a first commit before branching','请先创建首个提交，再创建分支'));
-	await git.branch({...repository(dir),ref:refName(name)});
+	await gitResult(dir,['branch','--',refName(name),'HEAD']);
 }

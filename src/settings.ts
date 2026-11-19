@@ -1,4 +1,5 @@
 import { Modal, Notice, PluginSettingTab, Setting, moment } from 'obsidian';
+import { deviceGitPath, saveDeviceGitPath } from './ui/git-path.ts';
 import { hostname } from 'node:os';
 import type KnowledgeBaseManager from './main.ts';
 import { validateFolders } from './fs/vault.ts';
@@ -72,7 +73,8 @@ class SettingsPages {
 		const draft = {...source()};
 		const touched = new Set<keyof GitPreferences>();
 		const inherited = plugin.preferences();
-		const current = plugin.preferences(id);
+		let executable = deviceGitPath(plugin);
+		let pathEdited = false;
 		const inputs = el.createDiv();
 		const draw = () => {
 			inputs.empty();
@@ -88,12 +90,25 @@ class SettingsPages {
 				return setting;
 			};
 			const value = <K extends keyof GitPreferences>(key: K) =>
-				draft[key] ?? (id ? inherited[key] : current[key]);
+				draft[key] ?? (id ? inherited[key] : gitDefaults[key]);
 			const set = <K extends keyof GitPreferences>(key: K, next: GitPreferences[K]) => {
 				draft[key] = next; touched.add(key);
 			};
+			const placeholder = (key: keyof GitPreferences) => {
+				if (id) return t('可留空，继承全局设置','Optional · inherit global setting');
+				if (key === 'commitHostname') return t('可留空，跟随系统默认','Optional · use system default');
+				if (key === 'autoCommitMinutes' || key === 'autoPullMinutes' || key === 'autoPushMinutes')
+					return t('可留空，默认 0（关闭）','Optional · default 0 (off)');
+				const fallback = gitDefaults[key];
+				return fallback === '' ? t('可留空','Optional') : t('可留空，默认 ','Optional · default ') + String(fallback);
+			};
+			const inputValue = (key: keyof GitPreferences) => String(draft[key] ?? '');
+			const updateInput = <K extends keyof GitPreferences>(key: K, raw: string, parsed: GitPreferences[K]) => {
+				if (raw !== '') set(key,parsed);
+				else { delete draft[key]; touched.add(key); }
+			};
 			const text = (key: 'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'blameText', label: Label, desc?: Label) =>
-				row(key,label,desc).addText(input => input.setValue(value(key)).onChange(s => set(key,s)));
+				row(key,label,desc).addText(input => input.setPlaceholder(placeholder(key)).setValue(inputValue(key)).onChange(s => updateInput(key,s,s)));
 			const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 				row(key,label,desc).addToggle(input => input.setValue(value(key)).onChange(b => set(key,b)));
 			const choice = <K extends ChoiceKey>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
@@ -110,14 +125,14 @@ class SettingsPages {
 					toggle('autoPullOnStart',['启动时拉取','Pull on startup']);
 					choice('autoGlobMode',['自动提交文件匹配方式','Auto commit glob mode'],{include:t('仅包含匹配项','Include matching paths'),exclude:t('排除匹配项','Exclude matching paths')});
 					row('autoGlobs',['自动提交文件匹配规则','Auto commit globs'],['每行一个相对于本库的 glob 表达式。','Enter one library-relative glob per line.'])
-						.addTextArea(input => input.setValue(value('autoGlobs')).onChange(s => set('autoGlobs',s)));
+						.addTextArea(input => input.setPlaceholder(placeholder('autoGlobs')).setValue(inputValue('autoGlobs')).onChange(s => updateInput('autoGlobs',s,s)));
 					for (const [key,label] of [
 						['autoCommitMinutes',['自动提交间隔（分钟）','Auto commit interval (minutes)']],
 						['autoPullMinutes',['自动拉取间隔（分钟）','Auto pull interval (minutes)']],
 						['autoPushMinutes',['自动推送间隔（分钟）','Auto push interval (minutes)']],
 					] as const) row(key,label).addText(input => {
 						input.inputEl.type = 'number'; input.inputEl.min = '0'; input.inputEl.step = '1';
-						input.setValue(String(value(key))).onChange(s => set(key,s.trim() ? Number(s) : NaN));
+						input.setPlaceholder(placeholder(key)).setValue(inputValue(key)).onChange(s => updateInput(key,s,Number(s)));
 					});
 					break;
 				case 'commit':
@@ -158,7 +173,7 @@ class SettingsPages {
 					text('blameFormat',['自定义日期格式','Custom date format']);
 					choice('blameTimezone',['时区','Time zone'],{viewer:t('查看者所在时区','Local time'),author:t('提交作者所在时区','Author time'),utc:'UTC'});
 					row('blameMaxDays',['颜色渐变时长（天）','Coloring age range (days)']).addText(input => {
-						input.inputEl.type='number'; input.inputEl.min='1'; input.setValue(String(value('blameMaxDays'))).onChange(s => set('blameMaxDays',Number(s)));
+						input.inputEl.type='number'; input.inputEl.min='1'; input.setPlaceholder(placeholder('blameMaxDays')).setValue(inputValue('blameMaxDays')).onChange(s => updateInput('blameMaxDays',s,Number(s)));
 					});
 					for (const [key,label] of [['blameOld',['旧提交颜色','Old commit color']],['blameNew',['新提交颜色','New commit color']]] as const)
 						row(key,label).addColorPicker(input => input.setValue(value(key)).onChange(s => set(key,s)));
@@ -169,14 +184,14 @@ class SettingsPages {
 					row('refreshSourceControlTimer',['刷新延时（毫秒）','Refresh delay (milliseconds)'],['最短 500 毫秒。','Minimum 500 milliseconds.'])
 						.addText(input => {
 							input.inputEl.type='number'; input.inputEl.min='500';
-							input.setValue(String(value('refreshSourceControlTimer'))).onChange(s => set('refreshSourceControlTimer',Number(s)));
+							input.setPlaceholder(placeholder('refreshSourceControlTimer')).setValue(inputValue('refreshSourceControlTimer')).onChange(s => updateInput('refreshSourceControlTimer',s,Number(s)));
 						});
 					toggle('tree',['以目录树显示改动','Show changes as a tree']);
 					choice('diffStyle',['差异视图','Diff style'],{split:t('并排','Side by side'),unified:t('统一','Unified')});
 					row('diffTimeout',['差异计算时限（毫秒）','Diff computation timeout (milliseconds)'])
 						.addText(input => {
 							input.inputEl.type='number'; input.inputEl.min='1'; input.inputEl.max='10000';
-							input.setValue(String(value('diffTimeout'))).onChange(s => set('diffTimeout',Number(s)));
+							input.setPlaceholder(placeholder('diffTimeout')).setValue(inputValue('diffTimeout')).onChange(s => updateInput('diffTimeout',s,Number(s)));
 						});
 					choice('historyAuthor',['历史中的作者姓名','Author in history'],{hidden:t('隐藏','Hide'),initials:t('首字母','Initials'),full:t('全名','Full name')});
 					toggle('historyDate',['历史中显示日期','Show date in history']);
@@ -197,13 +212,15 @@ class SettingsPages {
 							try { await setDeviceGitDisabled(plugin,disabled); }
 							catch (error) { new Notice(String(error)); }
 						}));
-					choice('backend',['Git 后端','Git backend'],{builtin:t('内置','Built-in'),native:t('系统 Git','System Git')},
-						['原生后端需要本机安装 Git。','The native backend requires Git on this device.']);
+					if (!id) new Setting(inputs).setName(t('本机 Git 可执行文件','Git executable on this device'))
+						.setDesc(t('Windows 可运行 where.exe git 查看已安装的位置。','On Windows, use where.exe git to find the installed executable.'))
+						.addText(input => input.setPlaceholder(t('可留空，跟随系统默认','Optional · use system default'))
+							.setValue(executable).onChange(path => { executable = path; pathEdited = true; }));
 					note('操作限定在当前知识库和库内 .git。自定义 shell 脚本、任意命令和仓库路径覆盖已禁用。','Operations use the library and its own .git directory. Custom shell scripts, raw commands and repository path overrides are disabled.');
 					new Setting(inputs).setName(t('调试信息','Debug information')).setDesc(t('复制版本、平台、后端和库数量。','Copy the version, platform, backend and library counts.'))
 						.addButton(button => button.setButtonText(t('复制','Copy')).onClick(async() => {
 							try {
-								await navigator.clipboard.writeText(JSON.stringify(diagnostics(plugin,id),null,2));
+								await navigator.clipboard.writeText(JSON.stringify(diagnostics(plugin),null,2));
 								new Notice(t('已复制调试信息','Debug information copied'));
 							} catch(error) { new Notice(String(error)); }
 						}));
@@ -229,6 +246,7 @@ class SettingsPages {
 					throw new Error(t('间隔必须是非负整数。','Enter a nonnegative whole number for each interval.'));
 			}
 			// Update only controls edited on this page; another open settings surface may have saved other fields.
+			if (pathEdited) await saveDeviceGitPath(plugin,executable);
 			const merged = {...source()};
 			for (const key of touched) {
 				if (key in draft) Object.assign(merged,{[key]:draft[key]});
@@ -246,7 +264,7 @@ class SettingsPages {
 			['parents',['知识库父目录','Library parent folders'],['每行一个 Vault 相对路径，首行是创建知识库的默认位置。','One vault-relative path per line. New libraries default to the first folder.']],
 			['templates',['目录模板','Folder templates'],['每行一个模板目录的 Vault 相对路径。','One vault-relative template folder per line.']],
 		] as const) new Setting(el).setName(plugin.t(label[0],label[1])).setDesc(plugin.t(desc[0],desc[1]))
-			.addTextArea(input => input.setValue(draft[field].join('\n')).onChange(s => {
+			.addTextArea(input => input.setPlaceholder(field === 'parents' ? plugin.t('必填，至少一个','Required · at least one') : plugin.t('可留空','Optional')).setValue(draft[field].join('\n')).onChange(s => {
 				draft[field] = s.split('\n').map(line => line.trim()).filter(Boolean);
 			}));
 		this.save(async () => {

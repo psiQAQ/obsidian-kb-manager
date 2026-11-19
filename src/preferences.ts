@@ -34,7 +34,6 @@ export interface GitPreferences {
 	historyDate: boolean;
 	refreshSourceControl: boolean;
 	refreshSourceControlTimer: number;
-	backend: 'builtin' | 'native';
 	syncMethod: 'ff-only' | 'merge' | 'rebase';
 	mergeStrategy: 'none'|'ours'|'theirs';
 	pullBeforePush: boolean;
@@ -74,7 +73,7 @@ export const gitDefaults: GitPreferences = {
 	pullBeforePush: true, disablePush: false,
 	squashCommitsBeforePush:false, showInfoNotices:true, showErrorNotices:true, showNoChangesNotices:true,
 	refreshSourceControl: true, refreshSourceControlTimer: 7000,
-	backend: 'builtin', syncMethod: 'ff-only',
+	syncMethod: 'ff-only',
 	mergeStrategy:'none',
 	autoCommitMinutes: 0, autoPullMinutes: 0, autoPushMinutes: 0,
 	autoGlobMode:'exclude', autoGlobs:'', autoAfterEdits:false, autoFromLastCommit:false, autoPullOnStart:false,
@@ -102,7 +101,6 @@ function readGit(value: unknown): Partial<GitPreferences> {
 	if (raw.diffStyle === 'split' || raw.diffStyle === 'unified') result.diffStyle = raw.diffStyle;
 	if (typeof raw.diffTimeout === 'number' && Number.isInteger(raw.diffTimeout) && raw.diffTimeout >= 1 && raw.diffTimeout <= 10000)
 		result.diffTimeout = raw.diffTimeout;
-	if (raw.backend === 'builtin' || raw.backend === 'native') result.backend = raw.backend;
 	if (raw.autoGlobMode === 'include' || raw.autoGlobMode === 'exclude') result.autoGlobMode = raw.autoGlobMode;
 	if (raw.conflictResolutionMode === 'source' || raw.conflictResolutionMode === 'live-preview' || raw.conflictResolutionMode === 'both' || raw.conflictResolutionMode === 'disabled') result.conflictResolutionMode = raw.conflictResolutionMode;
 	for (const key of ['blameOld','blameNew','blameText'] as const) {

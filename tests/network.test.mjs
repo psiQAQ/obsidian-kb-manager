@@ -4,6 +4,8 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
+import {createServer as createTlsServer} from 'node:https';
+import {address,endpoint} from '../src/git/network-http.ts';
 import {initializeRepository} from '../src/git/repository.ts';
 import {applyChange,bindRemote,changePlan,createBranch,remoteState,transfer} from '../src/git/network.ts';
 import {blameLine} from '../src/git/network-native.ts';
@@ -12,11 +14,70 @@ import {readGrants,AutomationClock,selectPaths} from '../src/git/network-automat
 import {deletionPlan,removeBranch,remoteRemoval,removeRemote,serverBranches,trackBranch} from '../src/git/network-refs.ts';
 import {previewVersion,saveVersion} from '../src/git/versions.ts';
 
+test('HTTPS uses system helpers or the explicitly supplied endpoint token, without leaking failures',async t=>{
+ const {root,dir,target,requests,requireAuth}=await fixture(t,true);
+ const url=new URL(target.url);
+ requireAuth('helper','fixture-system');
+ const store=path.join(process.env.HOME,'credentials');
+ await fs.writeFile(store,'https://helper:fixture-system@'+url.host+'\n',{mode:0o600});
+ git(root,'config','--global','credential.helper','store --file="'+store.replaceAll('\\','/')+'"');
+ await transfer(dir,'push',target);
+ assert.ok(requests.includes('accepted'));
+ await fs.writeFile(store,'',{mode:0o600});
+ requireAuth('fallback','fixture-secret');
+ await assert.rejects(transfer(dir,'fetch',target),e=>!String(e).includes(url.host)&&!String(e).includes('fixture-secret'));
+ await transfer(dir,'fetch',target,{username:'fallback',password:'fixture-secret'});
+ git(dir,'config','credential.helper','store');
+ await assert.rejects(transfer(dir,'push',target),e=>!String(e).includes('fixture-secret'));
+});
+
+test('authorization migration scrubs URLs, secrets, raw errors and obsolete backend choices',()=>{
+ const id='12345678-1234-1234-1234-123456789abc';
+ const old={location:'kb/A',branch:'main',remote:'origin',remoteBranch:'main',url:'https://fixture-private.invalid/lib',backend:'builtin',
+  paused:'helper error including synthetic-token',commit:1,push:2,pull:0,autoPullOnStart:false,autoFromLastCommit:false,autoAfterEdits:false,autoGlobMode:'exclude',autoGlobs:''};
+ const saved=readGrants({[id]:old});
+ assert.equal(saved[id].paused,'review');
+ assert.doesNotMatch(JSON.stringify(saved),/fixture-private|synthetic-token|backend|"url"/u);
+ assert.deepEqual(readGrants(saved),saved);
+ const local=readGrants({[id]:{...old,paused:undefined,push:0}});
+ assert.equal(local[id].paused,undefined);
+});
+
+test('repository URLs reject credentials, remote helpers and changed effective targets',async t=>{
+ const {root,dir,target}=await fixture(t);
+ for(const raw of ['https://u:canary@host.invalid/r','https://host.invalid/r?token=canary','file:///vault','ext::git','ssh://u:canary@alias/path'])
+  assert.throws(()=>endpoint(raw),e=>!String(e).includes('canary'));
+ assert.equal(endpoint('git@work-alias:team/repo.git'),'git@work-alias:team/repo.git');
+ assert.equal(endpoint('ssh://git@work-alias:2222/srv/team.git'),'ssh://git@work-alias:2222/srv/team.git');
+ const ssh=await address(dir,'ssh://git@127.0.0.1:2222/srv/team.git');
+ assert.match(ssh.display,/git@127\.0\.0\.1:2222/u);
+ git(root,'config','--global','url.https://different.invalid/.insteadOf',target.url);
+ await assert.rejects(remoteState(dir),e=>!String(e).includes('different.invalid'));
+});
+
+
 const git=(dir,...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8'}).trim();
-async function fixture(t){
+async function fixture(t,tls=false){
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp','network-'));
-	t.after(()=>fs.rm(root,{recursive:true,force:true}));
+	let backend;
+	const home=path.join(root,'isolated-home');await fs.mkdir(home);
+	const original=Object.fromEntries(['HOME','USERPROFILE','XDG_CONFIG_HOME','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM'].map(key=>[key,process.env[key]]));
+	for(const key of ['HOME','USERPROFILE','XDG_CONFIG_HOME'])process.env[key]=home;
+	process.env.GIT_CONFIG_GLOBAL=path.join(home,'.gitconfig');
+	process.env.GIT_CONFIG_NOSYSTEM='1';
+	t.after(async()=>{
+		try{
+			if(backend?.listening){
+				backend.closeAllConnections();
+				await new Promise((resolve,reject)=>backend.close(e=>e?reject(e):resolve()));
+			}
+		}finally{
+			for(const [key,value] of Object.entries(original)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+			await fs.rm(root,{recursive:true,force:true,maxRetries:8,retryDelay:150});
+		}
+	});
+	git(root,'config','--global','core.autocrlf','false');
 	git(root,'init','--quiet');
 	const dir=path.join(root,'A'),bare=path.join(root,'remote.git');
 	await fs.mkdir(dir);await initializeRepository(dir);
@@ -24,7 +85,14 @@ async function fixture(t){
 	await fs.writeFile(path.join(dir,'kb-manager.json'),'identity');await fs.writeFile(path.join(dir,'note.md'),'one\n');
 	git(dir,'add','.');git(dir,'commit','-qm','first');
 	git(root,'init','--bare','--quiet','--initial-branch=main',bare);git(bare,'config','http.receivepack','true');
-	const backend=createServer(async(req,res)=>{
+	let expected;
+	const requests=[];
+	const handler=async(req,res)=>{
+		const header=req.headers.authorization??'';
+		requests.push(header===expected?'accepted':'anonymous');
+		if(expected && header!==expected){
+			res.writeHead(401,{'WWW-Authenticate':'Basic realm="library"'});res.end();return;
+		}
 		try{
 			const chunks=[];for await(const chunk of req)chunks.push(chunk);
 			const url=new URL(req.url,'http://localhost');
@@ -40,34 +108,42 @@ async function fixture(t){
 			}
 			res.end(out.subarray(at+4));
 		}catch(error){res.statusCode=500;res.end(String(error));}
-	});
+	};
+	if(tls){
+		const key=path.join(home,'key.pem'),cert=path.join(home,'ca.pem');
+		const config=path.join(home,'certificate.cnf');
+		await fs.writeFile(config,'[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=ext\n[dn]\nCN=127.0.0.1\n[ext]\nsubjectAltName=IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\n');
+		execFileSync('openssl',['req','-config',config,'-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',key,'-out',cert],{cwd:home,stdio:'pipe'});
+		git(root,'config','--global','http.schannelUseSSLCAInfo','true');
+		git(root,'config','--global','http.sslCAInfo',cert);
+		backend=createTlsServer({key:await fs.readFile(key),cert:await fs.readFile(cert)},handler);
+	}else backend=createServer(handler);
 	await new Promise(resolve=>backend.listen(0,'127.0.0.1',resolve));
-	t.after(()=>new Promise(resolve=>backend.close(resolve)));
-	const url='http://127.0.0.1:'+backend.address().port+'/remote.git';
+	const url=(tls?'https':'http')+'://127.0.0.1:'+backend.address().port+'/remote.git';
 	await bindRemote(dir,'main','origin',url,'main');
-	return {root,dir,bare,target:(await remoteState(dir)).target};
+	return {root,dir,bare,requests,requireAuth:(user,token)=>{expected='Basic '+Buffer.from(user+':'+token).toString('base64');},target:(await remoteState(dir)).target};
 }
 
-for(const backend of ['native','builtin'])test(backend+' Git operations address only the selected nested repository',async t=>{
+test('System Git operations address only the selected nested repository',async t=>{
 	const {root,dir,bare,target}=await fixture(t);
 	const index=path.join(root,'.git','index');
 	const parentBranch=git(root,'symbolic-ref','HEAD');
-	await transfer(dir,'push',target,backend);
+	await transfer(dir,'push',target);
 	assert.equal(git(bare,'rev-parse','refs/heads/main'),git(dir,'rev-parse','HEAD'));
 	const peer=path.join(root,'B');
 	git(root,'clone','--quiet','--branch','main',bare,peer);
 	await fs.writeFile(path.join(peer,'note.md'),'two\n');
 	git(peer,'add','note.md');git(peer,'-c','user.name=Peer','-c','user.email=peer@example.invalid','commit','-qm','second');git(peer,'push','-q','origin','main');
-	await transfer(dir,'fetch',target,backend);
+	await transfer(dir,'fetch',target);
 	const plan=await changePlan(dir,'refs/remotes/origin/main');
 	assert.deepEqual(plan.changes,['note.md']);
-	await applyChange(dir,plan,'pull',backend,'ff-only');
+	await applyChange(dir,plan,'pull','ff-only');
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'two\n');
 	assert.equal(git(dir,'rev-parse','HEAD'),git(peer,'rev-parse','HEAD'));
 	await createBranch(dir,'topic');
-	await applyChange(dir,await changePlan(dir,'refs/heads/topic'),'switch',backend,'ff-only');
+	await applyChange(dir,await changePlan(dir,'refs/heads/topic'),'switch','ff-only');
 	assert.equal(git(dir,'branch','--show-current'),'topic');
-	if(backend==='native')assert.equal((await blameLine(dir,'note.md',1)).author,'Peer');
+	assert.equal((await blameLine(dir,'note.md',1)).author,'Peer');
 	await fs.writeFile(path.join(dir,'note.md'),'staged');git(dir,'add','note.md');await fs.writeFile(path.join(dir,'note.md'),'worktree');
 	await assert.rejects(changePlan(dir,'refs/heads/main'),/store all changes/);
 	assert.equal(git(dir,'show',':note.md'),'staged');
@@ -109,7 +185,7 @@ test('merge resolution stages only the confirmed blob and preserves a partially 
 
 test('automation grants use independent clocks and reset after reauthorization',()=>{
 	const id='12345678-1234-1234-1234-123456789abc';
-	const grant={location:'kb/A',branch:'main',remote:'',url:'',remoteBranch:'',backend:'builtin',commit:1,pull:0,push:5,
+	const grant={location:'kb/A',branch:'main',remote:'origin',routeDigest:'a'.repeat(64),remoteBranch:'main',commit:1,pull:0,push:5,
 		autoGlobMode:'exclude',autoGlobs:'',autoAfterEdits:false,autoFromLastCommit:false,autoPullOnStart:false};
 	const clocks=new AutomationClock();
 	assert.deepEqual(readGrants({[id]:grant}),{[id]:grant});
@@ -158,7 +234,7 @@ test('automatic commit uses exactly the authorized glob selection and stops for 
 
 test('managed refs refuse unmerged deletion and track a selected advertised remote branch',async t=>{
 	const {dir,bare,target}=await fixture(t);
-	await transfer(dir,'push',target,'builtin');
+	await transfer(dir,'push',target);
 	git(bare,'branch','upstream-topic','main');
 	const branches=await serverBranches(dir,target);
 	const remoteTopic=branches.find(b=>b.name==='upstream-topic');
@@ -188,9 +264,9 @@ test('manual native merge applies the previewed conflict strategy with two paren
 	const before=git(dir,'rev-parse','HEAD');
 	git(dir,'config','--unset','user.name');git(dir,'config','--unset','user.email');
 	const plan=await changePlan(dir,'refs/heads/side');
-	await assert.rejects(applyChange(dir,plan,'pull','native','merge','theirs'),/user\.name/u);
+	await assert.rejects(applyChange(dir,plan,'pull','merge','theirs'),/user\.name/u);
 	git(dir,'config','user.name','Library author');git(dir,'config','user.email','library@example.invalid');
-	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','native','merge','theirs');
+	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','merge','theirs');
 	assert.equal(git(dir,'rev-parse','HEAD^1'),before);
 	assert.equal(git(dir,'rev-parse','HEAD^2'),side);
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'right');
@@ -206,7 +282,7 @@ test('rebase preserves the original author and uses this repository’s committe
 	await fs.writeFile(path.join(dir,'main.md'),'outgoing');
 	git(dir,'add','main.md');git(dir,'commit','-qm','main');
 	git(dir,'config','user.name','Rebaser');git(dir,'config','user.email','rebaser@example.invalid');
-	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','native','rebase');
+	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','rebase');
 	assert.equal(git(dir,'show','-s','--format=%an/%cn <%ce>'),'Tester/Rebaser <rebaser@example.invalid>');
 });
 
@@ -220,7 +296,7 @@ test('clone inspects a remote library before publishing and preserves a competin
 	const {root,dir,target}=await fixture(t);
 	await fs.writeFile(path.join(dir,'kb-manager.json'),JSON.stringify(newIdentity('Research','',{id:'custom',version:'1'})));
 	git(dir,'add','kb-manager.json');git(dir,'commit','-qm','bind identity');
-	await transfer(dir,'push',target,'builtin');
+	await transfer(dir,'push',target);
 	const disk=new VaultDisk(root,'.vault-settings'), input={parent:defaults.parents[0],name:'Imported',url:target.url};
 	const clone=await downloadLibrary(disk,defaults,input);
 	assert.ok(clone.files.includes('note.md'));

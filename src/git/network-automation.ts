@@ -23,17 +23,18 @@ export function readGrants(input:unknown):Record<string,AutomationGrant>{
 	for(const [id,value] of Object.entries(input as Record<string,unknown>)){
 		if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(id) || !value || typeof value!=='object')continue;
 		const g=value as Record<string,unknown>;
-		const {location,branch,remote,url,remoteBranch,backend,commit,pull,push,paused}=g;
+		const {location,branch,remote,remoteBranch,commit,pull,push,paused}=g;
 		if(typeof location!=='string' || !location || typeof branch!=='string' || !branch ||
-			typeof remote!=='string' || typeof url!=='string' || typeof remoteBranch!=='string' ||
-			(backend!=='builtin' && backend!=='native') || typeof commit!=='number' || typeof pull!=='number' ||
+			typeof remote!=='string' || typeof remoteBranch!=='string' ||
+			typeof commit!=='number' || typeof pull!=='number' ||
 			typeof push!=='number' || ![commit,pull,push].every(v=>Number.isSafeInteger(v)&&v>=0) ||
 			(paused!==undefined && typeof paused!=='string'))continue;
 		const {autoGlobs,autoGlobMode,autoAfterEdits,autoFromLastCommit,autoPullOnStart}=g;
 		if(typeof autoGlobs!=='string' || (autoGlobMode!=='include' && autoGlobMode!=='exclude') ||
 			typeof autoAfterEdits!=='boolean' || typeof autoFromLastCommit!=='boolean' || typeof autoPullOnStart!=='boolean')continue;
-		result[id]={location,branch,remote,url,remoteBranch,backend,commit,pull,push,autoGlobs,autoGlobMode,autoAfterEdits,autoFromLastCommit,autoPullOnStart};
-		if(paused)result[id].paused=paused;
+		const routeDigest=typeof g.routeDigest==='string' && /^[a-f0-9]{64}$/u.test(g.routeDigest)?g.routeDigest:'';
+  result[id]={location,branch,remote,routeDigest,remoteBranch,commit,pull,push,autoGlobs,autoGlobMode,autoAfterEdits,autoFromLastCommit,autoPullOnStart};
+		if(paused || (!routeDigest && (pull || push || autoPullOnStart)))result[id].paused=paused==='failed'?'failed':'review';
 	}
 	return result;
 }

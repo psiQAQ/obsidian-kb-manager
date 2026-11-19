@@ -1,79 +1,103 @@
-import git from 'isomorphic-git';
 import * as fs from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { join } from 'node:path';
+import { join, normalize, resolve } from 'node:path';
 import { digest, statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
-import { repository } from './repository.ts';
+import { gitResult } from './network-native.ts';
 import { updateConfig } from './network-config.ts';
 
-export interface GitIdentity { name:string; email:string; indirect?:true }
-export interface IdentityPreview { identity:GitIdentity; config:string }
+export interface GitIdentity { name:string; email:string }
+export interface IdentityValue { scope:string; origin:string; value:string; direct:boolean }
+export interface IdentityPreview {
+	identity:GitIdentity; local:GitIdentity; config:string; shared:boolean;
+	values:{name:IdentityValue[];email:IdentityValue[]};
+}
+const keys=['name','email'] as const;
 
-async function localConfig(dir:string) {
-	const gitdir=join(dir,'.git');
+async function configFile(dir:string){
+	const gitdir=join(dir,'.git'),file=join(gitdir,'config');
 	if(!(await statIfPresent(gitdir))?.isDirectory() || await statIfPresent(join(gitdir,'commondir')) || await statIfPresent(join(gitdir,'gitdir')))
-		throw new Error(tr('需要本库独立的 Git 仓库','This library needs its own Git repository'));
-	const file=join(gitdir,'config');
+		throw new Error(tr('需要独立的库内 Git 仓库','A standalone library repository is required'));
 	const stat=await fs.lstat(file);
-	if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('需要库内独立的 Git 配置文件','Expected a regular local Git configuration file'));
-	const handle=await fs.open(file,constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-	try{
-		const opened=await handle.stat();
-		if(!opened.isFile() || opened.nlink!==1 || opened.ino!==stat.ino || opened.dev!==stat.dev)
-			throw new Error(tr('Git 配置文件已变化','Git configuration file changed'));
-		return await handle.readFile();
-	}finally{await handle.close();}
+	if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('需要独立的本地 Git 配置文件','Expected an ordinary local Git config file'));
+	return file;
 }
-
-async function indirectConfig(dir:string,bytes:Buffer){
-	return /^\s*\[\s*(?:include|includeif|extensions)\b/imu.test(bytes.toString('utf8')) ||
+async function values(dir:string,file:string,key:string){
+	const args=['config','--includes','--show-scope','--show-origin','--null','--get-all','user.'+key];
+	const {stdout}=await gitResult(dir,args,{allowedExitCodes:[0,1]});
+	const tokens=stdout.toString('utf8').split('\0');
+	tokens.pop();
+	const result:IdentityValue[]=[];
+	for(let i=0;i<tokens.length;i+=3){
+		const scope=tokens[i]!,origin=tokens[i+1]!,value=tokens[i+2]!;
+		const candidate=origin.startsWith('file:')?normalize(resolve(dir,origin.slice(5))):'';
+		const direct=scope==='local' && (process.platform==='win32'?candidate.toLowerCase()===file.toLowerCase():candidate===file);
+		result.push({scope,origin,value,direct});
+	}
+	return result;
+}
+export async function readRepositoryIdentity(dir:string):Promise<IdentityPreview>{
+	const file=await configFile(dir),bytes=await fs.readFile(file),config=digest(bytes);
+	const shared=/^\s*\[\s*(?:include|includeif|extensions)\b/imu.test(bytes.toString('utf8')) ||
 		!!await statIfPresent(join(dir,'.git','config.worktree')) || !!await statIfPresent(join(dir,'.git','worktrees'));
+	const [name,email]=await Promise.all(keys.map(key=>values(dir,file,key)));
+	const all={name:name!,email:email!},identity={name:'',email:''},local={name:'',email:''};
+	for(const key of keys){
+		for(const field of all[key]){
+			identity[key]=field.value;
+			if(field.direct)local[key]=field.value;
+		}
+	}
+	if(config!==digest(await fs.readFile(file)))throw new Error(tr('身份已变化，请刷新','Identity changed. Refresh the preview.'));
+	return {identity,local,values:all,config,shared};
 }
-
-export function indirectIdentityMessage(){
-	return tr('此库使用包含文件、扩展或工作树配置，无法确认有效的 Git 身份。请在原有 Git 工作流中查看或修改。','Includes, extensions or worktree configuration can change the effective Git identity. Review or edit this repository with Git.');
+function validateField(value:string){
+	if(Array.from(value).some(c=>c.charCodeAt(0)<32 || c.charCodeAt(0)===127 || c==='<' || c==='>'))
+		throw new Error(tr('Git 身份含无效字符','Invalid character in Git identity'));
 }
-
-export async function readRepositoryIdentity(dir:string):Promise<IdentityPreview> {
-	const bytes=await localConfig(dir);
-	// Both keys and the preview fingerprint come from the same local file snapshot.
-	const text=bytes.toString('utf8')
-		.replace(/(^|[^\\])((?:\\\\)*)\\\r?\n/gmu,'$1$2')
-		.replace(/^([ \t]*(?:name|email))[ \t]*(?:[#;][^\n]*)?\r?$/gimu,'$1 =');
-	const repo={...repository(dir),fs:{promises:{...fs,readFile:()=>Promise.resolve(text)}}};
-	const read=async(key:string)=>{
-		const value:unknown=await git.getConfig({...repo,path:'user.'+key});
-		return typeof value==='string'?value:'';
-	};
-	const [name,email]=await Promise.all([read('name'),read('email')]);
-	const identity:GitIdentity={name,email};
-	if(await indirectConfig(dir,bytes))identity.indirect=true;
-	return {identity,config:digest(bytes)};
-}
-
-export function requireIdentity(value:GitIdentity):GitIdentity {
-	if(value.indirect)throw new Error(indirectIdentityMessage());
+export function requireIdentity(value:GitIdentity):GitIdentity{
 	const name=value.name.trim(),email=value.email.trim();
-	if(!name || !email)throw new Error(tr('请在本库 Git 设置 → 身份与凭据中填写 user.name 和 user.email','Set user.name and user.email in Library Git settings → Identity and credentials'));
-	if([name,email].some(field=>Array.from(field).some(c=>c.charCodeAt(0)<32 || c.charCodeAt(0)===127 || c==='<' || c==='>')))
-		throw new Error(tr('Git 身份含无效的控制字符或尖括号','Git identity contains a control character or angle bracket'));
+	if(!name || !email)throw new Error(tr('请在 Git 配置中设置 user.name 和 user.email','Set user.name and user.email in Git configuration'));
+	validateField(name);validateField(email);
 	return {name,email};
 }
 
-export async function writeRepositoryIdentity(dir:string,preview:IdentityPreview,draft:GitIdentity) {
-	const identity=requireIdentity(draft);
-	const current=await localConfig(dir);
-	if(digest(current)!==preview.config)throw new Error(tr('仓库配置已变化，请重新预览','Repository configuration changed. Preview again.'));
-	if(await indirectConfig(dir,current))throw new Error(indirectIdentityMessage());
-	// The config writer edits physical lines. Preserve existing continued values.
-	if(/(?:^|[^\\])(?:\\\\)*\\\r?\n/mu.test(current.toString('utf8')))
-		throw new Error(tr('此 Git 配置含续行，请用 Git 修改作者身份','This config uses continued lines. Edit its identity with Git.'));
-	await updateConfig(dir,preview.config,async repo=>{
-		for(const key of ['name','email'] as const){
-			const path='user.'+key;
-			if((await git.getConfigAll({...repo,path})).length>1)throw new Error(tr('同一配置项含多个值，请用 Git 核对：','Review duplicate values in Git for ')+path);
-			if(preview.identity[key]!==identity[key])await git.setConfig({...repo,path,value:identity[key]});
+// Git can choose distinct authors and committers via configuration or the app
+// environment. Only publish a signature which the plugin actually previewed.
+export async function checkedIdentityArgs(dir:string,preview:GitIdentity):Promise<string[]>{
+	const {name,email}=requireIdentity(preview),expected=name+' <'+email+'>';
+	const roles=['GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT'];
+	for(const role of roles){
+		const output=await gitResult(dir,['var',role],{allowedExitCodes:[0,128]});
+		const ident=output.stdout.toString('utf8').trimEnd().replace(/ -?\d+ [+-]\d{4}$/u,'');
+		if(output.code || ident!==expected){
+			throw new Error(tr('Git 的实际身份与预览不同，请用系统 Git 提交，或核对作者、提交者设置和环境变量。','Git resolves a different identity than the preview. Commit with system Git or review author, committer and environment settings.')+' '+role+
+				(ident?' · '+ident:''));
+		}
+	}
+	// Pin both roles for the command even if another process changes the Git configuration.
+	return ['user','author','committer'].flatMap(key=>['-c',key+'.name='+name,'-c',key+'.email='+email]);
+}
+export function identityAfter(preview:IdentityPreview,key:keyof GitIdentity,local:string):IdentityValue|undefined{
+	const entries=preview.values[key],direct=entries.map(e=>e.direct).lastIndexOf(true);
+	const inherited=entries.filter(e=>!e.direct);
+	if(!local)return inherited[inherited.length-1];
+	if(direct>=0 && direct<entries.length-1)return entries[entries.length-1];
+	if(direct<0 && entries[entries.length-1]?.scope==='worktree')return entries[entries.length-1];
+	return {scope:'local',origin:'.git/config',value:local,direct:true};
+}
+export async function writeRepositoryIdentity(dir:string,preview:IdentityPreview,draft:GitIdentity){
+	const fresh=await readRepositoryIdentity(dir);
+	if(fresh.shared)throw new Error(tr('此库含特殊的本地配置，请使用 Git 修改','This repository has special local configuration. Edit it with Git.'));
+	if(fresh.config!==preview.config || JSON.stringify(fresh.values)!==JSON.stringify(preview.values))
+		throw new Error(tr('仓库配置或继承身份已变化，请重新预览','Repository configuration or inherited identity changed. Preview again.'));
+	const changes=keys.filter(key=>draft[key].trim()!==preview.local[key] || !draft[key].trim() && preview.values[key].some(v=>v.direct));
+	for(const key of changes)validateField(draft[key]);
+	if(!changes.length)return;
+	await updateConfig(dir,preview.config,async shadow=>{
+		for(const key of changes){
+			const file=join(shadow.gitdir,'config'),next=draft[key].trim(),field='user.'+key;
+			const args=next?['--replace-all',field,next]:['--unset-all',field];
+			await gitResult(dir,['config','--file',file,'--no-includes',...args]);
 		}
 	});
 }

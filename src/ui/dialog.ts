@@ -2,8 +2,8 @@ import { App, Modal, Notice, Setting } from 'obsidian';
 
 export class Dialog extends Modal {
 	constructor(app: App, title: string) { super(app); this.setTitle(title); }
-	text(label: string, initial: string, change: (value: string)=>void) {
-		new Setting(this.contentEl).setName(label).addText(input=>input.setValue(initial).onChange(change));
+	text(label: string, initial: string, change: (value: string)=>void, placeholder = '') {
+		new Setting(this.contentEl).setName(label).addText(input=>input.setPlaceholder(placeholder).setValue(initial).onChange(change));
 	}
 	choice(label: string, options: Record<string,string>, change: (value:string)=>void) {
 		new Setting(this.contentEl).setName(label).addDropdown(input=>input.addOptions(options).onChange(change));

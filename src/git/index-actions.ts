@@ -1,10 +1,10 @@
 import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import git from 'isomorphic-git';
+import { gitResult } from './network-native.ts';
 import { applyPatch, structuredPatch, reversePatch } from 'diff';
 import { digest, statIfPresent } from '../fs/vault.ts';
-import { repository } from './repository.ts';
+import { withIndex } from './index-transaction.ts';
 import { previewVersion } from './versions.ts';
 import { guardGit } from './guard.ts';
 import type { Change, VersionPreview } from './versions.ts';
@@ -14,8 +14,6 @@ export type IndexAction = 'stage' | 'unstage';
 export function candidates(preview: VersionPreview, action: IndexAction): Change[] {
 	return preview.changes.filter(c => action === 'stage' ? c.work !== c.stage : c.head !== c.stage);
 }
-
-interface BlobInfo { oid: string; mode: number }
 
 export async function verifyWorkingFile(dir:string,file:string) {
 	if(path.win32.isAbsolute(file) || /[\\:\0]/u.test(file) || file.split('/').some(p=>!p || p==='.' || p==='..' || p.toLowerCase()==='.git')){
@@ -29,127 +27,68 @@ export async function verifyWorkingFile(dir:string,file:string) {
 	}
 }
 
-async function objects(dir: string, tree: ReturnType<typeof git.STAGE>, names: readonly string[]) {
-	const entries = new Map<string, BlobInfo>();
-	const routes = new Set<string>(['.']);
-	for (const file of names) {
-		const parts = file.split('/');
-		for (let i=1; i<=parts.length; i++) routes.add(parts.slice(0,i).join('/'));
-	}
-	await git.walk({...repository(dir), trees:[tree], map: async (file,[entry]) => {
-		if (!entry || !routes.has(file)) return null;
-		if (await entry.type() === 'blob') entries.set(file,{oid:await entry.oid(), mode:await entry.mode()});
-		return undefined;
-	}});
-	return entries;
+async function indexEntry(dir:string,file:string){
+	const raw=(await gitResult(dir,['ls-files','--stage','-z','--',file])).stdout.toString('utf8');
+	const match=/^(\d{6}) ([0-9a-f]{40}) 0\t/u.exec(raw);
+	return match?{mode:match[1]!,oid:match[2]!}:undefined;
 }
 
-async function publishedPreview(dir: string, preview: VersionPreview, locks?: Set<string>) {
-	const fresh = await previewVersion(dir,locks);
-	if (fresh.signature !== preview.signature) throw new Error(fromEnglish('HEAD, index or working files changed. Refresh the preview.','HEAD、索引或工作区已变化，请刷新预览。'));
+async function publishedPreview(dir:string,preview:VersionPreview,locks?:Set<string>){
+	const fresh=await previewVersion(dir,locks);
+	if(fresh.signature!==preview.signature)throw new Error(fromEnglish('HEAD, index or working files changed. Refresh the preview.','HEAD、索引或工作区已变化，请刷新预览。'));
 	return fresh;
 }
 
-// Prepare all edits against a private index and publish once under Git's index.lock.
-// Interrupted batches never expose a partially updated index to another client.
-export async function changeIndex(dir: string, preview: VersionPreview, action: IndexAction, files: readonly string[]) {
+export async function changeIndex(dir:string,preview:VersionPreview,action:IndexAction,files:readonly string[]){
 	await writeIndex(dir,preview,action,files);
 }
 
-async function writeIndex(dir: string, preview: VersionPreview, action: IndexAction, files: readonly string[], replacement?:Uint8Array) {
-	const repo = repository(dir);
+async function writeIndex(dir:string,preview:VersionPreview,action:IndexAction,files:readonly string[],replacement?:Uint8Array){
 	await publishedPreview(dir,preview);
-	const index = path.join(repo.gitdir,'index');
-	const lockPath = index+'.lock';
-	const lock = await fs.open(lockPath,'wx',0o600);
-	const owned=await lock.stat({bigint:true});
-	async function ownsLock(){
-		const current=await fs.lstat(lockPath,{bigint:true}).catch((error:NodeJS.ErrnoException)=>{
-			if(error.code==='ENOENT')return undefined;
-			throw error;
-		});
-		return current?.dev===owned.dev && current.ino===owned.ino;
-	}
-	let shadow: string | undefined;
-	let published = false;
-	try {
-		const fresh = await publishedPreview(dir,preview,new Set([lockPath]));
-		const available = new Map(candidates(fresh,action).map(change => [change.file,change]));
-		if (!files.length || files.some(file=>!available.has(file))) throw new Error(fromEnglish('Select files from the current preview.','请选择当前预览中的文件。'));
-		shadow = await fs.mkdtemp(path.join(repo.gitdir,'kb-index-'));
-		const shadowIndex = path.join(shadow,'index');
-		const originalIndex = await statIfPresent(index);
-		if (originalIndex) {
-			await fs.copyFile(index,shadowIndex);
-			await lock.chmod(originalIndex.mode & 0o777);
+	await withIndex(dir,async(indexFile,locks,publish)=>{
+		const fresh=await publishedPreview(dir,preview,locks);
+		const allowed=new Set(candidates(fresh,action).map(c=>c.file));
+		if(!files.length || files.some(file=>!allowed.has(file)))throw new Error(fromEnglish('Select files from the current preview.','请选择当前预览中的文件。'));
+		const stdin=Buffer.from([...new Set(files)].join('\0')+'\0');
+		if(replacement){
+			const file=files[0]!,entry=await indexEntry(dir,file);
+			if(!entry)throw new Error(fromEnglish('Index entry changed','索引条目已变化'));
+			const oid=(await gitResult(dir,['hash-object','-w','--stdin'],{stdin:replacement})).stdout.toString('ascii').trim();
+			await gitResult(dir,['update-index','--add','--cacheinfo',entry.mode,oid,file],{indexFile});
+		}else if(action==='stage'){
+			await gitResult(dir,['add','-A','--pathspec-from-file=-','--pathspec-file-nul'],{indexFile,stdin});
+		}else if(fresh.head){
+			await gitResult(dir,['reset','--quiet','--pathspec-from-file=-','--pathspec-file-nul',fresh.head],{indexFile,stdin});
+		}else{
+			await gitResult(dir,['update-index','--force-remove','-z','--stdin'],{indexFile,stdin});
 		}
-		const originals = !replacement && action === 'unstage' && fresh.head
-			? await objects(dir,git.TREE({ref:fresh.head}),files)
-			: await objects(dir,git.STAGE(),files);
-		for (const filepath of new Set(files)) {
-			const change = available.get(filepath)!;
-			let blob = action === 'unstage' && fresh.head ? originals.get(filepath) : undefined;
-			if (replacement) {
-				const indexed=originals.get(filepath);
-				if(!indexed)throw new Error(fromEnglish('Index entry no longer exists.','索引条目已不存在。'));
-				blob={oid:await git.writeBlob({...repo,blob:replacement}),mode:indexed.mode};
-			} else if (action === 'stage' && change.work) {
-				const location = path.join(dir,filepath);
-				const stat = await fs.lstat(location);
-				if (!stat.isFile()) throw new Error(fromEnglish('File type changed: ','文件类型已变化：')+filepath);
-				const bytes = await fs.readFile(location);
-				if (digest(bytes)!==change.fingerprint) throw new Error(fromEnglish('File changed: ','文件已变化：')+filepath);
-				const mode = process.platform === 'win32' ? originals.get(filepath)?.mode ?? 0o100644
-					: (stat.mode & 0o111 ? 0o100755 : 0o100644);
-				blob = {oid:await git.writeBlob({...repo,blob:bytes}),mode};
-			}
-			await git.updateIndex({...repo,gitdir:shadow,filepath,...(blob ? {add:true,...blob} : {remove:true,force:true})});
-		}
-		await publishedPreview(dir,preview,new Set([lockPath]));
-		await lock.writeFile(await fs.readFile(shadowIndex));
-		await lock.sync();
-		await lock.close();
-		if(!await ownsLock())throw new Error(fromEnglish('Index lock changed. Refresh and retry.','索引锁已变化，请刷新并重试。'));
-		await fs.rename(lockPath,index);
-		published = true;
-	} finally {
-		try {
-			if (!published) {
-				await lock.close();
-				if(await ownsLock())await fs.unlink(lockPath);
-			}
-		} finally {
-			if (shadow) {
-				await fs.rm(path.join(shadow,'index'),{force:true});
-				await fs.rmdir(shadow);
-			}
-		}
-	}
+		await publishedPreview(dir,preview,locks);
+		await publish();
+	});
 }
 
-export async function fileComparison(dir: string, preview: VersionPreview, file: string, staged: boolean) {
-	const fresh = await publishedPreview(dir,preview);
-	const change = candidates(fresh,staged ? 'unstage' : 'stage').find(c=>c.file===file);
-	if (!change) throw new Error(fromEnglish('File is no longer in this comparison.','文件已不在当前差异清单中。'));
-	const repo = repository(dir);
-	const indexed = (await objects(dir,git.STAGE(),[file])).get(file);
-	const index = indexed ? (await git.readBlob({...repo,oid:indexed.oid})).blob : undefined;
-	if (staged) {
-		const head = change.head ? (await git.readBlob({...repo,oid:fresh.head,filepath:file})).blob : undefined;
-		return {before:head,after:index};
+export async function fileComparison(dir:string,preview:VersionPreview,file:string,staged:boolean){
+	const fresh=await publishedPreview(dir,preview);
+	const change=candidates(fresh,staged?'unstage':'stage').find(c=>c.file===file);
+	if(!change)throw new Error(fromEnglish('File is no longer in this comparison.','文件已不在当前差异清单中。'));
+	const entry=await indexEntry(dir,file);
+	const index=entry?(await gitResult(dir,['cat-file','blob',entry.oid])).stdout:undefined;
+	if(staged){
+		const before=change.head?(await gitResult(dir,['cat-file','blob',fresh.head+':'+file])).stdout:undefined;
+		return {before,after:index};
 	}
-	const work = change.work ? await fs.readFile(path.join(dir,file)) : undefined;
-	if (work && digest(work)!==change.fingerprint) throw new Error(fromEnglish('File changed: ','文件已变化：')+file);
+	const work=change.work?await fs.readFile(path.join(dir,file)):undefined;
+	if(work && digest(work)!==change.fingerprint)throw new Error(fromEnglish('File changed: ','文件已变化：')+file);
 	return {before:index,after:work};
 }
 
 export async function editorIndexBase(dir:string,file:string){
 	await verifyWorkingFile(dir,file);
 	await guardGit(dir);
-	const repo=repository(dir);
-	const indexed=(await objects(dir,git.STAGE(),[file])).get(file);
-	if(!indexed && await git.isIgnored({...repo,filepath:file}))return undefined;
-	return indexed ? (await git.readBlob({...repo,oid:indexed.oid})).blob : new Uint8Array();
+	const entry=await indexEntry(dir,file);
+	if(entry)return (await gitResult(dir,['cat-file','blob',entry.oid])).stdout;
+	const check=await gitResult(dir,['check-ignore','--quiet','--',file],{allowedExitCodes:[0,1]});
+	return check.code===0?undefined:new Uint8Array();
 }
 
 export function textHunks(before:Uint8Array,after:Uint8Array,timeout=500) {

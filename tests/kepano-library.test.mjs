@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import test from 'node:test';
-import git from 'isomorphic-git';
+import {gitResult} from '../src/git/network-native.ts';
+import {saveVersion,previewVersion} from '../src/git/versions.ts';
 import { parseDocument } from 'yaml';
 import { VaultDisk, digest } from '../src/fs/vault.ts';
 import { defaults, discover } from '../src/kb/catalog.ts';
@@ -64,10 +65,12 @@ test('Kepano creation, independent commits, scoped bindings and selective move/r
 	const repos=[repository(await disk.path(first.location)),repository(await disk.path(second.location))];
 	for(const [i,repo] of repos.entries()){
 		await fs.writeFile(path.join(repo.dir,'note.md'),String(i));
-		await git.add({...repo,filepath:'note.md'});
-		await git.commit({...repo,message:'local '+String(i),author:{name:'Editor',email:'test@example.invalid'}});
+		await gitResult(repo.dir,['config','--local','user.name','Editor']);
+		await gitResult(repo.dir,['config','--local','user.email','test@example.invalid']);
+		await gitResult(repo.dir,['add','--','note.md']);
+		await saveVersion(repo.dir,await previewVersion(repo.dir),'local '+String(i));
 	}
-	assert.notEqual(await git.resolveRef({...repos[0],ref:'HEAD'}),await git.resolveRef({...repos[1],ref:'HEAD'}));
+	assert.notDeepEqual((await gitResult(repos[0].dir,['rev-parse','HEAD'])).stdout,(await gitResult(repos[1].dir,['rev-parse','HEAD'])).stdout);
 	const stage=await fs.readFile(path.join(repos[0].dir,'.git/index'));
 	const doc=parseDocument(await read(first,bookBase));
 	doc.setIn(['filters','and',1],'file.name == "My books"');

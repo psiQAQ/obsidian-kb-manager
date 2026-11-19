@@ -7,7 +7,7 @@ import { discover, recheck } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
 import { previewVersion, saveVersion } from '../git/versions.ts';
 import type { CommitMode } from '../git/versions.ts';
-import { initializeRepository } from '../git/repository.ts';
+import { initializeRepository,readCommit } from '../git/repository.ts';
 import { showSourceHistory } from './source-history.ts';
 import { Dialog } from './dialog.ts';
 import { assertGitEnabled } from './device.ts';
@@ -39,7 +39,10 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 		if(commitMode!=='smart' && !preview.staged)throw new Error(tr('请先暂存要提交的内容','Stage changes first'));
 		if(commitMode==='amend') {
 			if(!preview.head)throw new Error(tr('没有可修订的提交','No commit to amend'));
+			const {commit}=await readCommit(dir,preview.head);
 			dialog.lines([tr('此操作将用当前暂存内容替换最后一个提交。原提交 ID：','This will replace the last commit using the current index. Original commit ID: ')+preview.head]);
+			dialog.lines([tr('保留原作者：','Original author retained: ')+commit.author.name+' <'+commit.author.email+'>',
+				tr('提交者取自下方 Git 身份。','The Git identity below is used for the committer.')]);
 		}
 		const previous=lib.identity && plugin.saves[lib.identity.id];
 		if(previous && !previous.committed)dialog.lines([
@@ -55,7 +58,10 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			let message=draft ?? renderCommitMessage(prefs,moment().format(prefs.commitDateFormat),hostname(),files);
 			dialog.text(tr('提交说明',"Commit message"),message,v=>{message=v;});
 			if(prefs.listChangedFilesInMessageBody)dialog.lines([tr('以下文件名会附在提交正文中：','These filenames will be appended to the commit body:'),...files]);
-			dialog.lines([tr('本库 Git 提交身份','Library Git commit identity')+' · '+(preview.identity.name || '—')+' <'+(preview.identity.email || '—')+'>']);
+			dialog.lines((['name','email'] as const).map(key=>{
+				const source=preview.identitySources[key];
+				return 'user.'+key+' · '+(source?source.value+' · '+source.scope+' · '+source.origin:tr('未设置','Unset'));
+			}));
 			if(!preview.identity.name || !preview.identity.email)dialog.action(tr('设置本库 Git 身份','Set library Git identity'),async()=>{
 				await editRepositoryIdentity(plugin,lib);dialog.close();
 			});
