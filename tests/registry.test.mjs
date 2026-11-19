@@ -146,3 +146,33 @@ test('Vault root ignore preview preserves the existing bytes and refuses stale c
 	const final = await previewRegistryIgnore(disk);
 	assert.equal(final.before,final.after);
 });
+
+test('copying the complete library to a second Vault restores the ID, preferences, data and Git history',async t=>{
+ const source=await setup(t),target=await setup(t);
+ const from='Research/Reading',to='Restored/Reading';
+ const {identity,manifest}=await source.create(from);
+ const src=await source.disk.path(from),dst=await target.disk.path(to);
+ const {execFileSync}=await import('node:child_process');
+ const git=(dir,...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8'}).trim();
+ await fs.writeFile(path.join(src,'.gitignore'),'/kb.toml\n');
+ await fs.writeFile(path.join(src,'Reading.md'),'Handwritten notes\n');
+ git(src,'init','-q','-b','main');
+ git(src,'add','-A');
+ git(src,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','Original notes');
+ await registerVaultLibrary(source.disk,source.config,from);
+ await fs.mkdir(path.dirname(dst),{recursive:true});
+ await fs.cp(src,dst,{recursive:true});
+ const plan=await previewImport(target.disk,target.config,to,target.assets);
+ await confirmImport(target.disk,target.config,plan,'rebind',target.assets,target.visible);
+ const [lib]=await discover(target.disk,target.config);
+ assert.equal(lib.identity.id,identity.id);
+ assert.deepEqual(lib.preferences,{showFileMenu:false});
+ assert.equal(lib.identity.managed[0].root,to);
+ assert.equal(git(dst,'rev-parse','HEAD'),git(src,'rev-parse','HEAD'));
+ assert.equal(git(dst,'check-ignore','--','kb.toml'),'kb.toml');
+ assert.equal(git(dst,'ls-tree','-r','--name-only','HEAD','--','kb.toml'),'');
+ assert.equal(await fs.readFile(path.join(dst,'Reading.md'),'utf8'),'Handwritten notes\n');
+ assert.equal(await fs.readFile(path.join(src,'kb.toml'),'utf8'),manifest);
+ assert.deepEqual((await readVaultRegistry(source.disk)).paths,[from]);
+ assert.deepEqual((await readVaultRegistry(target.disk)).paths,[to]);
+});

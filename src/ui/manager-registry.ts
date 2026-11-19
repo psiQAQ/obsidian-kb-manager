@@ -8,6 +8,7 @@ import { confirmImport, previewImport } from '../registry/import.ts';
 import type { ImportMode } from '../registry/import.ts';
 import { amendRegistry, parseRegistry, registryIgnoreRule, registryPath } from '../registry/paths.ts';
 import { Dialog } from './dialog.ts';
+import { reviewRegistryProtection } from './registry-ignore.ts';
 import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
 import { gitResult } from '../git/network-native.ts';
@@ -51,6 +52,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 	const assets = (lib:Library)=>plugin.templateAssets(lib);
 	const preview = await previewImport(disk,config,location,assets,missing);
 	const dialog = new Dialog(plugin.app,missing ? t('重新定位已登记知识库','Relocate registered library') : t('预览知识库导入','Preview library import'));
+	const protect=await reviewRegistryProtection(plugin,dialog);
 	dialog.lines([
 		...descriptions(plugin,preview.library), registryPath,
 		...(missing ? [missing.location + ' → ' + location,...(missing.id ? [] : [t('此前没有记录该库的 ID，请核对所选库的身份。','The previous ID is unavailable. Verify the selected library identity.')])] : []),
@@ -78,7 +80,10 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 		}
 	}
 	const apply = (mode:ImportMode)=>async()=>{
-		await plugin.exclusive(location,()=>confirmImport(disk,plugin.config,preview,mode,assets,visible(plugin)));
+		await plugin.exclusive(location,async()=>{
+			await protect();
+			await confirmImport(disk,plugin.config,preview,mode,assets,visible(plugin));
+		});
 		dialog.close();
 		await plugin.refresh();
 	};
@@ -128,6 +133,7 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 	const existing = await Promise.all(paths.filter(path=>!libraries.some(lib=>lib.location===path)).map(path=>registryCandidate(disk,config,path)));
 	const seen = [...libraries,...existing.filter(lib=>lib!==undefined)];
 	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'));
+	const protect=await reviewRegistryProtection(plugin,dialog);
 	dialog.lines([location || t('Vault 根目录','Vault root'),registryPath,...(problem ? [problem] : []),...skipped]);
 	const selected = new Set<string>();
 	for (const lib of libraries) {
@@ -151,6 +157,7 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 			if (!additions.length && !problem) return;
 			const next = amendRegistry(paths,{add:additions},disk.configDir);
 			await writeVaultRegistry(disk,raw,next,async()=>{
+				await protect();
 				for (const path of additions) {
 					const current = await registryCandidate(disk,plugin.config,path);
 					if (!current?.signature || current.problem || current.signature!==libraries.find(lib=>lib.location===path)?.signature) {

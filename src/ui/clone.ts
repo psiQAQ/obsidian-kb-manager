@@ -1,3 +1,4 @@
+import { reviewRegistryProtection } from './registry-ignore.ts';
 import { gitDisabled } from './device.ts';
 import { Notice, Setting } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
@@ -24,6 +25,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 		const auth=password?{username:username||'git',password}:undefined;
 		const target=await cloneTarget(plugin.disk,plugin.config,request);
 		const confirm=new Dialog(plugin.app,t('确认下载知识库','Confirm library download'));
+		const protect=await reviewRegistryProtection(plugin,confirm);
 		confirm.lines([target.display+' → '+target.relative,...target.warnings]);
 		confirm.action(t('下载并检查文件','Download and inspect files'),async()=>{
 			const clone=await plugin.exclusiveGit(target.relative,()=>downloadLibrary(plugin.disk,plugin.config,request,auth));
@@ -42,7 +44,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 			const publish=async(choice?:CloneManifestChoice)=>{
 				publishing=true;
 				try{
-					await plugin.exclusiveGit(target.relative,()=>clone.publish(plugin.config,choice));
+					await plugin.exclusiveGit(target.relative,async()=>{await protect();await clone.publish(plugin.config,choice);});
 					preview.close();await plugin.refresh();
 				}finally{
 					publishing=false;

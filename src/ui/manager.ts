@@ -16,7 +16,8 @@ import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
 import { registryPath } from '../registry/paths.ts';
-import { applyIgnoreRule, previewRegistryIgnore, readVaultRegistry } from '../registry/desktop.ts';
+import { reviewRegistryProtection } from './registry-ignore.ts';
+import { readVaultRegistry } from '../registry/desktop.ts';
 
 export const managerType='knowledge-base-manager-view';
 export class ManagerView extends ItemView {
@@ -197,14 +198,13 @@ export class ManagerView extends ItemView {
 			await readVaultRegistry(disk);
 			const skeleton=input.source===kepanoSource?this.plugin.kepanoSkeleton:this.plugin.skeleton;
 			const preview=await previewCreate(disk,config,{...input,displayName:input.displayName||input.name},skeleton);
-			const ignore=await previewRegistryIgnore(disk);
 			const confirm=new Dialog(this.app,tr('确认创建',"Confirm creation"));
+			const protect=await reviewRegistryProtection(this.plugin,confirm);
 			confirm.lines([preview.location,tr('模板','Template')+' · '+preview.template.id,...preview.warnings,...preview.template.folders.map(p=>p+'/'),
 				...new Set([...preview.template.files.map(f=>f.name),identityFile]),registryPath,tr('.git/（main，空历史）',".git/ (main, empty history)"),
-				...(ignore.before===ignore.after ? [] : [tr('Vault 根目录 .gitignore 添加规则','Add to Vault root .gitignore')+' · '+ignore.rule]),
 				...preview.template.excluded.map(p=>tr('排除 ',"Exclude ")+p)]);
 			confirm.action(tr('创建',"Create"),async()=>{
-				if(ignore.before!==ignore.after)await applyIgnoreRule(disk,ignore);
+				await protect();
 				await createLibrary(disk,this.plugin.config,preview,skeleton);
 				confirm.close();dialog.close();await this.render();
 			});
