@@ -8,6 +8,7 @@ import { confirmImport, previewImport } from '../registry/import.ts';
 import type { ImportMode } from '../registry/import.ts';
 import { amendRegistry, parseRegistry, registryIgnoreRule, registryPath } from '../registry/paths.ts';
 import { Dialog } from './dialog.ts';
+import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
 import { gitResult } from '../git/network-native.ts';
 
@@ -69,7 +70,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 				});
 			}
 		} catch (error) { dialog.lines([String(error)]); }
-		if (preview.library.git === 'local') {
+	if (!gitDisabled(plugin) && preview.library.git === 'local') {
 			try {
 				const tracked = (await gitResult(await disk.path(location),['ls-files','-z','--',identityFile])).stdout.length > 0;
 				if (tracked) dialog.lines([t('本库 Git 已跟踪 kb.toml。已有索引记录需要另行处理。','Git tracks kb.toml. Review the existing index entry separately.')]);

@@ -65,13 +65,16 @@ test('explicit recursive scans skip templates, configuration, links and nested l
 	await create('Selected/Group/Actual');
 	await create('Selected/Group/Actual/Nested');
 	await create('Templates/Unregistered');
+	await fs.mkdir(path.join(root,'Selected','Blank'));
+	await fs.writeFile(path.join(root,'Selected','Blank','kb.toml'),'version = 1\n');
 	await fs.mkdir(path.join(root,configDir,'Fake'),{recursive:true});
 	await fs.writeFile(path.join(root,configDir,'Fake','kb.toml'),'version = 1\n');
 	await fs.symlink(path.join(root,'Selected','Group','Actual'),path.join(root,'Linked'),'junction');
 	const all = await scanVaultFolder(disk,config,'');
-	assert.deepEqual(all.libraries.map(lib=>lib.location),['Selected/Group/Actual']);
+	assert.deepEqual(all.libraries.filter(lib=>!lib.problem).map(lib=>lib.location),['Selected/Group/Actual']);
+	assert.ok(all.libraries.find(lib=>lib.location==='Selected/Blank')?.problem);
 	assert.ok(all.skipped.some(item=>item.startsWith('Linked')));
-	assert.deepEqual((await scanVaultFolder(disk,config,'Selected')).libraries.map(lib=>lib.location),['Selected/Group/Actual']);
+	assert.deepEqual((await scanVaultFolder(disk,config,'Selected')).libraries.filter(lib=>!lib.problem).map(lib=>lib.location),['Selected/Group/Actual']);
 	await assert.rejects(scanVaultFolder(disk,config,'Selected/Group/Actual/Nested'));
 	assert.equal((await readVaultRegistry(disk)).raw,null);
 });

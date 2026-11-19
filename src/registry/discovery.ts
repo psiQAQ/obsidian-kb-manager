@@ -31,7 +31,11 @@ export async function validateLibraryLocation(disk:VaultDisk, config:Config, loc
 export async function registryCandidate(disk:VaultDisk, config:Config, location:string):Promise<Library|undefined> {
 	try {
 		await validateLibraryLocation(disk,config,location);
-		return await inspect(disk,location);
+		const lib = await inspect(disk,location);
+		if (lib && !lib.problem && !lib.identity && !lib.mapping) {
+			lib.problem = tr('kb.toml 缺少知识库身份或路径映射','kb.toml is missing a library identity or path mapping');
+		}
+		return lib;
 	} catch (error) { return {location,git:'missing',problem:String(error)}; }
 }
 
