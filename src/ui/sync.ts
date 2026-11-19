@@ -10,6 +10,7 @@ import { resolveRef, applyChange, changePlan, remoteState, transfer } from '../g
 import { Dialog } from './dialog.ts';
 import { credential, recordPull } from './network.ts';
 import { versions } from './versions.ts';
+import { commitRoles } from './repository-identity.ts';
 
 export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draft?:string,onCommitted?:()=>void,mode:CommitMode='smart',onComplete?:()=>void){
 	const id=lib.identity?.id,t=plugin.t;
@@ -44,7 +45,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 				inspect.close();
 				if(plan.commits.length<2){await confirmPush(true);return;}
 				const review=new Dialog(plugin.app,t('压缩待推送的提交','Squash outgoing commits'));
-				review.lines([lib.location,plan.branch,...plan.commits.map(c=>c.oid.slice(0,10)+' · '+c.message),
+				review.lines([lib.location,plan.branch,...commitRoles(plan.identity,'squash'),...plan.commits.map(c=>c.oid.slice(0,10)+' · '+c.message),
 					'refs/kb-manager/before-squash/'+plan.head]);
 				let message=plan.commits.map(c=>c.message).reverse().join(' / ');
 				review.text(t('合并后的提交说明','Squashed commit message'),message,value=>{message=value;});
@@ -80,7 +81,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 			});
 			fetch.close();
 			const pull=new Dialog(plugin.app,t('确认本库拉取','Confirm library pull'));
-			pull.lines([lib.location,plan.branch+' · '+plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod+' · '+prefs.mergeStrategy,...plan.changes]);
+			pull.lines([lib.location,plan.branch+' · '+plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod+' · '+prefs.mergeStrategy,...commitRoles(plan.identity,prefs.syncMethod),...plan.changes]);
 			pull.action(t('继续','Continue'),async()=>{
 				await run(()=>applyChange(dir,plan,'pull',prefs.syncMethod,prefs.mergeStrategy));
 				recordPull(plugin,id!,plan.changes);pull.close();await plugin.refresh();await confirmPush();

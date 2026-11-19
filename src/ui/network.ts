@@ -9,10 +9,11 @@ import type KnowledgeBaseManager from '../main.ts';
 import {discover,recheck} from '../kb/catalog.ts';
 import type {Library} from '../kb/catalog.ts';
 import {Dialog} from './dialog.ts';
-import {applyChange,bindRemote,changePlan,createBranch,remoteState,secretKey,transfer} from '../git/network.ts';
+import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,secretKey,transfer} from '../git/network.ts';
 import type {AutomationGrant,RemoteTarget,Credentials} from '../git/network.ts';
 import {history,saveVersion} from '../git/versions.ts';
 import {mergePanel} from './network-merge.ts';
+import {commitRoles} from './repository-identity.ts';
 import {deletionPlan,removeBranch,remoteRemoval,removeRemote,serverBranches,trackBranch} from '../git/network-refs.ts';
 
 const pulledFiles=new WeakMap<KnowledgeBaseManager,Map<string,string[]>>();
@@ -91,7 +92,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 				if(op==='pull'){
 					const plan=await changePlan(dir,'refs/remotes/'+target.remote+'/'+target.remoteBranch);
 					const next=new Dialog(plugin.app,t('确认拉取','Confirm pull'));
-					next.lines([lib.location,plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod,
+					next.lines([lib.location,plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod,...commitRoles(plan.identity,prefs.syncMethod),
 						...(prefs.syncMethod==='merge'?[t('冲突策略','Conflict strategy')+' · '+prefs.mergeStrategy]:[]),...plan.changes]);
 					next.action(t('应用','Apply'),async()=>{
 						await write(async folder=>{
@@ -148,13 +149,29 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 		dialog.open();
 	});
 	button('settings-2',t('本库远端与凭据','Library remote and credentials'),async()=>{
-		const {dir,state,dialog,confirm}=await preview(t('本库远端与凭据','Library remote and credentials'));
+		const {dir,state,dialog}=await preview(t('本库远端与凭据','Library remote and credentials'));
 		let remote=state.target?.remote??'origin',url=state.target?.url??'',branch=state.target?.remoteBranch??state.preview.branch;
 		dialog.lines(state.remotes.map(r=>r.remote));
 		dialog.text(t('远端名称','Remote name'),remote,v=>{remote=v;});
 		dialog.text('URL',url,v=>{url=v;});
 		dialog.text(t('上游分支','Upstream branch'),branch,v=>{branch=v;});
-		confirm(t('保存本库上游','Save library upstream'),folder=>bindRemote(folder,state.preview.branch,remote,url,branch));
+		dialog.action(t('预览上游修改','Preview upstream changes'),async()=>{
+			const plan=await bindingPlan(dir,state.preview.branch,remote,url,branch);
+			const next=new Dialog(plugin.app,t('确认上游修改','Confirm upstream changes'));
+			const before=plan.oldBranch?.replace(/^refs\/heads\//u,'');
+			next.lines([lib.location+' · '+plan.branch,
+				t('上游','Upstream')+' · '+(plan.oldUpstream && before?plan.oldUpstream+'/'+before:'∅')+' → '+plan.remote+'/'+plan.remoteBranch,
+				t('获取','Fetch')+' · '+(plan.old?.display??'∅')+' → '+plan.fetch.display,
+				t('推送','Push')+' · '+(plan.oldPush?.display??'∅')+' → '+(plan.push?.display??'∅')]);
+			next.action(t('保存本库上游','Save library upstream'),async()=>{
+				await write(folder=>bindRemote(folder,plan.branch,plan.remote,plan.fetch.url,plan.remoteBranch,plan));
+				const grant=plugin.grants[id];
+				if(grant && (grant.push || grant.pull || grant.autoPullOnStart) && JSON.stringify(grant)!==JSON.stringify(grantFor(plugin,lib,await remoteState(dir)))){
+					grant.paused='review';await plugin.persist();
+				}
+				next.close();dialog.close();await plugin.refresh();
+			});next.open();
+		});
 		const urls=new Set(state.target?[state.target.url,state.target.pushUrl]:[]);
 		for(const endpoint of urls){
 			if(!endpoint.startsWith('https://'))continue;

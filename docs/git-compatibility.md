@@ -36,7 +36,7 @@
 | 界面 | `showFileMenu` | 已接入。决定知识库文件右键菜单是否提供本库 Git 状态入口。 |
 | 界面 | `disablePopups`、`showErrorNotices`、`disablePopupsForNoChanges` | 已接入。可控制 Git 信息、错误、无改动通知。上游界面也使用 `showInformationalNotifications`、`showNoChangesNotifications` 两个反向显示键。对话框内的操作结果独立展示。 |
 | 界面 | `showStatusBar`、`showBranchStatusBar`、`changedFilesInStatusBar` | 已接入。状态栏跟随当前文件所属库，分支和变更数量可独立控制。 |
-| 身份 | `user.name`、`user.email` | 从本库 `.git/config` 读取，设置修改也写回本库。桌面按字段继承系统 Git 的有效配置，清空库内覆盖后恢复继承。 |
+| 身份 | `user.name`、`user.email` | 从本库 `.git/config` 读取，设置修改也写回本库。桌面按字段继承系统 Git 的有效配置，清空库内覆盖后恢复继承。若 Git 的作者或提交者单独覆盖了预览身份，须在命令行完成本次提交。 |
 | 身份 | `username`、`gitServerPasswordSecret` | 桌面 HTTPS 默认交给系统凭据助手，SSH 使用系统 SSH。可按库和 HTTPS 远端明确选用 SecretStorage 备用凭据。 |
 | 高级 | `limitToVault`、`basePath`、`gitDir` | 边界限制。仓库位置来自已验证的知识库，Git 元数据固定在该库的 `.git`。 |
 | 高级 | `updateSubmodules`、`submoduleRecurseCheckout` | 边界限制。不递归操作嵌套仓库。 |

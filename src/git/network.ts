@@ -37,6 +37,7 @@ export async function localConfig(dir:string){
  return items.map(row=>{const i=row.indexOf('\n');return [row.slice(0,i),row.slice(i+1)] as const;});
 }
 export async function remoteState(dir:string) {
+ const configFile=path.join(dir,'.git','config'),config=digest(await fs.readFile(configFile));
  const preview=await previewVersion(dir),branch=refName(preview.branch);
  const fields=await localConfig(dir);
  const get=(key:string)=>fields.filter(([k])=>k===key).map(([,value])=>value);
@@ -51,23 +52,39 @@ export async function remoteState(dir:string) {
   target={remote:refName(name,true),url:fetch.url,pushUrl:push.url,remoteBranch:refName(merge?.slice(11)??branch),
    fetchDisplay:fetch.display,pushDisplay:push.display,signature:digest(JSON.stringify([fetch.signature,push.signature]))};
  }
- return {preview,branches,remotes,target,config:digest(await fs.readFile(path.join(dir,'.git','config')))};
+ if(digest(await fs.readFile(configFile))!==config)throw new Error(fromEnglish('Repository configuration changed','仓库配置已变化'));
+ return {preview,branches,remotes,target,config};
 }
-export async function bindRemote(dir:string,branch:string,remote:string,url:string,remoteBranch:string) {
- const state=await remoteState(dir);
- if(state.preview.branch!==branch)throw new Error(fromEnglish('Branch changed','分支已变化'));
- refName(remote,true);refName(remoteBranch);
- const canonical=endpoint(url),existing=state.remotes.find(r=>r.remote===remote);
- if(existing && endpoint(existing.url)!==canonical)throw new Error(fromEnglish('Remote already has a different URL. Choose a new name.','同名远端已绑定其他 URL，请选择新名称。'));
- await address(dir,canonical);
- await updateConfig(dir,state.config,async tmp=>{
-  const put=(key:string,value:string)=>gitResult(dir,['config','--file',path.join(tmp.gitdir,'config'),key,value]);
-  if(!existing){
-   await put('remote.'+remote+'.url',canonical);
-   await put('remote.'+remote+'.fetch','+refs/heads/*:refs/remotes/'+remote+'/*');
-  }
-  await put('branch.'+branch+'.remote',remote);await put('branch.'+branch+'.merge','refs/heads/'+remoteBranch);
- });
+export async function bindingPlan(dir:string,branch:string,remote:string,url:string,remoteBranch:string){
+	refName(remote,true);refName(remoteBranch);
+	const state=await remoteState(dir);
+	if(state.preview.branch!==branch)throw new Error(fromEnglish('Branch changed','分支已变化'));
+	const fields=await localConfig(dir);
+	const one=(key:string)=>{
+		const matches=fields.filter(([name])=>name===key);
+		if(matches.length>1)throw new Error(fromEnglish('Multiple values require manual review','此配置含多个值，请手动核对'));
+		return matches[0]?.[1];
+	};
+	const old=one('remote.'+remote+'.url'),pushUrl=one('remote.'+remote+'.pushurl');
+	if(old===undefined && state.remotes.some(r=>r.remote===remote))throw new Error(fromEnglish('Only a repository-local remote can be edited','只可编辑库内配置的远端'));
+	const existing=old===undefined?undefined:await address(dir,old,remote);
+	const oldPush=old===undefined?undefined:await address(dir,pushUrl??old,remote,true);
+	const fetch=await address(dir,endpoint(url));
+	const push=pushUrl===undefined?await address(dir,fetch.url,undefined,true):oldPush;
+	return {branch,remote,remoteBranch,config:state.config,old:existing,oldPush,fetch,push,
+		oldUpstream:one('branch.'+branch+'.remote'),oldBranch:one('branch.'+branch+'.merge')};
+}
+export async function bindRemote(dir:string,branch:string,remote:string,url:string,remoteBranch:string,reviewed?:Awaited<ReturnType<typeof bindingPlan>>) {
+	const plan=await bindingPlan(dir,branch,remote,url,remoteBranch);
+	if(reviewed?JSON.stringify(reviewed)!==JSON.stringify(plan):plan.old && plan.old.url!==plan.fetch.url)
+		throw new Error(fromEnglish('Preview the remote configuration changes again','请重新预览远端配置修改'));
+	await updateConfig(dir,plan.config,async tmp=>{
+		const put=(key:string,value:string)=>gitResult(dir,['config','--file',path.join(tmp.gitdir,'config'),key,value]);
+		await put('remote.'+remote+'.url',plan.fetch.url);
+		if(!plan.old)await put('remote.'+remote+'.fetch','+refs/heads/*:refs/remotes/'+remote+'/*');
+		await put('branch.'+branch+'.remote',remote);
+		await put('branch.'+branch+'.merge','refs/heads/'+remoteBranch);
+	});
 }
 export function authOptions(url:string,credentials?:Credentials){
  if(credentials && isSsh(url))throw new Error(fromEnglish('SSH uses system authentication.','SSH 使用系统认证。'));

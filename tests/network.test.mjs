@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {createServer as createTlsServer} from 'node:https';
 import {address,endpoint} from '../src/git/network-http.ts';
 import {initializeRepository} from '../src/git/repository.ts';
-import {applyChange,bindRemote,changePlan,createBranch,remoteState,transfer} from '../src/git/network.ts';
+import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,transfer} from '../src/git/network.ts';
 import {blameLine} from '../src/git/network-native.ts';
 import {clearUndo,finishMerge,inspectMerge,markResolved,undoInfo} from '../src/git/network-merge.ts';
 import {readGrants,AutomationClock,selectPaths} from '../src/git/network-automation.ts';
@@ -41,6 +41,52 @@ test('authorization migration scrubs URLs, secrets, raw errors and obsolete back
  assert.deepEqual(readGrants(saved),saved);
  const local=readGrants({[id]:{...old,paused:undefined,push:0}});
  assert.equal(local[id].paused,undefined);
+});
+
+test('rebind previews upstream, retains the explicit push address, and detects stale or ambiguous configuration',async t=>{
+	const {dir,target}=await fixture(t);
+	const proposed='https://next.invalid/project',pushUrl='https://publish.invalid/other';
+	git(dir,'config','remote.origin.pushurl',pushUrl);
+	const before=(await remoteState(dir)).target;
+	const plan=await bindingPlan(dir,'main','origin',proposed,'upstream');
+	assert.equal(plan.old.url,target.url);
+	assert.equal(plan.oldPush.url,pushUrl);
+	assert.equal(plan.push.url,pushUrl);
+	git(dir,'config','branch.main.description','external edit');
+	await assert.rejects(bindRemote(dir,'main','origin',proposed,'upstream',plan));
+	assert.equal(git(dir,'config','remote.origin.url'),target.url);
+	await bindRemote(dir,'main','origin',proposed,'upstream',await bindingPlan(dir,'main','origin',proposed,'upstream'));
+	const after=(await remoteState(dir)).target;
+	assert.equal(after.url,proposed);
+	assert.equal(after.pushUrl,pushUrl);
+	assert.equal(after.remoteBranch,'upstream');
+	assert.notEqual(after.signature,before.signature);
+	git(dir,'config','--add','remote.origin.url','https://second.invalid/repo');
+	await assert.rejects(bindingPlan(dir,'main','origin',proposed,'upstream'));
+});
+
+test('SSH adapter exchanges real Git packs over an isolated command transport',async t=>{
+	const compiler=process.platform==='win32'?'gcc':'cc';
+	if(spawnSync(compiler,['--version']).error?.code==='ENOENT'){
+		t.skip('C compiler unavailable for the local SSH transport fixture');return;
+	}
+	const {dir,bare}=await fixture(t);
+	const home=process.env.HOME,cwd=process.cwd();
+	const shim=path.join(home,process.platform==='win32'?'ssh.exe':'ssh');
+	execFileSync(compiler,[path.join(cwd,'tests','fixtures','ssh-transport.c'),'-o',shim],{cwd:home,stdio:'pipe'});
+	const original=process.env.PATH;process.env.PATH=home+path.delimiter+original;
+	try{
+		const url='ssh://git@fixture.invalid:2222/remote.git';
+		await bindRemote(dir,'main','ssh-origin',url,'main');
+		const target=(await remoteState(dir)).target;
+		assert.match(target.fetchDisplay,/fixture.invalid:2222/u);
+		await assert.rejects(transfer(dir,'push',target,{username:'private',password:'local-only'}));
+		await transfer(dir,'push',target);
+		assert.equal(git(bare,'rev-parse','main'),git(dir,'rev-parse','HEAD'));
+		git(dir,'update-ref','-d','refs/remotes/ssh-origin/main');
+		await transfer(dir,'fetch',target);
+		assert.equal(git(dir,'rev-parse','refs/remotes/ssh-origin/main'),git(bare,'rev-parse','main'));
+	}finally{process.env.PATH=original;}
 });
 
 test('repository URLs reject credentials, remote helpers and changed effective targets',async t=>{

@@ -2,9 +2,18 @@ import type KnowledgeBaseManager from '../main.ts';
 import { recheck } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
 import { identityAfter, readRepositoryIdentity, writeRepositoryIdentity } from '../git/identity.ts';
-import type { IdentityValue } from '../git/identity.ts';
+import type { GitIdentity,IdentityValue } from '../git/identity.ts';
+import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
 import { assertGitEnabled } from './device.ts';
+
+export function commitRoles(who:GitIdentity,method:'ff-only'|'merge'|'rebase'|'squash'):string[]{
+	if(method==='ff-only')return [];
+	const label=method==='rebase'
+		?tr('变基保留每次提交的原作者。新提交者：','Rebase keeps each original author. New committer: ')
+		:tr('新提交的作者和提交者：','Author and committer for new commits: ');
+	return [label+(who.name||'—')+' <'+(who.email||'—')+'>'];
+}
 
 export async function editRepositoryIdentity(plugin:KnowledgeBaseManager,lib:Library){
 	assertGitEnabled(plugin);
