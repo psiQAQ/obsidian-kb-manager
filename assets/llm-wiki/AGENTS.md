@@ -116,8 +116,8 @@ Knowledge Base Manager 创建内置 LLM Wiki 实例时，会把总览绑定到�
 以默认布局的 `示例父目录/研究示例/` 建立“方法”入口为例：
 
 1. 在 `wiki/方法.md` 使用“分类入口模板”，填写标题与日期，设 `type: category`。纯导航可保留空 `sources`；事实性说明仍须来源。入口可写导读和阅读顺序，不受独立事实文章的建页阈值限制。
-2. 创建 `wiki/bases/`，复制 `templates/Bases/分类专用模板.base` 为 `wiki/bases/方法.base`，不覆盖已有文件。
-3. 填完全部 Base 占位符：`__KB_ROOT__` 为 `示例父目录/研究示例`，`__WIKI_DIR__` 为 `wiki`，`__TEMPLATES_DIR__` 为 `templates`，`__CATEGORY_PATH__` 为 `示例父目录/研究示例/wiki/方法`（不含 `.md`）。按实际映射替换，统一 `/` 且不加末尾斜杠；引号按 Bases 表达式及 YAML 规则转义。
+2. 创建 `wiki/bases/`，复制 `Templates/Bases/分类专用模板.base` 为 `wiki/bases/方法.base`，不覆盖已有文件。
+3. 填完全部 Base 占位符：`__KB_ROOT__` 为 `示例父目录/研究示例`，`__WIKI_DIR__` 为 `wiki`，`__TEMPLATES_DIR__` 为 `Templates`，`__CATEGORY_PATH__` 为 `示例父目录/研究示例/wiki/方法`（不含 `.md`）。按实际映射替换，统一 `/` 且不加末尾斜杠；引号按 Bases 表达式及 YAML 规则转义。
 4. 入口页的 `__BASE_PATH__` 改为 `示例父目录/研究示例/wiki/bases/方法.base`。成员页的 `categories` 列表包含 `"[[示例父目录/研究示例/wiki/方法]]"`，不用跨库歧义短名。
 5. 入口加入本库索引，记录本次操作日志。可调整列、排序和视图，不能移除范围与类别过滤。默认仅显示生成知识，展示人工笔记前另行约定范围，并明确限制在本库 Notes。
 6. 在 Obsidian 打开入口与 Base，检查仅显示本库该类别，其他类别及其他库同名类别不出现，跨库嵌入为空。检查器不执行 Base 表达式，不能代替实际显示验证。

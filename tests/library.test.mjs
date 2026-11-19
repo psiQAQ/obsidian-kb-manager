@@ -60,7 +60,7 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	const root=await disk.path(lib.location);
 	const base=parse(await fs.readFile(path.join(root,'knowledge.base'),'utf8'));
 	assert.ok(base.views[1].filters.and.includes('file.inFolder("knowledge-base/光学 研究/Notes")'));
-	assert.equal(await fs.readFile(path.join(root,'templates/人工笔记模板.md'),'utf8'),skeleton['templates/人工笔记模板.md']);
+	assert.equal(await fs.readFile(path.join(root,'Templates/人工笔记模板.md'),'utf8'),skeleton['Templates/人工笔记模板.md']);
 	const run=(...args)=>execFileSync('git',['-C',root,...args]).toString().trim();
 	assert.equal(run('for-each-ref','--format=%(refname)'),'refs/heads/main');
 	assert.equal(run('rev-list','--count','HEAD'),'1');

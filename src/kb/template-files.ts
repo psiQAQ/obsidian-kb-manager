@@ -116,7 +116,7 @@ export async function previewTemplateRestore(access: TemplateAccess, kind: Built
 	skeleton: Record<string, string>, sharedFiles: ReadonlySet<string>): Promise<Preset[]> {
 	if (!folder.startsWith(library + '/')) throw occupied(folder);
 	segments(folder);
-	const prefix = kind === 'kepano' ? 'Templates/' : 'templates/';
+	const prefix = 'Templates/';
 	const lookup = pathLookup(access);
 	const rendered = kind === 'kepano' ? renderKepano(skeleton, library) : skeleton;
 	const presets: Preset[] = [];

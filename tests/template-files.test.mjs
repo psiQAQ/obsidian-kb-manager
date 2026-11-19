@@ -63,8 +63,8 @@ test('v3 builds complete local templates while v2 Fusion accepts its original pa
 	const names = template => template.files.map(file => file.name);
 	assert.equal(fusion.version, '3');
 	assert.equal(personal.version, '3');
-	assert.equal(names(fusion).filter(name => /^templates\/.+\.md$/u.test(name)).length, 6);
-	assert.equal(names(fusion).filter(name => /^templates\/.+\.base$/u.test(name)).length, 1);
+	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 6);
+	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 52);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 30);
 	assert.ok(!names(personal).some(name => name.startsWith('README.v')));
@@ -96,7 +96,7 @@ test('uses existing v2 shared inputs and restores only missing Fusion files insi
 	for (const item of plan) await restoreTemplateFile(access, item, root);
 	assert.ok([...files.keys()].every(path => before.has(path) || path.startsWith(local + '/')));
 	for (const [path, content] of before) assert.equal(files.get(path), content);
-	assert.equal(files.get(local + '/' + missingName), wiki['templates/' + missingName]);
+	assert.equal(files.get(local + '/' + missingName), wiki['Templates/' + missingName]);
 	assert.deepEqual(await previewTemplateRestore(access, 'llm-wiki', root, local, wiki, available), []);
 });
 
