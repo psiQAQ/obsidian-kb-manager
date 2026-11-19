@@ -8,6 +8,7 @@ import { registryPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
 import { Dialog } from './dialog.ts';
+import { reviewTemplateFilter } from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
 
 function identitySource(field:InitialIdentity['name']){
@@ -74,7 +75,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 				const next=new Dialog(plugin.app,review.head?tr('确认现有首提交并登记','Confirm existing initial commit and register'):tr('确认目标目录中的首提交','Confirm initial commit at the destination'));
 				next.lines([receipt.path]);
 				showInitialPlan(next,review.git,review.head);
-				const protect=await reviewRegistryProtection(plugin,next);
+				const registry=await reviewRegistryProtection(plugin,next);
+				const filter=await reviewTemplateFilter(plugin.app.vault,next,receipt.preview.input.source);
+				const protect=async()=>{await filter();await registry();};
 				next.action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(next,
 					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect))));
 				recovery.close();next.open();
@@ -101,7 +104,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
 		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
 		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryPath]);
-		const protect=await reviewRegistryProtection(plugin,confirm);
+		const registry=await reviewRegistryProtection(plugin,confirm);
+		const filter=await reviewTemplateFilter(plugin.app.vault,confirm,preview.input.source);
+		const protect=async()=>{await filter();await registry();};
 		confirm.action(tr('创建','Create'),()=>run(confirm,()=>plugin.exclusiveGit(preview.location,()=>createLibrary(disk,plugin.config,preview,skeleton,protect))));
 		confirm.open();
 	});

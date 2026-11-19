@@ -130,7 +130,7 @@ export async function publish(ctx:Catalog,src:string,parent:string,name:string,v
 		throw error;
 	}
 }
-export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeof createPreview>>,assets:Templates){
+export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeof createPreview>>,assets:Templates,beforeRegistration?:()=>Promise<void>){
 	const {input,initial,template}=confirmed;
 	const location=await creationLocation(ctx,input.parent,input.name),store={root:location,disk:ctx.disk,configDir:ctx.configDir};
 	const identity=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry,confirmed.id);
@@ -149,6 +149,7 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 	const protect=()=>applyMobileRegistryIgnore(ctx,confirmed.registryIgnore,true);
 	const register=async()=>{
 		try{
+			await beforeRegistration?.();
 			await updateMobileRegistry(ctx,{add:[location]});
 			if(!(await readMobileRegistry(ctx)).includes(location))throw new Error(tr('登记写入无法验证','Could not verify the registry update'));
 		}catch(error){throw new Error(String(error)+tr('。初始提交已创建，请重试登记：','. The initial commit is ready. Retry registration for: ')+location);}

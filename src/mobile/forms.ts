@@ -1,6 +1,7 @@
 import {Setting} from 'obsidian';
 import {tr} from '../i18n.ts';
 import {readManifest} from '../kb/identity-core.ts';
+import {reviewTemplateFilter} from '../ui/template-filter.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {createPreview,instantiate} from './catalog.ts';
 import type {Library} from './catalog.ts';
@@ -47,9 +48,10 @@ export function createForm(plugin:MobilePlugin) {
 		review.lines(tracked.length?tracked:[tr('所有文件均被忽略，将创建空的初始提交。','All files are ignored. The initial commit will be empty.')]);
 		review.contentEl.createEl('h3',{text:tr('仅保存在本库的文件','Files kept in the library working tree')});
 		review.lines([...new Set(['kb.toml',...p.template.files.map(file=>file.name)])].filter(file=>!trackedSet.has(file)));
+		const filter=await reviewTemplateFilter(plugin.app.vault,review,p.input.source);
 		review.action(tr('创建并提交','Create and commit'),async()=>{
 			plugin.assertEnabled();
-			const result=await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates));
+			const result=await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates,filter));
 			review.close();dlg.close();
 			const receipt=new Dialog(plugin.app,tr('知识库已创建','Knowledge base created'));
 			receipt.lines([result.location,result.branch+' · '+initialMessage,result.head,
