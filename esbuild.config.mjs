@@ -31,11 +31,13 @@ const skeletonPaths = [
   "Templates/人工笔记模板.md",
   "Templates/分类入口模板.md",
   "Templates/归档模板.md",
+  "Templates/操作日志模板.md",
   "Templates/新来源模板.md",
   "Templates/知识页面模板.md",
   "Templates/资料摘要模板.md",
   "wiki/index.md",
   "wiki/log.md",
+  "wiki/logs/.gitkeep",
   "wiki/overview.md"
 ];
 

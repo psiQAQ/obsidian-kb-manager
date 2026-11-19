@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import test from 'node:test';
+import { parse } from 'yaml';
 import { readManifest, writeIdentity } from '../src/kb/identity-core.ts';
 import { bindSharedKepanoPage, rebindKepano } from '../src/kb/kepano.ts';
-import { builtinTemplate, kepanoBindingAssets, kepanoTemplate } from '../src/kb/template-core.ts';
+import { builtinTemplate, isBuiltinWiki, isKepano, kepanoBindingAssets, kepanoTemplate, sharedTemplateKind } from '../src/kb/template-core.ts';
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder,
 	previewTemplateRestore, restoredTemplateBindings, restoreTemplateFile } from '../src/kb/template-files.ts';
 
@@ -56,25 +57,38 @@ const identity = {
 	description: '', archived: false, managed: [],
 };
 
-test('v3 builds complete local templates while v2 Fusion accepts its original paths without templates', () => {
+test('Fusion v4 bundles operation logs and recognizes previous template versions', () => {
 	const root = 'Libraries/QA';
 	const fusion = builtinTemplate(wiki, { displayName: 'QA', description: '', destination: root });
 	const personal = kepanoTemplate(kepano, root);
 	const names = template => template.files.map(file => file.name);
-	assert.equal(fusion.version, '3');
+	assert.equal(fusion.version, '4');
 	assert.equal(personal.version, '3');
-	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 6);
+	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 7);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
+	assert.ok(names(fusion).includes('wiki/logs/.gitkeep'));
+	const operation = fusion.files.find(file => file.name === 'Templates/操作日志模板.md');
+	assert.ok(operation);
+	assert.deepEqual(parse(new TextDecoder().decode(operation.bytes).split(/^---\r?$/mu)[1]), {
+		type: 'operation', managed_by: 'agent', date: '{{date:YYYY-MM-DD}}', operation: '', disposition: '', sources: [], related: [],
+	});
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 52);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 30);
 	assert.ok(!names(personal).some(name => name.startsWith('README.v')));
+	for (const version of ['1', '2', '3', '4']) {
+		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
+		assert.equal(isKepano({ id: personal.id, version }), version !== '4');
+	}
+	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = wiki['kb.toml'].replace(/^templates = .*\r?\n/mu, '');
 	const v2 = { ...identity, template: { id: 'llm-wiki', version: '2' } };
+	assert.equal(sharedTemplateKind(v2.template), 'llm-wiki');
 	const block = writeIdentity('', v2).replace(/^version = 1\n/u, '');
 	const manifest = old + '\n' + block;
 	assert.equal(readManifest(manifest).mapping.templates, undefined);
 	assert.equal(localTemplateFolder(root, 'llm-wiki', readManifest(manifest).mapping), root + '/templates');
 	assert.throws(() => readManifest(manifest.replace('version = "2"', 'version = "3"')), /templates/u);
+	assert.throws(() => readManifest(manifest.replace('version = "2"', 'version = "4"')), /templates/u);
 });
 
 test('uses existing v2 shared inputs and restores only missing Fusion files inside the library', async () => {
@@ -90,7 +104,7 @@ test('uses existing v2 shared inputs and restores only missing Fusion files insi
 	assert.equal(await legacyTemplateFolder(access, 'llm-wiki'), shared);
 	const available = await listTemplateFiles(access, shared, '');
 	const plan = await previewTemplateRestore(access, 'llm-wiki', root, local, wiki, available);
-	assert.equal(plan.length, 5);
+	assert.equal(plan.length, 6);
 	assert.ok(plan.some(item => item.path === local + '/Bases/分类专用模板.base'));
 	assert.deepEqual(files, before);
 	for (const item of plan) await restoreTemplateFile(access, item, root);

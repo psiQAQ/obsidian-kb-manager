@@ -13,8 +13,10 @@ export interface Variables { displayName: string; description: string; destinati
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
+const wikiVersion = '4';
+const builtinVersions = { 'llm-wiki': ['1','2','3',wikiVersion], kepano: ['1','2','3'] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
-	return template?.id === id && ['1','2','3'].includes(template.version);
+	return template?.id === id && builtinVersions[id].includes(template.version);
 }
 export function isKepano(template?:TemplateIdentity) {
 	return isBuiltin(template,'kepano');
@@ -65,7 +67,7 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 		if (name === 'knowledge.base') text = renderBase(text, vars.destination);
 		return { name, bytes: new TextEncoder().encode(text) };
 	});
-	return { id:'llm-wiki', version:'3', entry:'wiki/index.md', files, folders:[], excluded:[] };
+	return { id:'llm-wiki', version:wikiVersion, entry:'wiki/index.md', files, folders:[], excluded:[] };
 }
 
 export const excludedNames = new Set(['.git','.cache','.venv','__pycache__','node_modules']);
