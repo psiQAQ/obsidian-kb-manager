@@ -1,3 +1,4 @@
+import { assertPrivateManifestTree } from './manifest-privacy.ts';
 import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -61,6 +62,10 @@ async function writeIndex(dir:string,preview:VersionPreview,action:IndexAction,f
 			await gitResult(dir,['reset','--quiet','--pathspec-from-file=-','--pathspec-file-nul',fresh.head],{indexFile,stdin});
 		}else{
 			await gitResult(dir,['update-index','--force-remove','-z','--stdin'],{indexFile,stdin});
+		}
+		if(action==='stage' && files.includes('kb.toml')){
+			const tree=(await gitResult(dir,['write-tree'],{indexFile})).stdout.toString().trim();
+			await assertPrivateManifestTree(dir,tree);
 		}
 		await publishedPreview(dir,preview,locks);
 		await publish();

@@ -1,3 +1,4 @@
+import { assertPrivateManifestTree } from './manifest-privacy.ts';
 import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -85,6 +86,7 @@ export async function saveVersion(dir:string,confirmed:VersionPreview,message:st
 					{indexFile,stdin:Buffer.from(items.map(c=>c.file+'\0').join(''))});
 			}
 			const tree=(await gitResult(dir,['write-tree'],{indexFile})).stdout.toString().trim();
+			await assertPrivateManifestTree(dir,tree);
 			const prior=fresh.head?await readCommit(dir,fresh.head):undefined;
 			if(mode!=='amend' && prior?.commit.tree===tree)throw new Error(tr('没有待提交的改动','No changes to commit'));
 			const parents=mode==='amend'?prior!.commit.parent:fresh.head?[fresh.head]:[];

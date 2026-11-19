@@ -49,7 +49,7 @@ async function stillMerging(dir:string,plan:MergePlan) {
 export async function markResolved(dir:string,plan:MergePlan,file:string) {
 	const run=await stillMerging(dir,plan);
 	const entry=plan.conflicts.find(c=>c.file===file);
-	if(!entry || file==='kb-manager.json')throw new Error(tr('请检查库身份和冲突文件','Review the library identity and conflict path'));
+	if(!entry || ['kb.toml','kb-manager.json'].includes(file))throw new Error(tr('请检查库身份和冲突文件','Review the library identity and conflict path'));
 	if(entry.work===null){
 		await run(['update-index','--force-remove','--',file]);return;
 	}
@@ -65,7 +65,7 @@ export async function finishMerge(dir:string,plan:MergePlan,message:string) {
 	if(plan.conflicts.length || !message.trim())throw new Error(tr('请先解决所有冲突，并填写合并说明','Resolve conflicts and enter a merge message.'));
 	const run=await stillMerging(dir,plan);
 	const identityArgs=await checkedIdentityArgs(dir,plan.identity);
-	if(plan.stagedPaths.includes('kb-manager.json'))throw new Error(tr('合并将改变库身份，请在外部核对','The merge would change the library identity. Review externally.'));
+	if(plan.stagedPaths.some(name=>['kb.toml','kb-manager.json'].includes(name)))throw new Error(tr('合并将改变库身份，请在外部核对','The merge would change the library identity. Review externally.'));
 	await run([...identityArgs,'commit','--no-verify','--no-gpg-sign','-m',message]);
 	return (await run(['rev-parse','HEAD'])).trim();
 }

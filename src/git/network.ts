@@ -2,6 +2,7 @@ import {fromEnglish} from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {createHash} from 'node:crypto';
+import { assertPrivateManifestHistory } from './manifest-privacy.ts';
 import {previewVersion} from './versions.ts';
 import {checkedNative,gitResult} from './network-native.ts';
 import {endpoint,address,isSsh} from './network-http.ts';
@@ -95,6 +96,7 @@ export async function transfer(dir:string,operation:'fetch'|'push',target:Remote
  if(!current || JSON.stringify(current)!==JSON.stringify(target))throw new Error(fromEnglish('Remote target changed','远端目标已变化'));
  if(operation==='push'&&!preview.head)throw new Error(fromEnglish('There are no commits to push','尚无可推送的提交'));
  const remoteRef='refs/heads/'+target.remoteBranch,tracking='refs/remotes/'+target.remote+'/'+target.remoteBranch;
+ if(operation==='push')await assertPrivateManifestHistory(dir,preview.head);
  const url=operation==='push'?target.pushUrl:target.url;
  if(operation==='push')await gitResult(dir,['push','--no-verify','--no-follow-tags','--recurse-submodules=no','--porcelain','--',target.remote,preview.head+':'+remoteRef],authOptions(url,credentials));
  else await gitResult(dir,['fetch','--refmap=','--no-tags','--no-recurse-submodules','--',target.remote,remoteRef+':'+tracking],authOptions(url,credentials));
@@ -120,7 +122,7 @@ export async function changePlan(dir:string,ref:string){
 	if(preview.changes.length || !preview.head)throw new Error(fromEnglish('Commit or store all changes before switching or pulling.','切换或拉取前请先提交或妥善保存所有变更。'));
 	const oid=await resolveRef(dir,ref);
 	const [before,after]=await Promise.all([tree(dir,preview.head),tree(dir,oid)]);
-	if(!before.has('kb-manager.json') || before.get('kb-manager.json')!==after.get('kb-manager.json'))throw new Error(fromEnglish('Incoming history changes the knowledge base identity. Review externally.','目标历史会修改知识库身份，请在外部核对。'));
+	if(['kb.toml','kb-manager.json'].some(name=>before.get(name)!==after.get(name)))throw new Error(fromEnglish('Incoming history changes the knowledge base identity. Review externally.','目标历史会修改知识库身份，请在外部核对。'));
 	const changes=[...new Set([...before.keys(),...after.keys()])].filter(f=>before.get(f)!==after.get(f));
 	for(const file of before.keys())if(((await statIfPresent(path.join(dir,file)))?.nlink??1)>1)throw new Error(fromEnglish('Working tree contains a hard link: ','工作区含硬链接：')+file);
 	for(const file of changes)if(!before.has(file)){
