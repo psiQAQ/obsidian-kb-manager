@@ -8,6 +8,19 @@ import type {Disk} from './disk.ts';
 export interface Store {disk:Disk;root:string;configDir:string}
 export interface Author {name:string;email:string}
 export const repo=(s:Store)=>mobileRepo(s.disk,s.root,s.configDir);
+export function ignoredParents(r:ReturnType<typeof repo>){
+	const ignored=new Map<string,Promise<boolean>>();
+	return async (file:string)=>{
+		// A nested negation cannot re-include a file inside an ignored directory.
+		for(let slash=file.indexOf('/');slash!==-1;slash=file.indexOf('/',slash+1)){
+			const folder=file.slice(0,slash+1);
+			let check=ignored.get(folder);
+			if(!check){check=git.isIgnored({...r,filepath:folder});ignored.set(folder,check);}
+			if(await check)return true;
+		}
+		return false;
+	};
+}
 const meta=(s:Store,name:string)=>s.root+'/.git/'+name;
 export const portableManifestError=()=>new Error(tr('Git 中含有本地 kb.toml 清单。请在桌面检查暂存区和提交历史。','Git contains the local kb.toml manifest. Review the index and commit history on desktop.'));
 export function containsPrivateManifest(raw:string){
@@ -70,6 +83,7 @@ export async function guard(s:Store,owned:ReadonlySet<string>=new Set()){
 
 export async function mobileStatus(s:Store,owned?:ReadonlySet<string>){
 	const state=await guard(s,owned), r=repo(s);
+	const ignoredParent=ignoredParents(r);
 	await checkWorktree(s);
 	let head='';
 	try{head=await git.resolveRef({...r,ref:'HEAD'});}catch(e){if(!(e instanceof git.Errors.NotFoundError))throw e;}
@@ -77,6 +91,7 @@ export async function mobileStatus(s:Store,owned?:ReadonlySet<string>){
 	for(const [file,h,w,i] of await git.statusMatrix({...r,refresh:false})){
 		relative(file,s.configDir);
 		if(h===w && h===i)continue;
+		if(!h && w && !i && await ignoredParent(file))continue;
 		const fingerprint=w?await hash(new Uint8Array(await s.disk.readBinary(s.root+'/'+file))):undefined;
 		changes.push({file,h,w,i,fingerprint});
 	}

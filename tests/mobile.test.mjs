@@ -100,11 +100,14 @@ test('mobile adapter creates all template types and preserves each library index
 
 test('mobile creation previews Git ignore rules, validates identity and configures a local HTTPS origin',async t=>{
 	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
-	await disk.write('templates/sample/.gitignore','*.bin\n/nested/*\n!/nested/keep.md\n!/kb.toml\n');
+	await disk.write('templates/sample/.gitignore','*.bin\n/nested/*\n!/nested/keep.md\n/pruned/\n!/kb.toml\n');
 	await disk.mkdir('templates/sample/nested');
 	await disk.write('templates/sample/nested/.gitignore','!extra.md\nkeep.md\n');
 	await disk.write('templates/sample/nested/keep.md','ignored by nested rule');
 	await disk.write('templates/sample/nested/extra.md','re-included by nested rule');
+	await disk.mkdir('templates/sample/pruned');
+	await disk.write('templates/sample/pruned/.gitignore','!hidden.md\n');
+	await disk.write('templates/sample/pruned/hidden.md','ignored with its parent directory');
 	const request={parent:'libs',name:'preview',displayName:'Preview',description:'',source:'templates/sample',author};
 	await assert.rejects(createPreview(ctx,{...request,author:{...author,email:''}},assets));
 	await assert.rejects(createPreview(ctx,{...request,origin:'git@example.invalid:team/kb.git'},assets));
@@ -122,6 +125,8 @@ test('mobile creation previews Git ignore rules, validates identity and configur
 	assert.equal(native('status','--porcelain'),'');
 	assert.deepEqual(native('ls-files').split('\n'),['.gitignore','hello.md','nested/extra.md']);
 	assert.equal(native('for-each-ref','refs/remotes'),'');
+	assert.equal(native('check-ignore','pruned/hidden.md'),'pruned/hidden.md');
+	assert.deepEqual((await mobileStatus(store)).changes,[]);
 	assert.equal(await disk.read('libs/preview/nested/keep.md'),'ignored by nested rule');
 	assert.equal(parseIdentity(await disk.read('libs/preview/kb.toml')).id,receipt.identity.id);
 });

@@ -3,7 +3,7 @@ import {tr} from '../i18n.ts';
 import {identityFile} from '../kb/identity-core.ts';
 import type {Template} from '../kb/template-core.ts';
 import {decode} from './disk.ts';
-import {localAuthor,mobileStatus,repo} from './git.ts';
+import {ignoredParents,localAuthor,mobileStatus,repo} from './git.ts';
 import type {Author,Store} from './git.ts';
 
 export const initialBranch='main';
@@ -21,8 +21,9 @@ export async function previewInitialFiles(s:Store,files:Files){
 		read:async path=>rules.get(path)!,
 	}});
 	if(!await git.isIgnored({...r,filepath:identityFile}))throw verificationError();
+	const ignoredParent=ignoredParents(r);
 	const eligible=[];
-	for(const file of files)if(file.name!==identityFile && !await git.isIgnored({...r,filepath:file.name}))eligible.push(file);
+	for(const file of files)if(file.name!==identityFile && !await ignoredParent(file.name) && !await git.isIgnored({...r,filepath:file.name}))eligible.push(file);
 	if(!eligible.length)throw new Error(tr('模板的 Git 忽略规则排除了所有初始文件','The template Git ignore rules exclude all initial files'));
 	return eligible;
 }
