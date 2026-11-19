@@ -24,7 +24,6 @@ export async function previewInitialFiles(s:Store,files:Files){
 	const ignoredParent=ignoredParents(r);
 	const eligible=[];
 	for(const file of files)if(file.name!==identityFile && !await ignoredParent(file.name) && !await git.isIgnored({...r,filepath:file.name}))eligible.push(file);
-	if(!eligible.length)throw new Error(tr('模板的 Git 忽略规则排除了所有初始文件','The template Git ignore rules exclude all initial files'));
 	return eligible;
 }
 
@@ -37,7 +36,6 @@ function sameFiles(actual:string[],expected:Files){
 function initialConfig({author,origin}:InitialPlan){
 	return {'user.name':author.name,'user.email':author.email,...(origin?{
 		'remote.origin.url':origin,'remote.origin.fetch':'+refs/heads/*:refs/remotes/origin/*',
-		'branch.main.remote':'origin','branch.main.merge':'refs/heads/main',
 	}:{})};
 }
 
@@ -48,9 +46,9 @@ export async function initializeMobileGit(s:Store,plan:InitialPlan){
 	if(!sameFiles(state.changes.map(change=>change.file),plan.files))throw verificationError();
 	// The repository is in a unique scratch directory until the commit is verified.
 	for(const [path,value] of Object.entries(initialConfig(plan)))await git.setConfig({...r,path,value});
-	await git.add({...r,filepath:plan.files.map(file=>file.name)});
+	if(plan.files.length)await git.add({...r,filepath:plan.files.map(file=>file.name)});
 	if(!sameFiles(await git.listFiles(r),plan.files))throw verificationError();
-	await git.commit({...r,author:plan.author,committer:plan.author,message:initialMessage,disallowEmpty:true});
+	await git.commit({...r,author:plan.author,committer:plan.author,message:initialMessage});
 	return verifyInitialCommit(s,plan);
 }
 
@@ -72,6 +70,8 @@ export async function verifyInitialCommit(s:Store,plan:InitialPlan){
 	}
 	const remotes=await git.listRemotes(r);
 	if(plan.origin?remotes.length!==1 || remotes[0]?.remote!=='origin' || remotes[0].url!==plan.origin:remotes.length)throw verificationError();
+	for(const path of ['branch.main.remote','branch.main.merge'])
+		if((await git.getConfigAll({...r,path})).length)throw verificationError();
 	for(const [path,value] of Object.entries(initialConfig(plan)))
 		if(await git.getConfig({...r,path})!==value)throw verificationError();
 	return {branch:status.branch,head:status.head,author:plan.author,origin:plan.origin};

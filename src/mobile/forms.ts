@@ -44,7 +44,7 @@ export function createForm(plugin:MobilePlugin) {
 			tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
 			...(origin?['origin · '+origin,tr('创建时只保存远端地址。','Creation only saves the remote URL.')]:[]),...registryIgnoreLines(p.registryIgnore)]);
 		review.contentEl.createEl('h3',{text:tr('初始提交文件','Files in the initial commit')});
-		review.lines(tracked);
+		review.lines(tracked.length?tracked:[tr('所有文件均被忽略，将创建空的初始提交。','All files are ignored. The initial commit will be empty.')]);
 		review.contentEl.createEl('h3',{text:tr('仅保存在本库的文件','Files kept in the library working tree')});
 		review.lines([...new Set(['kb.toml',...p.template.files.map(file=>file.name)])].filter(file=>!trackedSet.has(file)));
 		review.action(tr('创建并提交','Create and commit'),async()=>{

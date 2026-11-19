@@ -122,13 +122,27 @@ test('mobile creation previews Git ignore rules, validates identity and configur
 	assert.deepEqual(await localAuthor(store),author);
 	assert.deepEqual(await upstream(store,receipt.branch),{remote:'origin',url:origin,branch:'main'});
 	assert.equal(native('remote','get-url','origin'),origin);
-	assert.equal(native('status','--porcelain'),'');
+	assert.doesNotMatch(native('config','--local','--list'),/^branch\.main\.(remote|merge)=/mu);
+	assert.equal(native('status','--porcelain','--branch'),'## main');
 	assert.deepEqual(native('ls-files').split('\n'),['.gitignore','hello.md','nested/extra.md']);
 	assert.equal(native('for-each-ref','refs/remotes'),'');
 	assert.equal(native('check-ignore','pruned/hidden.md'),'pruned/hidden.md');
 	assert.deepEqual((await mobileStatus(store)).changes,[]);
 	assert.equal(await disk.read('libs/preview/nested/keep.md'),'ignored by nested rule');
 	assert.equal(parseIdentity(await disk.read('libs/preview/kb.toml')).id,receipt.identity.id);
+});
+
+test('mobile creation keeps ignored files local when the initial commit tree is empty',async t=>{
+	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
+	await disk.write('templates/sample/.gitignore','*\n');
+	const review=await createPreview(ctx,{parent:'libs',name:'empty',displayName:'Empty',description:'',source:'templates/sample',author},assets);
+	assert.deepEqual(review.initial.files,[]);
+	const result=await instantiate(ctx,review,assets);
+	const native=(...args)=>execFileSync('git',['-C',path.join(root,result.location),...args]).toString().trim();
+	assert.equal(native('ls-tree','-r','HEAD'),'');
+	assert.equal(native('status','--porcelain','--branch'),'## main');
+	assert.equal(native('log','-1','--format=%s'),'Initial commit');
+	assert.equal(await disk.read('libs/empty/hello.md'),'Empty');
 });
 
 test('mobile creation retries copy and registration failures without duplicate commits or replacing another library',async t=>{

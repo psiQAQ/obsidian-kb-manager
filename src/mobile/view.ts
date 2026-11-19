@@ -120,7 +120,7 @@ export class MobileView extends ItemView {
 		});
 		const target=await upstream(s,state.branch);
 		if(this.revision!==rev || !target)return;
-		const network=new Setting(el).setName(target.remote+'/'+target.branch);
+		const network=new Setting(el).setName(tr('同步目标','Sync target')).setDesc(target.remote+'/'+target.branch);
 		for(const op of p.preferences(lib).disablePush?['fetch'] as const:['fetch','push'] as const){
 			const label=op==='fetch'?tr('获取','Fetch'):tr('推送','Push');
 			this.button(network,label,()=>confirm(p,label,[lib.location,state.branch,state.head,target.url,'refs/heads/'+target.branch],async()=>{
