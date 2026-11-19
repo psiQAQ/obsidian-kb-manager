@@ -3,12 +3,15 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { gitResult } from '../git/network-native.ts';
+import { guardGit } from '../git/guard.ts';
 import { rebind } from './bindings.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
 import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
-import { initializeRepository, repository } from '../git/repository.ts';
-import { identityFile, newIdentity, readManifest, recheck, withManifestIgnore, writeIdentity } from './catalog.ts';
+import { headOid, repository } from '../git/repository.ts';
+import { commitInitialRepository, initialConfig, previewInitialRepository, reviewInitialRepository, verifyInitialRepository } from '../git/initial.ts';
+import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial.ts';
+import { discover, identityFile, newIdentity, readManifest, recheck, withManifestIgnore, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
@@ -17,9 +20,11 @@ import { registerVaultLibrary } from '../registry/discovery.ts';
 
 export interface CreateInput {
 	parent: string; name: string; displayName: string; description: string; source: string;
+	git?: InitialDraft;
 }
 export interface CreatePreview {
 	input: CreateInput; location: string; template: Template; signature: string; warnings: string[];
+	gitConfig: InitialConfig; git: InitialPreview;
 }
 
 export async function ancestorWarnings(disk: VaultDisk, location: string): Promise<string[]> {
@@ -55,7 +60,7 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 	return warnings;
 }
 
-export async function previewCreate(disk: VaultDisk, config: Config, input: CreateInput, skeleton: Record<string,string>): Promise<CreatePreview> {
+async function describeCreation(disk: VaultDisk, config: Config, input: CreateInput, skeleton: Record<string,string>) {
 	validateFolders(disk,config.parents,config.templates);
 	if (!config.parents.includes(input.parent) || segments(input.name).length !== 1 || !input.displayName.trim()) throw new Error(fromEnglish('Invalid destination or display name','目标目录或显示名无效'));
 	const location = input.parent + '/' + input.name;
@@ -87,50 +92,156 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	return {input,location,template,signature,warnings};
 }
 
-export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>) {
-	const fresh = await previewCreate(disk,config,preview.input,skeleton);
+async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>){
+	const {template,input,location}=creation;
+	const manifest=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
+	let original='';
+	for(const folder of template.folders)await fs.mkdir(path.join(dir,folder),{recursive:true});
+	for(const file of template.files){
+		if(file.name===identityFile){
+			original=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(file.bytes);
+			continue;
+		}
+		const target=path.join(dir,file.name);
+		await fs.mkdir(path.dirname(target),{recursive:true});
+		await fs.writeFile(target,file.bytes,{flag:'wx'});
+		if(input.source===kepanoSource && kepanoBinding(skeleton,file.name)){
+			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'kepano-bindings'});
+		}else if((!input.source || template.overview) && file.name==='knowledge.base'){
+			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,
+				role:input.source?'overview-bindings':undefined});
+		}
+	}
+	const raw=writeIdentity(original,manifest);
+	await fs.writeFile(path.join(dir,identityFile),raw,{flag:'wx'});
+	return {manifest,manifestSignature:digest(raw)};
+}
+
+function creationPaths(template:Template){
+	return [...new Set([...template.files.map(file=>file.name),identityFile])].sort();
+}
+
+async function removePreviewDirectory(directory:string,owned:{dev:bigint;ino:bigint}){
+	const current=await fs.lstat(directory,{bigint:true});
+	if(!current.isDirectory() || current.ino!==owned.ino || current.dev!==owned.dev)
+		throw new Error(tr('预览目录已变化，保留目录以便检查：','The preview directory changed and was retained for review: ')+directory);
+	await fs.rm(directory,{recursive:true});
+}
+
+export async function previewCreate(disk: VaultDisk, config: Config, input: CreateInput, skeleton: Record<string,string>): Promise<CreatePreview> {
+	const creation=await describeCreation(disk,config,input,skeleton),gitConfig=await initialConfig(input.git);
+	const temporary=await fs.mkdtemp(path.join(await fs.realpath(disk.root),'.kb-preview-'));
+	const owned=await fs.lstat(temporary,{bigint:true});
+	try{
+		await writeTemplate(temporary,creation,skeleton);
+		return {...creation,gitConfig,git:await previewInitialRepository(temporary,creationPaths(creation.template),gitConfig)};
+	}finally{await removePreviewDirectory(temporary,owned);}
+}
+
+export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>,beforeRegistration?:()=>Promise<void>) {
+	const fresh=await describeCreation(disk,config,preview.input,skeleton);
 	if (fresh.signature !== preview.signature) throw new Error(fromEnglish('Template changed. Preview again.','模板已变化，请重新预览。'));
+	const gitConfig=await initialConfig(fresh.input.git);
+	if(JSON.stringify(gitConfig)!==JSON.stringify(preview.gitConfig))
+		throw new Error(tr('Git 身份或 origin 已变化，请重新预览。','Git identity or origin changed. Preview again.'));
 	const parent = await disk.path(fresh.input.parent);
 	await fs.mkdir(parent,{recursive:true});
 	const temporary = await fs.mkdtemp(path.join(parent,'.kb-create-'));
-	const { template,input,location } = fresh;
-	let published=false;
+	const {template,location}=fresh,paths=creationPaths(template);
+	let receipt:CreationReceipt|undefined;
 	try {
-		const manifest = newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
-		let original='';
-		for (const folder of template.folders) await fs.mkdir(path.join(temporary,folder),{recursive:true});
-		for (const file of template.files) {
-			if(file.name===identityFile) {
-				original=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(file.bytes);
-				continue;
-			}
-			const target = path.join(temporary,file.name);
-			await fs.mkdir(path.dirname(target),{recursive:true});
-			await fs.writeFile(target,file.bytes,{flag:'wx'});
-			if (input.source===kepanoSource && kepanoBinding(skeleton,file.name)) {
-				manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'kepano-bindings'});
-			} else if ((!input.source || template.overview) && file.name === 'knowledge.base') {
-				manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,
-					role:input.source?'overview-bindings':undefined});
-			}
-		}
-		await fs.writeFile(path.join(temporary,identityFile),writeIdentity(original,manifest),{flag:'wx'});
-		await initializeRepository(temporary);
+		const owned=await fs.lstat(temporary,{bigint:true}),written=await writeTemplate(temporary,fresh,skeleton);
+		const git=await previewInitialRepository(temporary,paths,gitConfig);
+		if(JSON.stringify(git)!==JSON.stringify(preview.git))
+			throw new Error(tr('首提交内容已变化，请重新预览。','Initial commit contents changed. Preview again.'));
+		if(JSON.stringify(await ancestorWarnings(disk,location))!==JSON.stringify(fresh.warnings))
+			throw new Error(tr('父目录状态已变化，请重新预览。','The parent directory state changed. Preview again.'));
 		for (let attempt = 0; ; attempt++) {
 			const destination = await disk.path(location);
 			if (await statIfPresent(destination)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
-			try { await renameNewDirectory(temporary,destination); published=true; break; }
+			try {
+				await renameNewDirectory(temporary,destination);
+				receipt={path:destination,owned,preview,...written};
+				break;
+			}
 			catch (error) {
 				if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= 4) throw error;
 				await delay(50 * 2 ** attempt);
 			}
 		}
-		await registerVaultLibrary(disk,config,location);
-		return manifest;
+		return await finishCreation(disk,config,receipt,{git:preview.git,head:''},beforeRegistration);
 	} catch(error) {
-		if(published)throw new Error(String(error)+tr('；知识库已在此目录创建：','. The library was created at: ')+location);
-		throw new Error(String(error)+tr('；未发布目录保留在 ','. The unpublished directory was retained at ')+path.basename(temporary)+tr('，可检查后重试。','. Inspect it before retrying.'));
+		if(receipt)throw new CreationInterrupted(error,receipt);
+		throw new Error(String(error)+tr('。未发布目录已保留，可检查后重试：','. The unpublished directory was retained for review before retrying: ')+temporary);
 	}
+}
+
+interface CreationReceipt {
+	path:string; owned:{dev:bigint;ino:bigint}; preview:CreatePreview;
+	manifest:ReturnType<typeof newIdentity>; manifestSignature:string; head?:string;
+}
+interface CreationReview { git:InitialPreview; head:string }
+
+export class CreationInterrupted extends Error {
+	readonly receipt:CreationReceipt;
+	constructor(cause:unknown,receipt:CreationReceipt){
+		super(String(cause));
+		this.receipt=receipt;
+	}
+}
+
+async function verifyCreationContents(disk:VaultDisk,receipt:CreationReceipt){
+	const {preview,path:dir,owned,manifestSignature}=receipt;
+	const changed=()=>new Error(tr('刚创建的目录或文件已变化，请先检查。','The new directory or its files changed. Review them before continuing.')+' · '+dir);
+	const current=await fs.lstat(await disk.path(preview.location),{bigint:true});
+	if(!current.isDirectory() || current.dev!==owned.dev || current.ino!==owned.ino)throw changed();
+	await guardGit(dir);
+	for(const folder of preview.template.folders){
+		if(!(await statIfPresent(path.join(dir,folder)))?.isDirectory())throw changed();
+	}
+	const verify=async(name:string,expected:string)=>{
+		const file=path.join(dir,name);
+		if(!(await statIfPresent(file))?.isFile() || digest(await fs.readFile(file))!==expected)throw changed();
+	};
+	await verify(identityFile,manifestSignature);
+	for(const file of preview.template.files){
+		if(file.name!==identityFile)await verify(file.name,digest(file.bytes));
+	}
+}
+
+export async function reviewInterruptedCreation(disk:VaultDisk,receipt:CreationReceipt):Promise<CreationReview>{
+	await verifyCreationContents(disk,receipt);
+	const {path:dir,preview}=receipt;
+	const head=await headOid(dir);
+	if(receipt.head!==undefined && receipt.head!==head)throw new Error(tr('刚创建的首提交已变化。','The initial commit changed.'));
+	if(head){
+		await verifyInitialRepository(dir,head,preview.git);
+		return {head,git:preview.git};
+	}
+	return {head,git:await reviewInitialRepository(dir,creationPaths(preview.template),preview.gitConfig)};
+}
+
+async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:()=>Promise<void>){
+	const {path:dir,manifest,preview}=receipt,{location}=preview;
+	await verifyCreationContents(disk,receipt);
+	await ancestorWarnings(disk,location);
+	if((await discover(disk,config)).some(lib=>lib.identity?.id===manifest.id && lib.location!==location))
+		throw new Error(tr('相同身份的知识库已存在','A library with the same ID already exists'));
+	let {head}=review;
+	if(head)await verifyInitialRepository(dir,head,review.git);
+	else{
+		receipt.preview={...preview,git:review.git};
+		head=await commitInitialRepository(dir,creationPaths(preview.template),review.git);
+	}
+	receipt.head=head;
+	await beforeRegistration?.();
+	await registerVaultLibrary(disk,config,location);
+	return {manifest,location,path:dir,head,identity:review.git.identity,origin:review.git.origin};
+}
+
+export async function resumeCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:()=>Promise<void>){
+	try{return await finishCreation(disk,config,receipt,review,beforeRegistration);}
+	catch(error){throw new CreationInterrupted(error,receipt);}
 }
 
 export async function legacyBinding(disk: VaultDisk, lib: Library) {

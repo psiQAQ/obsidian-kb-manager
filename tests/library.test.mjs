@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
 import { VaultDisk } from '../src/fs/vault.ts';
 import { defaults, discover, scan, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
-import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, previewCreate } from '../src/kb/create.ts';
+import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../src/kb/create.ts';
+import { initialIdentityDefaults } from '../src/git/initial.ts';
+import { headOid, readCommit } from '../src/git/repository.ts';
 import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
 import { readMapping } from '../src/kb/mapping.ts';
@@ -15,6 +18,18 @@ async function setup(t) {
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp','kb-test-'));
 	t.after(()=>fs.rm(root,{force:true,recursive:true}));
+	const global=path.join(root,'global.gitconfig');
+	await fs.writeFile(global,'');
+	const vars=['GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GIT_AUTHOR_NAME','GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL','EMAIL'];
+	const before=Object.fromEntries(vars.map(key=>[key,process.env[key]]));
+	for(const key of vars)delete process.env[key];
+	Object.assign(process.env,{GIT_CONFIG_GLOBAL:global,GIT_CONFIG_NOSYSTEM:'1'});
+	t.after(()=>{
+		for(const [key,value] of Object.entries(before)){
+			if(value===undefined)delete process.env[key];
+			else process.env[key]=value;
+		}
+	});
 	const disk=new VaultDisk(root,'.settings');
 	const config={...defaults,templates:['样板']};
 	const skeleton={};
@@ -26,11 +41,18 @@ async function setup(t) {
 		}
 	}
 	const input={parent:'knowledge-base',name:'光学 研究',displayName:'光学',description:'研究',source:''};
-	return {root,disk,config,skeleton,input};
+	return {root,disk,config,skeleton,input,global};
 }
 test('built-in creation renders scoped Base, preserves note variables, rejects concurrent duplicate',async t=>{
 	const {disk,config,input,skeleton}=await setup(t);
 	const p=await previewCreate(disk,config,input,skeleton);
+	assert.equal(p.git.identity.name.source,'login');
+	assert.equal(p.git.identity.name.value,userInfo().username);
+	assert.equal(p.git.identity.email.source,'placeholder');
+	assert.match(p.git.identity.email.value,/@users\.invalid$/u);
+	assert.ok(p.git.staged.includes('knowledge.base'));
+	assert.deepEqual(p.git.ignored,['kb.toml']);
+	assert.equal(await fs.stat(await disk.path(p.location)).catch(error=>error.code),'ENOENT');
 	const attempts=await Promise.allSettled([createLibrary(disk,config,p,skeleton),createLibrary(disk,config,p,skeleton)]);
 	assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
 	const [lib]=await discover(disk,config);
@@ -39,34 +61,114 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	const base=parse(await fs.readFile(path.join(root,'knowledge.base'),'utf8'));
 	assert.ok(base.views[1].filters.and.includes('file.inFolder("knowledge-base/光学 研究/Notes")'));
 	assert.equal(await fs.readFile(path.join(root,'templates/人工笔记模板.md'),'utf8'),skeleton['templates/人工笔记模板.md']);
-	assert.equal(execFileSync('git',['-C',root,'for-each-ref']).length,0);
+	const run=(...args)=>execFileSync('git',['-C',root,...args]).toString().trim();
+	assert.equal(run('for-each-ref','--format=%(refname)'),'refs/heads/main');
+	assert.equal(run('rev-list','--count','HEAD'),'1');
+	assert.equal(run('log','-1','--format=%s'),'Initial commit');
+	assert.equal(run('status','--porcelain'),'');
+	assert.equal(run('remote'),'');
+	assert.deepEqual(run('ls-files','-z').split('\0').filter(Boolean).sort(),p.git.staged);
 	assert.match(execFileSync('git',['-C',root,'check-ignore','-v','kb.toml']).toString(),/\.gitignore:.*:\/kb\.toml/u);
 	assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith('kb-')),[]);
 	assert.equal((await discover(new VaultDisk(disk.root,'.settings'),config))[0].identity.id,lib.identity.id);
 });
-test('folder template preserves binary bytes, empty directories, excluded paths and preview identity',async t=>{
-	const {disk,root,config,input,skeleton}=await setup(t);
+test('folder template respects ignored files, preserves binary files, and writes only edited identity fields and origin',async t=>{
+	const {disk,root,config,input,skeleton,global}=await setup(t);
 	const template=path.join(root,'样板');
 	await fs.mkdir(path.join(template,'empty'),{recursive:true});
 	await fs.mkdir(path.join(template,'.settings'));
+	await fs.mkdir(path.join(template,'cache'));
+	await fs.writeFile(path.join(template,'cache','local.bin'),'local');
 	const bytes=Buffer.from([0,255,13,10,128]);
 	await fs.writeFile(path.join(template,'data.pdf'),bytes);
 	await fs.writeFile(path.join(template,'note.md'),'{{kb_name}}');
-	await fs.writeFile(path.join(template,'.gitignore'),'# user ignore\r\ncache/\r\n');
+	await fs.writeFile(path.join(template,'.gitignore'),'# user ignore\r\ncache/\r\n!kb.toml\r\n');
+	await fs.writeFile(global,'[user]\n name = Global Tester\n email = global@example.invalid\n');
+	const defaults=await initialIdentityDefaults();
+	assert.equal(defaults.name.value,'Global Tester');
+	assert.equal(defaults.email.value,'global@example.invalid');
+	assert.equal(defaults.email.source,'global');
+	input.git={defaults,values:{name:'Edited Tester',email:defaults.email.value},origin:'git@offline.example.invalid:repo/lib.git'};
 	input.source='样板';
 	const p=await previewCreate(disk,config,input,skeleton);
 	assert.deepEqual(p.template.excluded,['.settings']);
+	assert.deepEqual(p.git.ignored,['cache/local.bin','kb.toml']);
+	assert.deepEqual(p.git.staged,['.gitignore','data.pdf','note.md']);
+	assert.equal(p.git.identity.name.source,'local');
+	assert.equal(p.git.identity.email.source,'global');
 	await fs.writeFile(path.join(template,'note.md'),'{{kb_name}}!');
 	await assert.rejects(createLibrary(disk,config,p,skeleton),/changed/);
-	await createLibrary(disk,config,await previewCreate(disk,config,input,skeleton),skeleton);
+	const result=await createLibrary(disk,config,await previewCreate(disk,config,input,skeleton),skeleton);
 	const dir=await disk.path(p.location);
+	const run=(...args)=>execFileSync('git',['-C',dir,...args]).toString().trim();
+	const {commit}=await readCommit(dir,result.head);
+	assert.equal(commit.author.name,'Edited Tester');
+	assert.equal(commit.committer.email,'global@example.invalid');
+	assert.deepEqual(commit.parent,[]);
+	const local=run('config','--local','--list');
+	assert.match(local,/^user\.name=Edited Tester$/mu);
+	assert.doesNotMatch(local,/^user\.email=|^branch\.main\./mu);
+	assert.equal(run('config','--local','remote.origin.url'),input.git.origin);
+	assert.equal(run('status','--porcelain'),'');
 	assert.deepEqual(await fs.readFile(path.join(dir,'data.pdf')),bytes);
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'{{kb_name}}!');
+	assert.equal(await fs.readFile(path.join(dir,'cache','local.bin'),'utf8'),'local');
 	assert.deepEqual(await fs.readdir(path.join(dir,'empty')),[]);
-	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n/kb.toml\r\n');
+	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n!kb.toml\r\n/kb.toml\r\n');
 	const {identity,mapping}=readManifest(await fs.readFile(path.join(dir,'kb.toml'),'utf8'));
 	assert.equal(identity.displayName,input.displayName);
 	assert.equal(mapping,undefined);
+});
+
+test('system EMAIL is used only when valid, and an author environment change invalidates confirmation',async t=>{
+	const {disk,config,input,skeleton}=await setup(t);
+	process.env.EMAIL='bad address@example.invalid';
+	assert.equal((await initialIdentityDefaults()).email.source,'placeholder');
+	process.env.EMAIL='mail@example.invalid';
+	const p=await previewCreate(disk,config,input,skeleton);
+	assert.deepEqual(p.git.identity.email,{value:'mail@example.invalid',source:'environment',origin:'EMAIL'});
+	process.env.GIT_AUTHOR_NAME='An unexpected author';
+	await assert.rejects(createLibrary(disk,config,p,skeleton),/GIT_AUTHOR_IDENT/u);
+	assert.equal(await fs.stat(await disk.path(p.location)).catch(error=>error.code),'ENOENT');
+	assert.deepEqual(await discover(disk,config),[]);
+});
+
+test('an includeIf at the final path requires reconfirmation and registration retry keeps the same root commit',async t=>{
+	const {disk,config,input,skeleton,root,global}=await setup(t);
+	const dir=await disk.path(input.parent+'/'+input.name),condition=path.join(root,'conditional.gitconfig');
+	await fs.writeFile(condition,'[user]\n email = final@example.invalid\n');
+	const gitdir=path.join(dir,'.git').split(path.sep).join('/');
+	await fs.writeFile(global,'[user]\n name = Tester\n email = default@example.invalid\n[includeIf "gitdir:'+gitdir+'"]\n path = conditional.gitconfig\n');
+	const p=await previewCreate(disk,config,input,skeleton);
+	assert.equal(p.git.identity.email.value,'default@example.invalid');
+	const getReceipt=async(perform)=>{
+		try{await perform();}catch(error){
+			assert.ok(error instanceof CreationInterrupted,String(error));
+			return error.receipt;
+		}
+		assert.fail('Expected recoverable creation failure');
+	};
+	const first=await getReceipt(()=>createLibrary(disk,config,p,skeleton));
+	assert.equal(await headOid(dir),'');
+	assert.deepEqual(await discover(disk,config),[]);
+	const revised=await reviewInterruptedCreation(disk,first);
+	assert.equal(revised.head,'');
+	assert.equal(revised.git.identity.email.value,'final@example.invalid');
+	assert.match(revised.git.identity.email.origin,/conditional\.gitconfig/u);
+	const second=await getReceipt(()=>resumeCreation(disk,config,first,revised,()=>Promise.reject(new Error('Registry is unavailable'))));
+	const committed=await headOid(dir);
+	assert.match(committed,/^[a-f0-9]{40}$/u);
+	assert.deepEqual(await discover(disk,config),[]);
+	const manifestFile=path.join(dir,'kb.toml'),raw=await fs.readFile(manifestFile);
+	await fs.appendFile(manifestFile,'\n# edit after commit\n');
+	await assert.rejects(reviewInterruptedCreation(disk,second),/已变化|changed/u);
+	await fs.writeFile(manifestFile,raw);
+	const review=await reviewInterruptedCreation(disk,second);
+	const result=await resumeCreation(disk,config,second,review);
+	assert.equal(result.head,committed);
+	assert.equal((await readCommit(dir,committed)).commit.author.email,'final@example.invalid');
+	assert.deepEqual((await readCommit(dir,committed)).commit.parent,[]);
+	assert.equal((await discover(disk,config))[0].identity.id,result.manifest.id);
 });
 test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate ID detected',async t=>{
 	const {disk,config,root,skeleton}=await setup(t);

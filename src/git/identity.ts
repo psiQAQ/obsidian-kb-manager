@@ -21,19 +21,23 @@ async function configFile(dir:string){
 	if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('需要独立的本地 Git 配置文件','Expected an ordinary local Git config file'));
 	return file;
 }
-async function values(dir:string,file:string,key:string){
-	const args=['config','--includes','--show-scope','--show-origin','--null','--get-all','user.'+key];
+async function values(dir:string|undefined,file:string|undefined,key:string){
+	const args=['config',...(dir?[]:['--global']),'--includes','--show-scope','--show-origin','--null','--get-all','user.'+key];
 	const {stdout}=await gitResult(dir,args,{allowedExitCodes:[0,1]});
 	const tokens=stdout.toString('utf8').split('\0');
 	tokens.pop();
 	const result:IdentityValue[]=[];
 	for(let i=0;i<tokens.length;i+=3){
 		const scope=tokens[i]!,origin=tokens[i+1]!,value=tokens[i+2]!;
-		const candidate=origin.startsWith('file:')?normalize(resolve(dir,origin.slice(5))):'';
-		const direct=scope==='local' && (process.platform==='win32'?candidate.toLowerCase()===file.toLowerCase():candidate===file);
+		const candidate=dir && origin.startsWith('file:')?normalize(resolve(dir,origin.slice(5))):'';
+		const direct=file!==undefined && scope==='local' && (process.platform==='win32'?candidate.toLowerCase()===file.toLowerCase():candidate===file);
 		result.push({scope,origin,value,direct});
 	}
 	return result;
+}
+export async function readGlobalIdentityFields(){
+	const [name,email]=await Promise.all(keys.map(key=>values(undefined,undefined,key)));
+	return {name:name?.at(-1),email:email?.at(-1)};
 }
 export async function readRepositoryIdentity(dir:string):Promise<IdentityPreview>{
 	const file=await configFile(dir),bytes=await fs.readFile(file),config=digest(bytes);

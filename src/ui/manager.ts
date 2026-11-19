@@ -4,10 +4,10 @@ import { cloneWizard } from './clone.ts';
 import { ItemView, Menu, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
-import { discover, identityFile } from '../kb/catalog.ts';
-import { adopt, legacyBinding, adoptionWarnings, createLibrary, previewCreate } from '../kb/create.ts';
+import { discover } from '../kb/catalog.ts';
+import { adopt, legacyBinding, adoptionWarnings } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
-import { kepanoSource } from '../kb/template.ts';
+import { createWizard } from './create.ts';
 import { edit,health,move,resumeMove } from './maintain.ts';
 import { sourcePanel } from './source.ts';
 import { networkPanel } from './network.ts';
@@ -15,9 +15,6 @@ import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
-import { registryPath } from '../registry/paths.ts';
-import { reviewRegistryProtection } from './registry-ignore.ts';
-import { readVaultRegistry } from '../registry/desktop.ts';
 
 export const managerType='knowledge-base-manager-view';
 export class ManagerView extends ItemView {
@@ -185,30 +182,8 @@ export class ManagerView extends ItemView {
 		}
 
 	}
-	create(){
-		const {config,disk}=this.plugin;
-		const input={parent:config.parents[0] ?? '',name:'',displayName:'',description:'',source:''};
-		const dialog=new Dialog(this.app,tr('新建知识库',"Create knowledge base"));
-		dialog.choice(tr('父目录',"Parent directory"),Object.fromEntries(config.parents.map(p=>[p,p])),v=>{input.parent=v;});
-		dialog.choice(tr('模板',"Template"),{'':tr('融合 LLM Wiki',"Integrated LLM Wiki"),[kepanoSource]:tr('Kepano（含示例）','Kepano (with examples)'),...Object.fromEntries(config.templates.map(p=>[p,p]))},v=>{input.source=v;});
-		dialog.text(tr('物理目录名',"Folder name"),'',v=>{input.name=v;});
-		dialog.text(tr('显示名（默认使用目录名）',"Display name (defaults to folder name)"),'',v=>{input.displayName=v;});
-		dialog.text(tr('简介',"Description"),'',v=>{input.description=v;});
-		dialog.action(tr('预览',"Preview"),async()=>{
-			await readVaultRegistry(disk);
-			const skeleton=input.source===kepanoSource?this.plugin.kepanoSkeleton:this.plugin.skeleton;
-			const preview=await previewCreate(disk,config,{...input,displayName:input.displayName||input.name},skeleton);
-			const confirm=new Dialog(this.app,tr('确认创建',"Confirm creation"));
-			const protect=await reviewRegistryProtection(this.plugin,confirm);
-			confirm.lines([preview.location,tr('模板','Template')+' · '+preview.template.id,...preview.warnings,...preview.template.folders.map(p=>p+'/'),
-				...new Set([...preview.template.files.map(f=>f.name),identityFile]),registryPath,tr('.git/（main，空历史）',".git/ (main, empty history)"),
-				...preview.template.excluded.map(p=>tr('排除 ',"Exclude ")+p)]);
-			confirm.action(tr('创建',"Create"),async()=>{
-				await protect();
-				await createLibrary(disk,this.plugin.config,preview,skeleton);
-				confirm.close();dialog.close();await this.render();
-			});
-			confirm.open();
-		});dialog.open();
+	async create(){
+		try{await createWizard(this.plugin,()=>this.render());}
+		catch(error){new Notice(String(error),8000);}
 	}
 }

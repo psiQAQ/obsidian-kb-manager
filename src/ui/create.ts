@@ -1,0 +1,109 @@
+import type KnowledgeBaseManager from '../main.ts';
+import { initialIdentityDefaults, initialMessage } from '../git/initial.ts';
+import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
+import { createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../kb/create.ts';
+import { kepanoSource } from '../kb/template.ts';
+import { readVaultRegistry } from '../registry/desktop.ts';
+import { registryPath } from '../registry/paths.ts';
+import { tr } from '../i18n.ts';
+import { assertGitEnabled } from './device.ts';
+import { Dialog } from './dialog.ts';
+import { reviewRegistryProtection } from './registry-ignore.ts';
+
+function identitySource(field:InitialIdentity['name']){
+	const sources={
+		global:tr('继承 Git 全局配置','Inherited from global Git configuration'),
+		login:tr('系统登录名，写入库内配置','OS login, saved to this repository'),
+		environment:tr('环境变量，写入库内配置','Environment variable, saved to this repository'),
+		placeholder:tr('占位邮箱，写入库内配置','Placeholder email, saved to this repository'),
+		local:tr('已编辑，写入库内配置','Edited, saved to this repository'),
+	};
+	return sources[field.source]+(field.origin?' · '+field.origin:'');
+}
+
+function signatureLines(identity:InitialIdentity){
+	const signature=identity.name.value+' <'+identity.email.value+'>';
+	return [tr('作者','Author')+' · '+signature,tr('提交者','Committer')+' · '+signature];
+}
+
+function pathList(dialog:Dialog,title:string,paths:string[]){
+	dialog.contentEl.createEl('h3',{text:title});
+	if(paths.length)dialog.lines(paths);
+	else dialog.contentEl.createEl('p',{text:tr('无','None')});
+}
+
+function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
+	dialog.lines(['main · '+(head?head.slice(0,7)+' · ':'')+initialMessage,
+		...signatureLines(git.identity),tr('姓名来源','Name source')+' · '+identitySource(git.identity.name),
+		tr('邮箱来源','Email source')+' · '+identitySource(git.identity.email),
+		git.origin?'origin · '+git.origin:tr('未设置 origin','No origin configured')]);
+	if(git.origin)dialog.contentEl.createEl('p',{text:tr('仅保存远端地址。创建过程不会联网或设置上游分支。','Creation saves the remote address locally, without connecting or setting an upstream branch.')});
+	if(git.identity.email.value.toLowerCase().endsWith('@users.invalid'))dialog.contentEl.createEl('p',{text:tr(
+		'占位邮箱无法收信，也不会将首提交关联到 GitHub 账号。若需关联到你的账号，请填写已验证的邮箱或你自己的 GitHub noreply 地址。',
+		'The placeholder email cannot receive mail or link the initial commit to your GitHub account. Use a verified email or your own GitHub noreply address to link it to your account.')});
+	pathList(dialog,tr('首提交包含的文件','Files in the initial commit'),git.staged);
+	pathList(dialog,tr('复制到库内并由 Git 忽略','Copied into the library and ignored by Git'),git.ignored);
+}
+
+export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>){
+	assertGitEnabled(plugin);
+	const {config,disk}=plugin;
+	const defaults=await initialIdentityDefaults();
+	const values={name:defaults.name.value,email:defaults.email.value};
+	let origin='';
+	const input={parent:config.parents[0]??'',name:'',displayName:'',description:'',source:''};
+	const form=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
+	form.choice(tr('父目录','Parent directory'),Object.fromEntries(config.parents.map(p=>[p,p])),v=>{input.parent=v;});
+	form.choice(tr('模板','Template'),{'':tr('融合 LLM Wiki','Integrated LLM Wiki'),[kepanoSource]:tr('Kepano（含示例）','Kepano (with examples)'),...Object.fromEntries(config.templates.map(p=>[p,p]))},v=>{input.source=v;});
+	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;});
+	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;});
+	form.text(tr('简介','Description'),'',v=>{input.description=v;});
+	form.text(tr('Git 姓名','Git name'),values.name,v=>{values.name=v;});
+	form.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;});
+	form.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
+	const run=async(dialog:Dialog,action:()=>ReturnType<typeof createLibrary>)=>{
+		let result:Awaited<ReturnType<typeof createLibrary>>;
+		try{result=await action();}
+		catch(error){
+			if(!(error instanceof CreationInterrupted))throw error;
+			dialog.close();form.close();
+			const recovery=new Dialog(plugin.app,tr('继续创建知识库','Continue library creation'));
+			recovery.lines([error.receipt.path,error.message]);
+			recovery.action(tr('复核并继续','Review and continue'),async()=>{
+				const {receipt}=error,review=await reviewInterruptedCreation(disk,receipt);
+				const next=new Dialog(plugin.app,review.head?tr('确认现有首提交并登记','Confirm existing initial commit and register'):tr('确认目标目录中的首提交','Confirm initial commit at the destination'));
+				next.lines([receipt.path]);
+				showInitialPlan(next,review.git,review.head);
+				const protect=await reviewRegistryProtection(plugin,next);
+				next.action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(next,
+					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect))));
+				recovery.close();next.open();
+			});
+			recovery.open();return;
+		}
+		dialog.close();form.close();
+		const success=new Dialog(plugin.app,tr('知识库已创建','Library created'));
+		success.lines([result.path,'main · '+result.head.slice(0,7)+' · '+initialMessage,...signatureLines(result.identity),
+			result.origin?'origin · '+result.origin:tr('未设置 origin','No origin configured')]);
+		success.action(tr('完成','Done'),async()=>{success.close();});
+		success.open();
+		await refresh();
+	};
+	form.action(tr('预览','Preview'),async()=>{
+		assertGitEnabled(plugin);
+		await readVaultRegistry(disk);
+		const skeleton=input.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
+		const preview=await previewCreate(disk,plugin.config,{...input,displayName:input.displayName||input.name,git:{defaults,values:{...values},origin}},skeleton);
+		const {git}=preview;
+		const confirm=new Dialog(plugin.app,tr('确认创建','Confirm creation'));
+		confirm.lines([preview.location,tr('模板','Template')+' · '+preview.template.id,...preview.warnings]);
+		showInitialPlan(confirm,git);
+		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
+		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
+		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryPath]);
+		const protect=await reviewRegistryProtection(plugin,confirm);
+		confirm.action(tr('创建','Create'),()=>run(confirm,()=>plugin.exclusiveGit(preview.location,()=>createLibrary(disk,plugin.config,preview,skeleton,protect))));
+		confirm.open();
+	});
+	form.open();
+}
