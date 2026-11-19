@@ -6,6 +6,7 @@ import type {Catalog,Library} from './catalog.ts';
 import {MobileSettings} from './settings.ts';
 import {MobileView,viewType} from './view.ts';
 import {createForm} from './forms.ts';
+import {registerMobileTemplates} from './insert-template.ts';
 import {manifestForm,scanForm} from './registration-forms.ts';
 import {settingsPaths} from './disk.ts';
 import type {BindingPreview} from './bindings.ts';
@@ -39,6 +40,7 @@ export default class MobilePlugin extends Plugin {
 		this.addRibbonIcon('library',tr('打开知识库管理器','Open knowledge base manager'),()=>this.open());
 		this.addCommand({id:'open-manager',name:tr('打开知识库管理器','Open knowledge base manager'),callback:()=>this.open()});
 		this.addCommand({id:'create-library',name:tr('创建知识库','Create knowledge base'),callback:()=>createForm(this)});
+		registerMobileTemplates(this);
 		this.addCommand({id:'register-library',name:tr('登记知识库清单','Register a library manifest'),callback:()=>manifestForm(this)});
 		this.addCommand({id:'scan-library-registry',name:tr('扫描目录并登记知识库','Scan a folder and register knowledge bases'),callback:()=>scanForm(this)});
 	}

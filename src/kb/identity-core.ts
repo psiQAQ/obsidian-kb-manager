@@ -65,9 +65,11 @@ export function readManifest(raw:string) {
 	const data=document(raw);
 	const preferences=table(data.preferences);
 	if(data.preferences!==undefined && !preferences)throw new Error(tr('preferences 必须为 TOML 表','preferences must be a TOML table'));
+	const identity=data.manager===undefined?undefined:manager(data.manager);
+	const sharedWiki=identity?.template.id==='llm-wiki' && identity.template.version==='2';
 	return {
-		identity:data.manager===undefined?undefined:manager(data.manager),
-		mapping:data.paths===undefined?undefined:mappingFromPaths(data.paths),
+		identity,
+		mapping:data.paths===undefined?undefined:mappingFromPaths(data.paths,!sharedWiki),
 		preferences:readGit(preferences),
 	};
 }

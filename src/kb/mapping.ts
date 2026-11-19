@@ -6,7 +6,7 @@ export interface Mapping {
 	raw: string;
 	wiki: string;
 	reports: string;
-	templates: string;
+	templates?: string;
 	index: string;
 	log: string;
 	overview: string;
@@ -20,7 +20,7 @@ export function readMapping(text: string): Mapping {
 	return mappingFromPaths(data.paths);
 }
 
-export function mappingFromPaths(fields: unknown): Mapping {
+export function mappingFromPaths(fields: unknown, requireTemplates = true): Mapping {
 	if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new Error(fromEnglish('Missing [paths]','缺少 [paths] 段'));
 	const entries = Object.entries(fields);
 	const allowed = ['raw', 'wiki', 'reports', 'templates', 'index', 'log', 'overview', 'clippings'];
@@ -37,10 +37,11 @@ export function mappingFromPaths(fields: unknown): Mapping {
 	}
 	const mapping: Mapping = {
 		raw: required('raw'), wiki: required('wiki'), reports: required('reports'),
-		templates: required('templates'), index: required('index'), log: required('log'),
+		templates: requireTemplates ? required('templates') : values.get('templates'), index: required('index'), log: required('log'),
 		overview: required('overview'), notes: 'Notes', clippings: values.get('clippings'),
 	};
-	const directories = [mapping.raw, mapping.wiki, mapping.reports, mapping.templates, mapping.notes];
+	const directories = [mapping.raw, mapping.wiki, mapping.reports, mapping.notes];
+	if (mapping.templates) directories.push(mapping.templates);
 	if (mapping.clippings) directories.push(mapping.clippings);
 	const canonical = (name: string) => name.normalize('NFC').toLowerCase();
 	for (const [index, name] of directories.entries()) {

@@ -22,7 +22,7 @@ interface Edit { start: number; end: number; old: string; value: string; role: s
 interface Rebinding { content: string; edits: Edit[]; manual: string[] }
 
 function markdownParts(text: string) {
-	const match = /^---\r?\n([\s\S]*?)^---[ \t]*(?:\r?\n|$)/mu.exec(text);
+	const match = /^(?:\uFEFF)?---[ \t]*\r?\n([\s\S]*?)^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/mu.exec(text);
 	if (match?.index !== 0) return { yaml: '', yamlOffset: 0, body: text, bodyOffset: 0 };
 	return { yaml: match[1]!, yamlOffset: text.indexOf('\n') + 1, body: text.slice(match[0].length), bodyOffset: match[0].length };
 }
@@ -50,12 +50,22 @@ function bodyLines(text: string, offset: number) {
 
 /** Only the declared YAML fields and original Markdown lines of bundled files may be rebound. */
 export function rebindKepano(name: string, source: string, previous: string, destination: string, skeleton: Skeleton): Rebinding {
+	return rebind(name, source, destination, skeleton, previous);
+}
+
+export function bindSharedKepanoPage(name: string, source: string, destination: string, skeleton: Skeleton): string {
+	return rebind('Templates/' + name, source, destination, skeleton, undefined).content;
+}
+
+function rebind(name: string, source: string, destination: string, skeleton: Skeleton, previous: string | undefined): Rebinding {
 	const result: Rebinding = { content: source, edits: [], manual: [] };
 	if (!Object.prototype.hasOwnProperty.call(skeleton, name) || !skeleton[name]?.includes(rootToken)) return result;
-	validateKepanoRoot(previous);
+	if (previous !== undefined) validateKepanoRoot(previous);
 	validateKepanoRoot(destination);
 	const template = skeleton[name];
-	const oldValue = (value: string) => value.split(rootToken).join(previous);
+	const oldValue = (value: string) => previous === undefined
+		? value.replaceAll(rootToken + '/', '')
+		: value.split(rootToken).join(previous);
 	const newValue = (value: string) => value.split(rootToken).join(destination);
 	const review = (role: string) => result.manual.push(name + ' · ' + role);
 	const parts = (value: string) => name.endsWith('.base') ? { yaml: value, yamlOffset: 0, body: '', bodyOffset: 0 } : markdownParts(value);

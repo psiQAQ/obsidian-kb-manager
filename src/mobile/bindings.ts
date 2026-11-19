@@ -3,7 +3,7 @@ import {rebind} from '../kb/bindings.ts';
 import {identityFile,parseIdentity,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity,ManagedFile} from '../kb/identity-core.ts';
 import {rebindKepano} from '../kb/kepano.ts';
-import {isKepano,kepanoBinding} from '../kb/template-core.ts';
+import {isBuiltinWiki,isKepano,kepanoBinding,kepanoBindingAssets} from '../kb/template-core.ts';
 import {checkSpelling,decode,hash,relative,replaceText} from './disk.ts';
 import {discoverMobile,libraryPath,verifyLibrary} from './registration.ts';
 import type {Catalog,Library} from './registration.ts';
@@ -15,9 +15,11 @@ export interface BindingPreview {
 
 function rebindFile(item:ManagedFile,identity:Identity,source:string,location:string,skeleton:Record<string,string>){
 	if(!item.root || item.root===location)return undefined;
-	if(item.role==='kepano-bindings' && isKepano(identity.template) && kepanoBinding(skeleton,item.path))
-		return rebindKepano(item.path,source,item.root,location,skeleton);
-	if(item.path==='knowledge.base' && (item.role==='overview-bindings' || (!item.role && identity.template.id==='llm-wiki')))
+	if(item.role==='kepano-bindings' && isKepano(identity.template)){
+		const assets=kepanoBindingAssets(skeleton,identity.template.version);
+		return kepanoBinding(assets,item.path)?rebindKepano(item.path,source,item.root,location,assets):undefined;
+	}
+	if(item.path==='knowledge.base' && (item.role==='overview-bindings' || (!item.role && isBuiltinWiki(identity.template))))
 		return rebind(source,item.root,location);
 	return undefined;
 }

@@ -8,7 +8,7 @@ import { inspectBase, inspectPage, readNote } from './audit-notes.ts';
 import { within } from './audit-types.ts';
 import type { AuditFinding, AuditNote, AuditReport } from './audit-types.ts';
 import { inspectArticleSources } from './sources.ts';
-import { isKepano } from './template.ts';
+import { isBuiltinWiki, isKepano } from './template.ts';
 
 const adminFiles = new Set(['README.md','AGENTS.md','LICENSES.md']);
 
@@ -53,7 +53,7 @@ export async function auditLibrary(disk: VaultDisk, lib: Library): Promise<Audit
 	}
 	const {files,directories} = await inventory(disk,lib.location,report);
 	const template = lib.identity?.template;
-	const builtin = template?.id === 'llm-wiki' && template.version === '1';
+	const builtin = isBuiltinWiki(template);
 	const adopted = template?.id === 'unknown' && template.version === 'unknown';
 	const wiki = !template || builtin || adopted ? lib.mapping : undefined;
 	const templates = lib.mapping?.templates ?? (isKepano(template) ? 'Templates' : 'templates');
@@ -66,7 +66,7 @@ export async function auditLibrary(disk: VaultDisk, lib: Library): Promise<Audit
 			if (!(page ? files : directories).has(name))
 				report('error',page ? 'special-file-missing' : 'directory-missing',name,tr('缺少映射项目','Missing mapped item') + ': ' + role);
 		}
-		if (!wiki.clippings && [wiki.wiki,wiki.reports,wiki.templates,wiki.notes,wiki.raw].some(dir => within('Clippings',dir) || within(dir,'Clippings')))
+		if (!wiki.clippings && [wiki.wiki,wiki.reports,wiki.templates,wiki.notes,wiki.raw].some(dir => dir && (within('Clippings',dir) || within(dir,'Clippings'))))
 			sources.splice(1,1);
 		else if (!wiki.clippings && [...files].some(file => within(file,'Clippings')))
 			report('review','clippings-unmapped','Clippings',tr('存在剪藏，但尚未配置 paths.clippings','Clippings exist without a paths.clippings mapping'));
@@ -86,7 +86,7 @@ export async function auditLibrary(disk: VaultDisk, lib: Library): Promise<Audit
 	for (const file of files) {
 		if (sources.some(dir => within(file,dir))) continue;
 		if (/\.base$/iu.test(file)) {
-			try { inspectBase(file,await readText(file),wiki,report); }
+			try { inspectBase(file,await readText(file),!!wiki && !within(file,templates),report); }
 			catch (error) { report('error','invalid-base',file,String(error)); }
 		}
 		if (!/\.md$/iu.test(file) || within(file,templates)) continue;

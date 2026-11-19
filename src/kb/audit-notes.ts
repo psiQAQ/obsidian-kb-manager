@@ -80,7 +80,7 @@ export function inspectPage(file: string, {metadata:m}: AuditNote, mapping: Mapp
 	return article;
 }
 
-export function inspectBase(file: string, text: string, mapping: Mapping | undefined, report: AuditReport) {
+export function inspectBase(file: string, text: string, checkBindings: boolean, report: AuditReport) {
 	const base: unknown = parse(text);
 	if (base == null) return;
 	if (!object(base)) throw new Error(tr('Base 顶层须为映射','Base must be a mapping'));
@@ -90,7 +90,7 @@ export function inspectBase(file: string, text: string, mapping: Mapping | undef
 		if ('filters' in scope && typeof scope.filters !== 'string' && !object(scope.filters))
 			throw new Error(tr('filters 须为表达式或映射','filters must be an expression or mapping'));
 	}
-	if (!mapping || within(file,mapping.templates)) return;
+	if (!checkBindings) return;
 	const tokens = new Set(text.match(/__(?:KB_ROOT|WIKI_PATH|NOTES_PATH|WIKI_DIR|TEMPLATES_DIR|CATEGORY_PATH)__/gu));
 	if (tokens.size) report('error','base-binding-missing',file,tr('Base 中有未替换的绑定','Unresolved Base placeholders') + ': ' + [...tokens].join(', '));
 }

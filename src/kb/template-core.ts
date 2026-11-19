@@ -11,8 +11,23 @@ export interface Template {
 export interface Variables { displayName: string; description: string; destination: string }
 
 export const kepanoSource = 'builtin:kepano';
-export function isKepano(template?: {id:string;version:string}) {
-	return template?.id === 'kepano' && template.version === '1';
+type TemplateIdentity = Pick<Template,'id'|'version'>;
+export type BuiltinKind = 'llm-wiki' | 'kepano';
+function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
+	return template?.id === id && ['1','2','3'].includes(template.version);
+}
+export function isKepano(template?:TemplateIdentity) {
+	return isBuiltin(template,'kepano');
+}
+export function isBuiltinWiki(template?:TemplateIdentity) {
+	return isBuiltin(template,'llm-wiki');
+}
+export function sharedTemplateKind(template:TemplateIdentity):BuiltinKind|undefined {
+	return template.version === '2' && (template.id === 'llm-wiki' || template.id === 'kepano') ? template.id : undefined;
+}
+export function kepanoBindingAssets(skeleton:Record<string,string>, version:string) {
+	const historical = skeleton['README.v' + version + '.md'];
+	return historical && (version === '1' || version === '2') ? {...skeleton,'README.md':historical} : skeleton;
 }
 export function kepanoBinding(skeleton:Record<string,string>, name:string) {
 	return /\.(?:md|base)$/iu.test(name) && Object.prototype.hasOwnProperty.call(skeleton,name) && skeleton[name]!.includes('__KB_ROOT__');
@@ -20,8 +35,9 @@ export function kepanoBinding(skeleton:Record<string,string>, name:string) {
 export function kepanoTemplate(skeleton:Record<string,string>, root:string):Template {
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
-	const files = Object.entries(renderKepano(skeleton,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(text)}));
-	return {id:'kepano',version:'1',entry:'README.md',files,folders:[],excluded:[]};
+	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
+	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(text)}));
+	return {id:'kepano',version:'3',entry:'README.md',files,folders:[],excluded:[]};
 }
 
 export function renderBase(source: string, root: string): string {
@@ -49,7 +65,7 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 		if (name === 'knowledge.base') text = renderBase(text, vars.destination);
 		return { name, bytes: new TextEncoder().encode(text) };
 	});
-	return { id:'llm-wiki', version:'1', entry:'wiki/index.md', files, folders:[], excluded:[] };
+	return { id:'llm-wiki', version:'3', entry:'wiki/index.md', files, folders:[], excluded:[] };
 }
 
 export const excludedNames = new Set(['.git','.cache','.venv','__pycache__','node_modules']);

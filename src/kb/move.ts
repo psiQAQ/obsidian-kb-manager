@@ -13,7 +13,7 @@ import { discover, identityFile, parseIdentity, recheck, writeIdentity } from '.
 import type { Config, Library } from './catalog.ts';
 import { examine } from './maintenance.ts';
 import type { Repair, VisibleFiles } from './maintenance.ts';
-import { isKepano, kepanoBinding } from './template.ts';
+import { isKepano, kepanoBinding, kepanoBindingAssets } from './template.ts';
 import { validateKepanoRoot } from './kepano.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { registerVaultLibrary } from '../registry/discovery.ts';
@@ -86,9 +86,10 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	if(signature!==record.manifest && !(current===destination && manifestEdit && digest(manifestEdit.after)===signature))throw new Error(tr('清单已变化','The library manifest changed'));
 	const duplicate=(await discover(disk,config)).some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
 	if(duplicate)throw new Error(tr('ID 重复','Duplicate library ID'));
+	const bindingAssets=kepanoBindingAssets(kepanoSkeleton,identity.template.version);
 	for(const item of record.changes){
 		const binding=identity.managed.find(m=>m.path===item.file);
-		const allowed=isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(kepanoSkeleton,item.file):item.file==='knowledge.base' && !!binding;
+		const allowed=isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(bindingAssets,item.file):item.file==='knowledge.base' && !!binding;
 		if(item.file!==identityFile && !allowed)throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
 		if(item.file!==identityFile && binding?.fingerprint!==item.before && !(current===destination && binding?.fingerprint===digest(item.after)))
 			throw new Error(tr('受管文件的指纹已变化','A managed file fingerprint changed'));
