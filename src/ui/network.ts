@@ -31,7 +31,8 @@ export function credential(plugin:KnowledgeBaseManager,id:string,target:RemoteTa
  if(mode(plugin,id,url)==='system')return undefined;
  const raw=plugin.app.secretStorage.getSecret(secretKey(id,url));
  if(!raw)throw new Error(plugin.t('未找到已选用的备用凭据','The selected fallback credential is unavailable'));
-	const data:unknown=JSON.parse(raw);
+	let data:unknown;
+	try{data=JSON.parse(raw);}catch{throw new Error(fromEnglish('Invalid repository credential','本库凭据无效'));}
 	if(typeof data!=='object'||!data||!('username' in data)||!('password' in data)||
 		typeof data.username!=='string'||typeof data.password!=='string')throw new Error(fromEnglish('Invalid repository credential','本库凭据无效'));
 	return {username:data.username,password:data.password};

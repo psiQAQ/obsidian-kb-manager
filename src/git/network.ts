@@ -37,8 +37,8 @@ export async function localConfig(dir:string){
  return items.map(row=>{const i=row.indexOf('\n');return [row.slice(0,i),row.slice(i+1)] as const;});
 }
 export async function remoteState(dir:string) {
- const configFile=path.join(dir,'.git','config'),config=digest(await fs.readFile(configFile));
  const preview=await previewVersion(dir),branch=refName(preview.branch);
+ const configFile=path.join(dir,'.git','config'),config=digest(await fs.readFile(configFile));
  const fields=await localConfig(dir);
  const get=(key:string)=>fields.filter(([k])=>k===key).map(([,value])=>value);
  const names=(await gitResult(dir,['remote'])).stdout.toString().trim().split(/\r?\n/u).filter(Boolean);
