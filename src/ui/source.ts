@@ -98,11 +98,10 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 		return Promise.resolve();
 	},readonly);
 	const refreshLayout=async()=>{
-		plugin.prefs.libraries[id]={...plugin.prefs.libraries[id],tree:!pref.tree};
-		await plugin.persist();
+		await plugin.saveLibraryPreferences(lib,{...plugin.prefs.libraries[id],tree:!pref.tree});
 		await plugin.refresh();
 	};
-	button(pref.tree?'list':'folder',t('切换列表或文件树','Switch list or tree'),refreshLayout);
+	button(pref.tree?'list':'folder',t('切换列表或文件树','Switch list or tree'),refreshLayout,readonly);
 	function editIndex(action:IndexAction,files:string[],after?:()=>Promise<void>){
 		const label=action==='stage'?t('暂存完整文件','Stage whole files'):t('取消暂存','Unstage');
 		const modal=new Dialog(plugin.app,label);
