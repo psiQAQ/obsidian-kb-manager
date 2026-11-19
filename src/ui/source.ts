@@ -1,5 +1,5 @@
 // Source control layout adapted from Obsidian Git 2.43.0 (MIT).
-import { Menu, TFile, setIcon, moment } from 'obsidian';
+import { Menu, Setting, TFile, setIcon, moment } from 'obsidian';
 import { assertGitEnabled, pluginNotice } from './device.ts';
 import { mount, unmount } from 'svelte';
 import { hostname } from 'node:os';
@@ -11,6 +11,7 @@ import type { VersionPreview } from '../git/versions.ts';
 import { candidates, changeIndex, fileComparison, verifyWorkingFile } from '../git/index-actions.ts';
 import type { IndexAction } from '../git/index-actions.ts';
 import { Dialog } from './dialog.ts';
+import { addTextField } from './text-field.ts';
 import { renderCommitMessage } from '../preferences.ts';
 import { versions } from './versions.ts';
 import { showDiff } from './source-diff.ts';
@@ -20,8 +21,8 @@ import { commitAndSync } from './sync.ts';
 import type { CommitMode } from '../git/versions.ts';
 import FileRow from './source-components/FileRow.svelte';
 
-function group(el:HTMLElement,label:string) {
-	const section=el.createEl('details',{cls:'tree-item nav-folder'});
+function group(el:HTMLElement,label:string,outer=false) {
+	const section=el.createEl('details',{cls:outer?'tree-item nav-folder kb-git-section':'tree-item nav-folder'});
 	section.open=true;
 	section.createEl('summary',{text:label});
 	return section.createDiv({cls:'tree-item-children'});
@@ -61,24 +62,23 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 		const conflicts=await conflictFiles(dir);
 		if(!active())return;
 		if(conflicts.length) {
-			const section=group(el,t('冲突','Conflicts')+' ('+conflicts.length+')');
+			const section=group(el,t('冲突','Conflicts')+' ('+conflicts.length+')',true);
 			for(const file of conflicts)section.createEl('p',{text:file});
 		}
-		el.createEl('p',{text:String(error)});
+		el.createEl('p',{cls:'kb-git-error',text:String(error)});
 		return;
 	}
 	if(!active())return;
 	el.createEl('p',{text:preview.branch+' · '+(preview.head.slice(0,10)||t('尚无提交','No commits yet'))});
 	if(readonly)el.createEl('p',{text:t('此知识库当前只读','This library is currently read-only')});
-	const message=el.createEl('textarea',{attr:{rows:'2',placeholder:t('提交说明','Commit message'),'aria-label':t('提交说明','Commit message')}});
 	const commitFiles=preview.staged ? candidates(preview,'unstage') : preview.changes;
-	message.value=drafts.get(id) ?? renderCommitMessage(pref,moment().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
-	message.disabled=readonly;
-	message.oninput=()=>drafts.set(id,message.value);
+	let message=drafts.get(id) ?? renderCommitMessage(pref,moment().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
+	if(!readonly)addTextField(new Setting(el).setName(t('提交说明','Commit message')),message,value=>{message=value;drafts.set(id,value);},
+		{example:t('更新知识库笔记','Update knowledge base notes')},true);
 	const committed=(submitted:string)=>()=>{if(drafts.get(id)===submitted)drafts.delete(id);};
-	const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message.value,committed(message.value),mode);
+	const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message,committed(message),mode);
 	const smart=pref.autoStageOnEmptyIndex?'smart':'staged';
-	button('arrow-up-circle',t('提交并同步','Commit and sync'),()=>commitAndSync(plugin,lib,message.value,committed(message.value),smart),readonly);
+	button('arrow-up-circle',t('提交并同步','Commit and sync'),()=>commitAndSync(plugin,lib,message,committed(message),smart),readonly);
 	button('check',t('预览提交','Preview commit'),()=>commit(smart),readonly || !(pref.autoStageOnEmptyIndex?preview.changes.length:preview.staged));
 	const more=button('chevron-down',t('更多提交操作','More commit actions'),()=>{
 		const menu=new Menu();
@@ -92,7 +92,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 		item(t('用暂存内容修订上次提交','Amend staged'),'git-commit',!!preview.head && preview.staged,()=>commit('amend'));
 		menu.addSeparator();
 		item(t('提交已暂存内容并同步','Commit staged and sync'),'arrow-up-circle',preview.staged,
-			()=>commitAndSync(plugin,lib,message.value,committed(message.value),'staged'));
+			()=>commitAndSync(plugin,lib,message,committed(message),'staged'));
 		const rect=more.getBoundingClientRect();
 		menu.showAtPosition({x:rect.left,y:rect.bottom});
 		return Promise.resolve();
@@ -149,10 +149,10 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	for(const action of ['unstage','stage'] as const){
 		const staged=action==='unstage';
 		const list=candidates(preview,action);
-		const label=staged?t('已暂存的更改','Staged changes'):t('更改','Changes');
+		const label=staged?t('已暂存的更改','Staged changes'):t('工作区更改','Working tree changes');
 		const actionLabel=staged?t('取消暂存','Unstage'):t('暂存','Stage');
 		button(staged?'minus-circle':'plus-circle',staged?t('全部取消暂存','Unstage all'):t('全部暂存','Stage all'),()=>editIndex(action,list.map(c=>c.file)),readonly || !list.length);
-		const section=group(el,label+' ('+list.length+')');
+		const section=group(el,label+' ('+list.length+')',true);
 		const folders=new Map([['',section]]);
 		for (const change of list){
 			const {file}=change, relative=lib.location+'/'+file;
@@ -180,6 +180,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 			}
 			const before=staged?change.head:change.stage, after=staged?change.stage:change.work;
 			rows.push(mount(FileRow,{target:container,props:{path:file,label:title,actions,
+				partial:change.head!==change.stage && change.stage!==change.work?t('部分暂存','Partially staged'):undefined,
 				status:!after?'D':!before?'A':'M',description:!after?t('删除','Deleted'):!before?t('新增','Added'):t('修改','Modified'),
 				showDiff:run(()=>showDiff(plugin,{id,file,staged}))}}));
 		}

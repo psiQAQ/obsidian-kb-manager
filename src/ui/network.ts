@@ -4,6 +4,7 @@ import {gitDisabled,pluginNotice} from './device.ts';
 import {moment,Notice,Setting} from 'obsidian';
 import {hostname} from 'node:os';
 import {renderCommitMessage} from '../preferences.ts';
+import type {GitPreferences} from '../preferences.ts';
 import {AutomationClock,selectPaths} from '../git/network-automation.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import {discover,recheck} from '../kb/catalog.ts';
@@ -21,6 +22,25 @@ export function recordPull(plugin:KnowledgeBaseManager,id:string,files:string[])
 	let records=pulledFiles.get(plugin);
 	if(!records){records=new Map();pulledFiles.set(plugin,records);}
 	records.set(id,files);
+}
+
+export function pullReview(plugin:KnowledgeBaseManager,lib:Library,plan:Awaited<ReturnType<typeof changePlan>>,
+	prefs:Pick<GitPreferences,'syncMethod'|'mergeStrategy'>){
+	const t=plugin.t;
+	const dialog=new Dialog(plugin.app,t('确认本库拉取','Confirm library pull'));
+	const methods={'ff-only':t('仅快进','Fast-forward only'),merge:t('合并','Merge'),rebase:t('变基','Rebase')};
+	dialog.facts([[t('知识库路径','Library path'),lib.location],[t('分支','Branch'),plan.branch],
+		[t('当前提交','Current commit'),plan.head||'∅'],[t('上游提交','Upstream commit'),plan.oid],
+		[t('拉取策略','Pull strategy'),methods[prefs.syncMethod]]]);
+	const roles=commitRoles(plan.identity,prefs.syncMethod);
+	if(roles.length)dialog.lines(roles);
+	if(prefs.syncMethod==='merge'){
+		const strategies={none:t('Git 默认','Git default'),ours:t('倾向本地一方','Favor our changes'),theirs:t('倾向远端一方','Favor their changes')};
+		dialog.facts([[t('冲突策略','Conflict strategy'),strategies[prefs.mergeStrategy]]]);
+	}
+	dialog.contentEl.createEl('h3',{text:t('涉及的文件','Affected files')+' ('+plan.changes.length+')'});
+	if(plan.changes.length)dialog.lines(plan.changes);
+	return dialog;
 }
 
 function mode(plugin:KnowledgeBaseManager,id:string,url:string){
@@ -59,7 +79,8 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 		await recheck(plugin.disk,plugin.config,lib);
 		const dir=await plugin.disk.path(lib.location),state=await remoteState(dir);
 		const dialog=new Dialog(plugin.app,title);
-		dialog.lines([lib.location,state.preview.branch+' · '+(state.preview.head.slice(0,10)||'∅')]);
+		dialog.facts([[t('知识库路径','Library path'),lib.location],[t('分支','Branch'),state.preview.branch],
+			[t('当前提交','Current commit'),state.preview.head||t('无提交','No commits')]]);
 		const confirm=(label:string, action:(dir:string)=>Promise<void>)=>{
 			dialog.action(label,async()=>{
 				await write(async folder=>{
@@ -73,7 +94,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 		};
 		return {dir,state,dialog,confirm};
 	};
-	const row=new Setting(el);
+	const row=new Setting(el).setName(t('远端同步','Remote sync'));
 	function button(icon:string,label:string,open:()=>Promise<void>){
 		register?.(icon,open);
 		row.addExtraButton(b=>b.setIcon(icon).setTooltip(label).onClick(()=>{
@@ -87,15 +108,16 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 			const {state,dialog,confirm}=await preview(title);
 			const target=state.target;
 			if(!target)throw new Error(t('请先配置本库远端','Configure this library’s remote first.'));
-			dialog.lines([op==='push'?target.pushDisplay:target.fetchDisplay,target.remote+' / '+target.remoteBranch,mode(plugin,id,op==='push'?target.pushUrl:target.url)]);
+			const authentication=mode(plugin,id,op==='push'?target.pushUrl:target.url);
+			dialog.facts([[t('远端地址','Remote URL'),op==='push'?target.pushDisplay:target.fetchDisplay],
+				[t('远端分支','Remote branch'),target.remote+'/'+target.remoteBranch],
+				[t('认证方式','Authentication'),authentication==='fallback'?t('备用凭据','Fallback credential'):t('系统认证','System authentication')]]);
 			confirm(op==='pull'?t('获取并预览','Fetch and preview'):title,async dir=>{
 				await transfer(dir,op==='push'?'push':'fetch',target,credential(plugin,id,target,op==='push'));
 				if(op==='pull'){
 					const plan=await changePlan(dir,'refs/remotes/'+target.remote+'/'+target.remoteBranch);
-					const next=new Dialog(plugin.app,t('确认拉取','Confirm pull'));
-					next.lines([lib.location,plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod,...commitRoles(plan.identity,prefs.syncMethod),
-						...(prefs.syncMethod==='merge'?[t('冲突策略','Conflict strategy')+' · '+prefs.mergeStrategy]:[]),...plan.changes]);
-					next.action(t('应用','Apply'),async()=>{
+					const next=pullReview(plugin,lib,plan,prefs);
+					next.action(t('拉取','Pull'),async()=>{
 						await write(async folder=>{
 							if(JSON.stringify((await remoteState(folder)).target)!==JSON.stringify(target))throw new Error(fromEnglish('Remote changed','远端已变化'));
 							await applyChange(folder,plan,'pull',prefs.syncMethod,prefs.mergeStrategy);
@@ -110,7 +132,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	button('git-branch',t('分支','Branches'),async()=>{
 		const {dir,state,dialog,confirm}=await preview(t('本库分支','Library branches'));
 		let name='';
-		dialog.text(t('新分支名','New branch name'),name,v=>{name=v;});
+		dialog.text(t('新分支名','New branch name'),name,v=>{name=v;},{example:'notes-update'});
 		confirm(t('创建分支','Create branch'),folder=>createBranch(folder,name));
 		for(const branch of state.branches.filter(b=>b!==state.preview.branch)){
 			dialog.action(branch,async()=>{
@@ -233,7 +255,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	});
 	const files=pulledFiles.get(plugin)?.get(id);
 	if(files?.length){
-		const group=el.createEl('details');
+		const group=el.createEl('details',{cls:'kb-git-section'});
 		group.createEl('summary',{text:t('最近拉取','Last pulled')+' ('+files.length+')'});
 		for(const file of files)group.createDiv({text:file});
 	}

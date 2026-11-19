@@ -66,7 +66,7 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 		const modal=new Dialog(plugin.app,t('完成本库合并','Finish library merge'));
 		modal.lines([lib.location,fresh.head+' + '+fresh.other,...fresh.stagedPaths]);
 		let message='Merge '+fresh.other.slice(0,10)+' into '+fresh.branch;
-		modal.text(t('提交说明','Commit message'),message,v=>{message=v;});
+		modal.multiline(t('提交说明','Commit message'),message,v=>{message=v;});
 		modal.lines([t('本库 Git 提交身份','Library Git commit identity')+' · '+(fresh.identity.name || '—')+' <'+(fresh.identity.email || '—')+'>']);
 		modal.action(t('提交当前索引','Commit current index'),async()=>{
 			await plugin.exclusiveGit(lib.location,async()=>{await recheck(plugin.disk,plugin.config,lib);await finishMerge(dir,fresh,message);});

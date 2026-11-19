@@ -8,7 +8,7 @@ import type MobilePlugin from './plugin.ts';
 export class MobileSettings extends PluginSettingTab {
 	constructor(app:App,private plugin:MobilePlugin){super(app,plugin);}
 	display(){
-		const el=this.containerEl;el.empty();
+		const el=this.containerEl;el.empty();el.addClass('kb-settings');
 		const p=this.plugin;
 		new Setting(el).setName(tr('目录与语言','Directories and language')).addButton(c=>c.setButtonText(tr('打开','Open')).onClick(()=>this.directories()));
 		new Setting(el).setName(tr('Vault Git 忽略规则','Vault Git ignore rule')).addButton(c=>c.setButtonText(tr('预览','Preview')).onClick(async()=>{
@@ -25,10 +25,10 @@ export class MobileSettings extends PluginSettingTab {
 		const p=this.plugin,ctx=p.ctx;
 		let parents=ctx.parents.join('\n'),templates=ctx.templates.join('\n'),language:string=p.saved.language;
 		const dlg=new Dialog(p.app,tr('目录与语言','Directories and language'));
-		for(const [label,value,placeholder,change] of [
+		for(const [label,value,example,change] of [
 			[tr('知识库父目录（每行一个）','Library parent directories (one per line)'),parents,'knowledge-base',(v:string)=>{parents=v;}],
-			[tr('自定义模板目录（每行一个）','Custom template directories (one per line)'),templates,tr('可留空，例如 templates/wiki','Optional, e.g. templates/wiki'),(v:string)=>{templates=v;}]
-		] as const)new Setting(dlg.contentEl).setName(label).addTextArea(c=>c.setValue(value).setPlaceholder(placeholder).onChange(change));
+			[tr('自定义模板目录（每行一个）','Custom template directories (one per line)'),templates,'templates/wiki',(v:string)=>{templates=v;}]
+		] as const)dlg.multiline(label,value,change,{example});
 		new Setting(dlg.contentEl).setName(tr('语言','Language')).addDropdown(c=>c.addOptions({system:tr('系统默认','System default'),zh:'中文',en:'English'}).setValue(language).onChange(v=>{language=v;}));
 		dlg.action(tr('保存','Save'),async()=>{
 			const paths=(v:string)=>v.split(/\r?\n/u).map(s=>s.trim()).filter(Boolean);

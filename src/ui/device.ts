@@ -17,7 +17,7 @@ export function assertGitEnabled(plugin: KnowledgeBaseManager) {
 export function pluginNotice(plugin: KnowledgeBaseManager, kind: 'info'|'unchanged'|'error', message: string, id?: string, timeout?: number) {
 	const prefs = plugin.preferences(id);
 	const enabled = kind === 'error' ? prefs.showErrorNotices : prefs.showInfoNotices && (kind !== 'unchanged' || prefs.showNoChangesNotices);
-	if (enabled) new Notice(message,timeout);
+	if (enabled) new Notice(message,timeout).messageEl.addClass('kb-notice-text');
 }
 
 export function diagnostics(plugin: KnowledgeBaseManager) {

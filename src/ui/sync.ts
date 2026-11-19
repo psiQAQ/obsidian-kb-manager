@@ -8,7 +8,7 @@ import type { Library } from '../kb/catalog.ts';
 import { recheck } from '../kb/catalog.ts';
 import { resolveRef, applyChange, changePlan, remoteState, transfer } from '../git/network.ts';
 import { Dialog } from './dialog.ts';
-import { credential, recordPull } from './network.ts';
+import { credential, pullReview, recordPull } from './network.ts';
 import { versions } from './versions.ts';
 import { commitRoles } from './repository-identity.ts';
 
@@ -35,7 +35,8 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 		if(prefs.disablePush){onComplete?.();return;}
 		if(prefs.squashCommitsBeforePush && !inspected){
 			const inspect=new Dialog(plugin.app,t('检查待推送的提交','Inspect outgoing commits'));
-			inspect.lines([lib.location,upstream.fetchDisplay,upstream.remoteBranch]);
+			inspect.facts([[t('知识库路径','Library path'),lib.location],[t('上游地址','Upstream URL'),upstream.fetchDisplay],
+				[t('上游分支','Upstream branch'),upstream.remoteBranch]]);
 			inspect.action(t('获取上游并预览','Fetch upstream and preview'),async()=>{
 				const plan=await run(async()=>{
 					await transfer(dir,'fetch',upstream,credential(plugin,id!,upstream));
@@ -45,10 +46,13 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 				inspect.close();
 				if(plan.commits.length<2){await confirmPush(true);return;}
 				const review=new Dialog(plugin.app,t('压缩待推送的提交','Squash outgoing commits'));
-				review.lines([lib.location,plan.branch,...commitRoles(plan.identity,'squash'),...plan.commits.map(c=>c.oid.slice(0,10)+' · '+c.message),
-					'refs/kb-manager/before-squash/'+plan.head]);
+				review.facts([[t('知识库路径','Library path'),lib.location],[t('分支','Branch'),plan.branch],
+					[t('原提交引用','Original commit ref'),'refs/kb-manager/before-squash/'+plan.head]]);
+				review.lines(commitRoles(plan.identity,'squash'));
+				review.contentEl.createEl('h3',{text:t('将被压缩的提交','Commits to squash')+' ('+plan.commits.length+')'});
+				review.lines(plan.commits.map(c=>c.oid.slice(0,10)+' · '+c.message));
 				let message=plan.commits.map(c=>c.message).reverse().join(' / ');
-				review.text(t('合并后的提交说明','Squashed commit message'),message,value=>{message=value;});
+				review.multiline(t('合并后的提交说明','Squashed commit message'),message,value=>{message=value;});
 				review.action(t('压缩并预览推送','Squash and preview push'),async()=>{
 					await run(()=>squash(dir,plan,message));
 					review.close();await confirmPush(true);
@@ -61,7 +65,9 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 		}
 		const state=await run(()=>remoteState(dir));
 		const dialog=new Dialog(plugin.app,t('确认推送本库','Confirm library push'));
-		dialog.lines([lib.location,state.preview.branch+' · '+state.preview.head,upstream.pushDisplay+' → '+upstream.remoteBranch]);
+		dialog.facts([[t('知识库路径','Library path'),lib.location],[t('本地分支','Local branch'),state.preview.branch],
+			[t('当前提交','Current commit'),state.preview.head||'∅'],[t('推送地址','Push URL'),upstream.pushDisplay],
+			[t('远端分支','Remote branch'),upstream.remoteBranch]]);
 		dialog.action(t('推送','Push'),async()=>{
 			await run(async()=>{
 				if((await remoteState(dir)).preview.head!==state.preview.head)throw new Error(t('提交已变化','Commit changed'));
@@ -73,16 +79,16 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 	async function synchronize(){
 		if(!prefs.pullBeforePush){await confirmPush();return;}
 		const fetch=new Dialog(plugin.app,t('获取并预览拉取','Fetch and preview pull'));
-		fetch.lines([lib.location,upstream.fetchDisplay+' → '+upstream.remoteBranch]);
+		fetch.facts([[t('知识库路径','Library path'),lib.location],[t('上游地址','Upstream URL'),upstream.fetchDisplay],
+			[t('上游分支','Upstream branch'),upstream.remoteBranch]]);
 		fetch.action(t('获取','Fetch'),async()=>{
 			const plan=await run(async()=>{
 				await transfer(dir,'fetch',upstream,credential(plugin,id!,upstream));
 				return changePlan(dir,'refs/remotes/'+upstream.remote+'/'+upstream.remoteBranch);
 			});
 			fetch.close();
-			const pull=new Dialog(plugin.app,t('确认本库拉取','Confirm library pull'));
-			pull.lines([lib.location,plan.branch+' · '+plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod+' · '+prefs.mergeStrategy,...commitRoles(plan.identity,prefs.syncMethod),...plan.changes]);
-			pull.action(t('继续','Continue'),async()=>{
+			const pull=pullReview(plugin,lib,plan,prefs);
+			pull.action(t('拉取','Pull'),async()=>{
 				await run(()=>applyChange(dir,plan,'pull',prefs.syncMethod,prefs.mergeStrategy));
 				recordPull(plugin,id!,plan.changes);pull.close();await plugin.refresh();await confirmPush();
 			});pull.open();

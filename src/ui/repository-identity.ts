@@ -7,6 +7,13 @@ import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
 import { assertGitEnabled } from './device.ts';
 
+export function identitySourceText(value?:IdentityValue){
+	if(!value)return tr('未设置','Unset');
+	const scopes:Record<string,string>={system:tr('系统','System'),global:tr('全局','Global'),local:tr('本库','Local'),
+		worktree:tr('工作区','Worktree'),command:tr('命令','Command')};
+	return value.value+' · '+(scopes[value.scope]??value.scope)+' · '+value.origin;
+}
+
 export function commitRoles(who:GitIdentity,method:'ff-only'|'merge'|'rebase'|'squash'):string[]{
 	if(method==='ff-only')return [];
 	const label=method==='rebase'
@@ -22,8 +29,7 @@ export async function editRepositoryIdentity(plugin:KnowledgeBaseManager,lib:Lib
 	const before=await readRepositoryIdentity(await plugin.disk.path(current.location));
 	const t=plugin.t,target=current.location+'/.git/config',keys=['name','email'] as const;
 	const dialog=new Dialog(plugin.app,t('本库 Git 提交身份','Library Git commit identity'));
-	const value=(v?:IdentityValue)=>v?v.value+' · '+v.scope+' · '+v.origin:t('未设置','Unset');
-	dialog.lines([target,...keys.map(key=>'user.'+key+' · '+value(before.values[key].slice(-1)[0]))]);
+	dialog.facts([[t('本库配置','Library config'),target],...keys.map(key=>['user.'+key,identitySourceText(before.values[key].at(-1))] as const)]);
 	if(before.shared)dialog.lines([t('此库含特殊的本地配置，请使用 Git 修改。','This repository has special local configuration. Edit it with Git.')]);
 	if(!before.shared && !current.identity?.archived){
 		const draft={...before.local};
@@ -35,7 +41,7 @@ export async function editRepositoryIdentity(plugin:KnowledgeBaseManager,lib:Lib
 			if(!changed.length)throw new Error(t('没有待保存的修改','No changes to save'));
 			const preview=new Dialog(plugin.app,t('确认修改 Git 提交身份','Confirm Git identity changes'));
 			preview.lines([target,...changed.map(k=>'user.'+k+' · '+(before.local[k]||t('继承','Inherited'))+' → '+
-				(next[k] || t('删除本库覆盖','Remove local override')+' · '+value(identityAfter(before,k,'')) ))]);
+				(next[k] || t('删除本库覆盖','Remove local override')+' · '+identitySourceText(identityAfter(before,k,'')) ))]);
 			preview.action(t('写入本库 Git 配置','Save to library Git config'),async()=>{
 				await plugin.exclusiveGit(lib.location,async()=>{
 					await recheck(plugin.disk,plugin.config,current);

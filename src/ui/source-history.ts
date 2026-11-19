@@ -31,7 +31,7 @@ class SourceHistory extends ItemView {
 		this.contentEl.empty();
 		if(!state || typeof state!=='object' || !('id' in state) || typeof state.id!=='string')return;
 		const id=this.id=state.id;
-		const el=this.contentEl.createDiv();
+		const el=this.contentEl.createDiv({cls:'kb-git-history'});
 		const onError=(error:unknown)=>{new Notice(String(error));};
 		try{
 			assertGitEnabled(plugin);
@@ -51,9 +51,12 @@ class SourceHistory extends ItemView {
 					const data=await history(dir,cursor);
 					for(const {oid,commit} of data.entries){
 						const row=list.createEl('details');
-						row.createEl('summary',{text:oid.slice(0,10)+' · '+commit.message.trim()});
+						const [subject,...body]=commit.message.trim().split('\n');
+						row.createEl('summary',{text:oid.slice(0,10)+' · '+(subject||t('无提交说明','No commit message'))});
 						const details=[displayAuthor(commit.author.name,pref.historyAuthor),pref.historyDate && new Date(commit.author.timestamp*1000).toLocaleString()].filter(Boolean);
-						if(details.length)row.createEl('p',{text:details.join(' · ')});
+						if(details.length)row.createEl('p',{cls:'kb-commit-meta',text:details.join(' · ')});
+						const description=body.join('\n').trim();
+						if(description)row.createEl('p',{cls:'kb-commit-body',text:description});
 						let loaded=false;
 						row.ontoggle=()=>{if(row.open && !loaded){
 							loaded=true;
@@ -75,6 +78,6 @@ class SourceHistory extends ItemView {
 			}
 			more.onclick=()=>{void page().catch(onError);};
 			await page();
-		}catch(error){el.createEl('p',{text:String(error)});}
+		}catch(error){el.createEl('p',{cls:'kb-git-error',text:String(error)});}
 	}
 }

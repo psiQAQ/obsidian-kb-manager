@@ -71,7 +71,7 @@ export class ManagerView extends ItemView {
 			if (!libraries.length) el.createEl('p',{text:tr('尚未登记知识库。可以新建，或选择现有 kb.toml 登记。',"No libraries registered. Create a library or register an existing kb.toml.")});
 			this.plugin.observeLibraries(libraries);
 			for(const lib of libraries)this.row(lib,signal);
-		} catch(error) { el.createEl('p',{text:String(error)}); }
+		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
 	}
 	row(lib: Library,signal:AbortSignal){
 		if(lib.missing){
@@ -97,7 +97,7 @@ export class ManagerView extends ItemView {
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
 			this.contentEl.createDiv({cls:'kb-library-git',text:reason});
 		}
-		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('体检',"Check library")).onClick(async()=>{try{await health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
+		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('体检',"Check library")).onClick(()=>{try{health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(lib.problem){
 			row.addButton(b=>b.setButtonText(tr('移除登记','Remove')).onClick(async()=>{
 				try{await removeRegistryEntry(this.plugin,lib.location);}catch(error){new Notice(String(error));}
@@ -169,14 +169,14 @@ export class ManagerView extends ItemView {
 			watchLibraryChanges(this.plugin,lib,panel,signal,()=>this.render());
 			const local=panel.createDiv();
 			void Promise.resolve(sourcePanel(this.plugin,lib,local,this.drafts,signal)).catch(error=>{
-				if(!signal.aborted)local.createEl('p',{text:String(error)});
+				if(!signal.aborted)local.createEl('p',{cls:'kb-git-error',text:String(error)});
 			});
 			if(!lib.identity.archived && lib.git==='local'){
 				const remote=panel.createDiv();
 				this.networkReady=networkPanel(this.plugin,lib,remote,(icon,action)=>{
 					if(!signal.aborted)this.networkActions.set(icon,action);
 				}).catch(error=>{
-					if(!signal.aborted)remote.createEl('p',{text:String(error)});
+					if(!signal.aborted)remote.createEl('p',{cls:'kb-git-error',text:String(error)});
 				});
 			}
 		}

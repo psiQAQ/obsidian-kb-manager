@@ -28,9 +28,9 @@ export function createForm(plugin:MobilePlugin) {
 	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('创建知识库','Create knowledge base'));
 	const input={parent:ctx.parents[0]??'',name:'',displayName:'',description:'',source:'',author:plugin.deviceAuthor(),origin:''};
 	selector(dlg,tr('父目录','Parent directory'),ctx.parents,v=>{input.parent=v;});
-	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;});
-	dlg.text(tr('显示名','Display name'),'',v=>{input.displayName=v;});
-	dlg.text(tr('简介','Description'),'',v=>{input.description=v;});
+	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
+	dlg.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
+	dlg.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	dlg.choice(tr('模板','Template'),{'':'LLM Wiki','builtin:kepano':'Kepano',...Object.fromEntries(ctx.templates.map(v=>[v,v]))},v=>{input.source=v;});
 	dlg.text(tr('提交姓名','Commit author name'),input.author.name,v=>{input.author.name=v;});
 	dlg.text(tr('提交邮箱','Commit author email'),input.author.email,v=>{input.author.email=v;});
@@ -40,10 +40,12 @@ export function createForm(plugin:MobilePlugin) {
 		const p=await createPreview(ctx,{...input,displayName:input.displayName||input.name},plugin.templates);
 		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
 		const {author,origin,files}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
-		review.lines([p.location,p.template.id,initialBranch+' · '+initialMessage,
-			author.name+' <'+author.email+'>',
-			tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
-			...(origin?['origin · '+origin,tr('创建时只保存远端地址。','Creation only saves the remote URL.')]:[]),...registryIgnoreLines(p.registryIgnore)]);
+		const signature=author.name+' <'+author.email+'>';
+		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),p.template.id],
+			[tr('分支','Branch'),initialBranch],[tr('提交说明','Commit message'),initialMessage],
+			[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],['origin',origin||tr('未设置','Unset')]]);
+		review.lines([tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
+			...(origin?[tr('创建时只保存远端地址。','Creation only saves the remote URL.')]:[]),...registryIgnoreLines(p.registryIgnore)]);
 		review.contentEl.createEl('h3',{text:tr('初始提交文件','Files in the initial commit')});
 		review.lines(tracked.length?tracked:[tr('所有文件均被忽略，将创建空的初始提交。','All files are ignored. The initial commit will be empty.')]);
 		review.contentEl.createEl('h3',{text:tr('仅保存在本库的文件','Files kept in the library working tree')});
@@ -54,9 +56,10 @@ export function createForm(plugin:MobilePlugin) {
 			const result=await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates,filter));
 			review.close();dlg.close();
 			const receipt=new Dialog(plugin.app,tr('知识库已创建','Knowledge base created'));
-			receipt.lines([result.location,result.branch+' · '+initialMessage,result.head,
-				result.author.name+' <'+result.author.email+'>',...(result.origin?['origin · '+result.origin]:[]),
-				tr('初始提交已验证，工作区干净，知识库已登记。','Verified the initial commit, clean working tree and library registration.')]);
+			receipt.facts([[tr('知识库路径','Library path'),result.location],[tr('分支','Branch'),result.branch],
+				[tr('提交','Commit'),result.head],[tr('提交说明','Commit message'),initialMessage],
+				[tr('作者与提交者','Author and committer'),result.author.name+' <'+result.author.email+'>'],['origin',result.origin||tr('未设置','Unset')]]);
+			receipt.lines([tr('初始提交已验证，工作区干净，知识库已登记。','Verified the initial commit, clean working tree and library registration.')]);
 			receipt.action(tr('关闭','Close'),()=>{receipt.close();return Promise.resolve();});
 			receipt.open();await plugin.refresh();
 		});
@@ -73,7 +76,7 @@ export function cloneForm(plugin:MobilePlugin) {
 	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('克隆知识库','Clone knowledge base'));
 	let parent=ctx.parents[0]??'',name='',url='',user='',token='';
 	selector(dlg,tr('父目录','Parent directory'),ctx.parents,v=>{parent=v;});
-	dlg.text(tr('目标目录名','Destination folder name'),'',v=>{name=v;});
+	dlg.text(tr('目标目录名','Destination folder name'),'',v=>{name=v;},{example:'research-notes'});
 	dlg.text(tr('远端 HTTPS 地址','Remote HTTPS URL'),'',v=>{url=v;});
 	dlg.text(tr('认证用户名（可选）','Authentication username (optional)'),'',v=>{user=v;});
 	tokenField(dlg,v=>{token=v;});

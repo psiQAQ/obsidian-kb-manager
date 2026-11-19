@@ -1,9 +1,91 @@
+.kb-dialog .modal-content,
+.kb-settings,
+.kb-manager-sidebar {
+	container-type: inline-size;
+	overflow-wrap: anywhere;
+}
 .kb-manager-sidebar { padding: var(--size-4-2); }
-.kb-manager-sidebar .setting-item { gap: var(--size-4-1); flex-wrap: wrap; }
-.kb-manager-sidebar .setting-item-info { min-width: 7em; overflow-wrap: anywhere; }
-.kb-library-git { padding-inline-start: var(--size-4-2); border-inline-start: 2px solid var(--interactive-accent); }
-.kb-library-git pre { overflow: auto; white-space: pre; }
-.kb-library-git textarea { width: 100%; }
+.kb-dialog .modal-title { overflow-wrap: anywhere; }
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item {
+	gap: var(--size-4-2);
+	flex-wrap: wrap;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) :is(.setting-item-info, .setting-item-control) {
+	min-inline-size: 0;
+	max-inline-size: 100%;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-control {
+	gap: var(--size-4-1);
+	flex-wrap: wrap;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item:not(.setting-item-heading) .setting-item-name {
+	font-size: var(--font-ui-small);
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) :is(input, textarea, select, button) {
+	min-inline-size: 0;
+	max-inline-size: 100%;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) :is(button, .setting-item-name) {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-control > button:not(.clickable-icon) {
+	min-block-size: var(--input-height);
+	height: auto;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) :is(.kb-multiline-field, .kb-action-error:not([hidden])) {
+	flex-basis: 100%;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .kb-multiline-field > :is(.setting-item-info, .setting-item-control) {
+	flex: 0 0 100%;
+}
+:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .kb-multiline-field textarea {
+	flex: 1;
+	min-block-size: 4.5em;
+	resize: vertical;
+}
+.kb-dialog .kb-action-error {
+	order: 1;
+	color: var(--text-error);
+	max-block-size: 14em;
+	overflow: auto;
+	user-select: text;
+}
+.kb-dialog :is(li, dd, .kb-action-error),
+.kb-notice-text, .kb-git-error, .kb-commit-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.kb-notice-text { max-block-size: 50vh; overflow: auto; }
+.kb-dialog pre, .kb-library-git pre, .kb-diff-view pre { overflow: auto; white-space: pre; }
+.kb-preview-facts {
+	display: grid;
+	grid-template-columns: minmax(7em, 1fr) minmax(0, 3fr);
+	gap: var(--size-4-1) var(--size-4-3);
+}
+.kb-preview-facts dt { color: var(--text-muted); }
+.kb-preview-facts dd { margin: 0; }
+.kb-library-git {
+	padding-inline-start: var(--size-4-2);
+	border-inline-start: 2px solid var(--interactive-accent);
+}
+.kb-library-git textarea { width: 100%; resize: vertical; }
+.kb-library-git .nav-buttons-container { flex-wrap: wrap; }
+.kb-library-git .kb-git-section { margin-block: var(--size-4-2); }
+.kb-library-git .kb-partially-staged { color: var(--text-warning); }
+.kb-git-history, .kb-diff-view { overflow-wrap: anywhere; }
+.kb-git-history summary { cursor: pointer; }
+.kb-git-history details { margin-block: var(--size-4-2); }
+.kb-git-history .kb-commit-meta { color: var(--text-muted); }
+.kb-diff-view { min-inline-size: 0; }
+.kb-diff-view table { table-layout: fixed; inline-size: 100%; }
+
+@container (max-width: 29rem) {
+	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-info { flex: 1 0 100%; margin-inline-end: 0; }
+	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-control { justify-content: flex-start; }
+	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-info:not(:has(.setting-item-name:not(:empty), .setting-item-description:not(:empty))) { display: none; }
+}
+@container (max-width: 20rem) {
+	.kb-preview-facts { grid-template-columns: minmax(0, 1fr); }
+	.kb-preview-facts dd { margin-block-end: var(--size-4-2); }
+}
 .kb-line-counts-colored .kb-lines-added { color: var(--text-success); }
 .kb-line-counts-colored .kb-lines-changed { color: var(--text-warning); }
 .kb-line-counts-colored .kb-lines-deleted { color: var(--text-error); }

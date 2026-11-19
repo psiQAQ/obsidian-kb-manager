@@ -14,7 +14,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 	let username='',password='';
 	const form=new Dialog(plugin.app,t('克隆知识库','Clone library'));
 	form.choice(t('父目录','Parent folder'),Object.fromEntries(plugin.config.parents.map(p=>[p,p])),v=>{input.parent=v;});
-	form.text(t('新目录名','New folder name'),'',v=>{input.name=v;});
+	form.text(t('新目录名','New folder name'),'',v=>{input.name=v;},{example:'research-notes'});
 	form.text('HTTPS / SSH','',v=>{input.url=v.trim();});
 	form.text(t('用户名（可选）','Username (optional)'),'',v=>{username=v;});
 	new Setting(form.contentEl).setName(t('显式备用 HTTPS 令牌，仅本次使用；留空使用系统认证','Optional fallback HTTPS token for this download; leave empty for system authentication')).addText(field=>{

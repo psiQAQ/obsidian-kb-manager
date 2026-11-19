@@ -1,6 +1,7 @@
 import {ItemView,Setting,WorkspaceLeaf} from 'obsidian';
 import {tr} from '../i18n.ts';
 import {Dialog} from '../ui/dialog.ts';
+import {addTextField} from '../ui/text-field.ts';
 import {discoverMobile,verifyLibrary} from './catalog.ts';
 import type {Library} from './catalog.ts';
 import {commit,editIndex,effectiveAuthor,localAuthor,mobileHistory,mobileStatus} from './git.ts';
@@ -27,7 +28,7 @@ export class MobileView extends ItemView {
 		}));
 	}
 	async draw(){
-		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();
+		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();el.addClass('kb-manager-sidebar');
 		const toolbar=new Setting(el);
 		this.button(toolbar,tr('刷新','Refresh'),()=>this.draw());
 		this.button(toolbar,tr('登记','Register'),()=>manifestForm(p));
@@ -63,12 +64,12 @@ export class MobileView extends ItemView {
 				const id=lib.identity.id;
 				this.button(row,'Git',async()=>{this.selected=this.selected===id?undefined:id;await this.draw();});
 				if(this.selected===id){
-					const area=el.createDiv();
-					try{await this.source(area,lib,revision);}catch(e){if(revision===this.revision)area.createEl('p',{text:String(e)});}
+					const area=el.createDiv({cls:'kb-library-git'});
+					try{await this.source(area,lib,revision);}catch(e){if(revision===this.revision)area.createEl('p',{cls:'kb-git-error',text:String(e)});}
 					if(revision!==this.revision)return;
 				}
 			}
-		}catch(e){if(revision===this.revision)el.createEl('p',{text:String(e)});}
+		}catch(e){if(revision===this.revision)el.createEl('p',{cls:'kb-git-error',text:String(e)});}
 	}
 	private async source(el:HTMLElement,lib:Library,rev:number){
 		const p=this.plugin,s=p.store(lib),id=lib.identity!.id;
@@ -84,7 +85,7 @@ export class MobileView extends ItemView {
 		}
 		for(const stage of [false,true]){
 			const group=state.changes.filter(c=>stage?c.w!==c.i:c.h!==c.i);
-			const row=new Setting(el).setName((stage?tr('工作区更改','Changes'):tr('已暂存','Staged changes'))+' · '+group.length);
+			const row=new Setting(el).setHeading().setName((stage?tr('工作区更改','Working tree changes'):tr('已暂存','Staged changes'))+' ('+group.length+')');
 			const action=stage?tr('暂存','Stage'):tr('取消暂存','Unstage');
 			const apply=async(files:string[])=>{
 				if(stage)effectiveAuthor(await localAuthor(s),p.deviceAuthor());
@@ -100,23 +101,41 @@ export class MobileView extends ItemView {
 			if(group.length && write)this.button(row,stage?tr('全部暂存','Stage all'):tr('全部取消暂存','Unstage all'),()=>apply(group.map(c=>c.file)));
 			for(const c of group){
 				const file=new Setting(el).setName(c.file);
+				if(c.h!==c.i && c.w!==c.i)file.setDesc(tr('部分暂存','Partially staged'));
 				if(write)this.button(file,action,()=>apply([c.file]));
 			}
 		}
 		if(!write)return;
-		const msg=new Setting(el).setName(tr('提交说明','Commit message')).addTextArea(c=>c.setValue(p.drafts.get(id)??'').onChange(v=>{p.drafts.set(id,v);}));
-		this.button(msg,tr('提交','Commit'),async()=>{
+		const msg=addTextField(new Setting(el).setName(tr('提交说明','Commit message')),p.drafts.get(id)??'',v=>{p.drafts.set(id,v);},
+			{example:tr('更新知识库笔记','Update knowledge base notes')},true);
+		this.button(msg,tr('预览提交','Preview commit'),async()=>{
 			const text=p.drafts.get(id)?.trim(),files=state.changes.filter(c=>c.h!==c.i).map(c=>c.file);
 			if(!text || !files.length)throw new Error(tr('请填写提交说明并暂存文件','Enter a message and stage files'));
-			const author=effectiveAuthor(await localAuthor(s),p.deviceAuthor());
-			confirm(p,tr('提交暂存的更改','Commit staged changes'),[lib.location,state.branch,author.name+' <'+author.email+'>',text,...files],async()=>{
+			const local=await localAuthor(s),author=effectiveAuthor(local,p.deviceAuthor()),signature=author.name+' <'+author.email+'>';
+			const preview=new Dialog(p.app,tr('预览提交','Preview commit'));
+			preview.facts([[tr('知识库路径','Library path'),lib.location],[tr('分支','Branch'),state.branch],[tr('提交说明','Commit message'),text]]);
+			preview.contentEl.createEl('h3',{text:tr('提交身份','Commit identity')});
+			const source=(value:string)=>value.trim()?tr('本库 Git 配置','Library Git config'):tr('本设备的 Vault 默认值','Vault default on this device');
+			preview.facts([[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],
+				[tr('姓名来源','Name source'),source(local.name)],[tr('邮箱来源','Email source'),source(local.email)]]);
+			const working=state.changes.filter(c=>c.i!==c.w),partial=new Set(working.filter(c=>c.h!==c.i).map(c=>c.file));
+			const mark=(file:string)=>file+(partial.has(file)?' · '+tr('部分暂存','Partially staged'):'');
+			preview.contentEl.createEl('h3',{text:tr('本次提交的暂存内容','Staged changes in this commit')+' ('+files.length+')'});
+			preview.lines(files.map(mark));
+			if(working.length){
+				preview.contentEl.createEl('h3',{text:tr('留在工作区的更改','Changes kept in the working tree')+' ('+working.length+')'});
+				preview.lines(working.map(c=>mark(c.file)));
+			}
+			preview.action(tr('提交已暂存内容','Commit staged changes'),async()=>{
 				await p.exclusive(lib.location,async()=>{
 					const device=p.deviceAuthor();
 					if(JSON.stringify(effectiveAuthor(await localAuthor(s),device))!==JSON.stringify(author))throw new Error(tr('身份已变化，请重新预览','Identity changed. Review again.'));
 					await commit(s,state,text,device);
 				},lib);
 				p.drafts.delete(id);
+				preview.close();await p.refresh();
 			});
+			preview.open();
 		});
 		const target=await upstream(s,state.branch);
 		if(this.revision!==rev || !target)return;
@@ -146,7 +165,16 @@ export class MobileView extends ItemView {
 		const p=this.plugin;p.assertEnabled();await verifyLibrary(p.ctx,lib);
 		const page=await mobileHistory(p.store(lib),cursor);
 		const dlg=new Dialog(p.app,tr('提交历史','Commit history'));
-		dlg.lines([lib.location,...page.entries.map(e=>e.oid.slice(0,12)+' · '+e.commit.author.name+' · '+new Date(e.commit.author.timestamp*1000).toLocaleString()+' · '+e.commit.message)]);
+		dlg.facts([[tr('知识库路径','Library path'),lib.location]]);
+		const list=dlg.contentEl.createDiv({cls:'kb-git-history'});
+		for(const {oid,commit} of page.entries){
+			const [subject,...body]=commit.message.trim().split('\n');
+			const row=list.createEl('details');
+			row.createEl('summary',{text:oid.slice(0,12)+' · '+(subject||tr('无提交说明','No commit message'))});
+			row.createEl('p',{cls:'kb-commit-meta',text:commit.author.name+' · '+new Date(commit.author.timestamp*1000).toLocaleString()});
+			const description=body.join('\n').trim();
+			if(description)row.createEl('p',{cls:'kb-commit-body',text:description});
+		}
 		if(!page.entries.length)dlg.lines([tr('还没有提交','No commits yet')]);
 		if(page.next)dlg.action(tr('更早的提交','Older commits'),async()=>{await this.history(lib,page.next);dlg.close();});
 		dlg.open();

@@ -10,6 +10,7 @@ import { gitDefaults, renderCommitMessage } from './preferences.ts';
 import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
 import { editRepositoryIdentity } from './ui/repository-identity.ts';
 import { Dialog } from './ui/dialog.ts';
+import { addTextField } from './ui/text-field.ts';
 
 const categories = {
 	folders: ['知识库目录与模板', 'Library folders and templates'],
@@ -34,6 +35,7 @@ class SettingsPages {
 	render() {
 		const {el,plugin,lib,page} = this;
 		const t = (zh: string,en: string) => plugin.t(zh,en);
+		el.addClass('kb-settings');
 		el.empty();
 		if (!page) {
 			if (!lib) {
@@ -101,21 +103,18 @@ class SettingsPages {
 			const set = <K extends keyof GitPreferences>(key: K, next: GitPreferences[K]) => {
 				draft[key] = next; touched.add(key);
 			};
-			const placeholder = (key: keyof GitPreferences) => {
-				if (id) return t('可留空，继承全局设置','Optional · inherit global setting');
-				if (key === 'commitHostname') return t('可留空，跟随系统默认','Optional · use system default');
-				if (key === 'autoCommitMinutes' || key === 'autoPullMinutes' || key === 'autoPushMinutes')
-					return t('可留空，默认 0（关闭）','Optional · default 0 (off)');
-				const fallback = gitDefaults[key];
-				return fallback === '' ? t('可留空','Optional') : t('可留空，默认 ','Optional · default ') + String(fallback);
-			};
 			const inputValue = (key: keyof GitPreferences) => String(draft[key] ?? '');
 			const updateInput = <K extends keyof GitPreferences>(key: K, raw: string, parsed: GitPreferences[K]) => {
 				if (raw !== '') set(key,parsed);
 				else { delete draft[key]; touched.add(key); }
 			};
-			const text = (key: 'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'blameText', label: Label, desc?: Label) =>
-				row(key,label,desc).addText(input => input.setPlaceholder(placeholder(key)).setValue(inputValue(key)).onChange(s => updateInput(key,s,s)));
+			const example = (key: keyof GitPreferences, fallback: string) => String((id ? inherited[key] : gitDefaults[key]) || fallback);
+			const text = (key: 'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'autoGlobs', label: Label,
+				fallback: string, desc?: Label, multiline = false) =>
+				addTextField(row(key,label,desc),inputValue(key),s => updateInput(key,s,s),{example:example(key,fallback)},multiline);
+			const number = (key: 'autoCommitMinutes'|'autoPullMinutes'|'autoPushMinutes'|'blameMaxDays'|'refreshSourceControlTimer'|'diffTimeout',
+				label: Label, desc?: Label) =>
+				addTextField(row(key,label,desc),inputValue(key),s => updateInput(key,s,/^[0-9]+$/u.test(s)?Number(s):NaN),{example:example(key,'0'),numeric:true});
 			const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 				row(key,label,desc).addToggle(input => input.setValue(value(key)).onChange(b => set(key,b)));
 			const choice = <K extends ChoiceKey>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
@@ -125,35 +124,34 @@ class SettingsPages {
 			switch (page) {
 				case 'automatic':
 					note('0 表示关闭。在本库的 Git 状态面板确认范围后，才会开始自动操作。','Zero disables a timer. Authorize the scope in the library’s Git status panel to start automation.');
-					text('autoCommitMessage',['自动提交说明模板','Auto commit message template'],
-						['支持与手动提交相同的占位符。','Accepts the same placeholders as a manual commit.']);
+					text('autoCommitMessage',['自动提交说明模板','Auto commit message template'],t('知识库备份 · {{date}}','Knowledge base backup · {{date}}'),
+						['支持与手动提交相同的占位符。','Accepts the same placeholders as a manual commit.'],true);
 					toggle('autoAfterEdits',['等停止编辑后提交','Wait for editing to stop before committing']);
 					toggle('autoFromLastCommit',['从最后一次提交开始计时','Start the timer from the latest commit']);
 					toggle('autoPullOnStart',['启动时拉取','Pull on startup']);
 					choice('autoGlobMode',['自动提交文件匹配方式','Auto commit glob mode'],{include:t('仅包含匹配项','Include matching paths'),exclude:t('排除匹配项','Exclude matching paths')});
-					row('autoGlobs',['自动提交文件匹配规则','Auto commit globs'],['每行一个相对于本库的 glob 表达式。','Enter one library-relative glob per line.'])
-						.addTextArea(input => input.setPlaceholder(placeholder('autoGlobs')).setValue(inputValue('autoGlobs')).onChange(s => updateInput('autoGlobs',s,s)));
+					text('autoGlobs',['自动提交文件匹配规则','Auto commit globs'],'Notes/**/*.md',
+						['每行一个相对于本库的 glob 表达式。','Enter one library-relative glob per line.'],true);
 					for (const [key,label] of [
 						['autoCommitMinutes',['自动提交间隔（分钟）','Auto commit interval (minutes)']],
 						['autoPullMinutes',['自动拉取间隔（分钟）','Auto pull interval (minutes)']],
 						['autoPushMinutes',['自动推送间隔（分钟）','Auto push interval (minutes)']],
-					] as const) row(key,label).addText(input => {
-						input.inputEl.type = 'number'; input.inputEl.min = '0'; input.inputEl.step = '1';
-						input.setPlaceholder(placeholder(key)).setValue(inputValue(key)).onChange(s => updateInput(key,s,Number(s)));
-					});
+					] as const) number(key,label);
 					break;
 				case 'commit':
 					toggle('autoStageOnEmptyIndex',['索引为空时暂存并提交全部改动','Stage all changes when nothing is staged']);
 					toggle('listChangedFilesInMessageBody',['在提交正文列出变更文件','List changed files in the commit body']);
-					text('commitMessage',['手动提交说明模板','Manual commit message template'],
-						['支持 {{date}}、{{hostname}}、{{files}} 和 {{numFiles}}，提交前可以编辑。','Use {{date}}, {{hostname}}, {{files}} and {{numFiles}}. You can edit the result before committing.']);
-					text('commitDateFormat',['日期格式','Date format']);
-					text('commitHostname',['主机名替换文本','Hostname replacement'],['留空使用本机名称。','Leave empty to use this device’s hostname.']);
+					text('commitMessage',['手动提交说明模板','Manual commit message template'],t('更新 {{numFiles}} 个文件 · {{date}}','Update {{numFiles}} files · {{date}}'),
+						['支持 {{date}}、{{hostname}}、{{files}} 和 {{numFiles}}，提交前可以编辑。','Use {{date}}, {{hostname}}, {{files}} and {{numFiles}}. You can edit the result before committing.'],true);
+					text('commitDateFormat',['日期格式','Date format'],'YYYY-MM-DD HH:mm:ss');
+					text('commitHostname',['主机名替换文本','Hostname replacement'],'laptop',['留空使用本机名称。','Leave empty to use this device’s hostname.']);
 					new Setting(inputs).setName(t('预览提交说明','Preview commit message'))
 						.addButton(button => button.setButtonText(t('预览','Preview')).onClick(() => {
 							const example = renderCommitMessage({commitMessage:value('commitMessage'),commitHostname:value('commitHostname')},
 								moment().format(value('commitDateFormat')),hostname(),['Notes/example.md']);
-							new Notice(example || t('提交时手动填写说明','Enter a message when committing'));
+							const preview=new Dialog(plugin.app,t('预览提交说明','Preview commit message'));
+							preview.facts([[t('提交说明','Commit message'),example || t('提交时手动填写','Enter manually when committing')]]);
+							preview.open();
 						}));
 					break;
 				case 'sync':
@@ -177,29 +175,21 @@ class SettingsPages {
 					choice('blameFollow',['追溯移动与复制','Trace moved and copied lines'],{inactive:t('关闭','Off'),'same-commit':t('同次提交','Same commit'),'all-commits':t('所有提交','Across commits')});
 					choice('blameAuthor',['作者姓名','Author name'],{hidden:t('隐藏','Hide'),initials:t('首字母','Initials'),first:t('名字首段','First name'),last:t('名字末段','Last name'),full:t('全名','Full name')});
 					choice('blameDate',['作者日期','Author date'],{hidden:t('隐藏','Hide'),date:t('日期','Date'),datetime:t('日期及时间','Date and time'),relative:t('相对时间','Relative time'),custom:t('自定义','Custom')});
-					text('blameFormat',['自定义日期格式','Custom date format']);
+					text('blameFormat',['自定义日期格式','Custom date format'],'YYYY-MM-DD HH:mm');
 					choice('blameTimezone',['时区','Time zone'],{viewer:t('查看者所在时区','Local time'),author:t('提交作者所在时区','Author time'),utc:'UTC'});
-					row('blameMaxDays',['颜色渐变时长（天）','Coloring age range (days)']).addText(input => {
-						input.inputEl.type='number'; input.inputEl.min='1'; input.setPlaceholder(placeholder('blameMaxDays')).setValue(inputValue('blameMaxDays')).onChange(s => updateInput('blameMaxDays',s,Number(s)));
-					});
+					number('blameMaxDays',['颜色渐变时长（天）','Coloring age range (days)']);
 					for (const [key,label] of [['blameOld',['旧提交颜色','Old commit color']],['blameNew',['新提交颜色','New commit color']]] as const)
 						row(key,label).addColorPicker(input => input.setValue(value(key)).onChange(s => set(key,s)));
-					text('blameText',['行作者文字颜色','Line author text color'],['使用 #RRGGBB 或 var(--text-muted)。','Use #RRGGBB or var(--text-muted).']);
+					addTextField(row('blameText',['行作者文字颜色','Line author text color'],
+						['输入 #RRGGBB，或用 var(--text-muted) 跟随主题的次要文字颜色。','Enter #RRGGBB or use var(--text-muted) to follow the theme’s muted text color.']),
+						inputValue('blameText'),s => updateInput('blameText',s,s),{example:example('blameText',gitDefaults.blameText)});
 					break;
 				case 'views':
 					toggle('refreshSourceControl',['文件变化后自动刷新 Git 状态','Refresh Git status after file changes']);
-					row('refreshSourceControlTimer',['刷新延时（毫秒）','Refresh delay (milliseconds)'],['最短 500 毫秒。','Minimum 500 milliseconds.'])
-						.addText(input => {
-							input.inputEl.type='number'; input.inputEl.min='500';
-							input.setPlaceholder(placeholder('refreshSourceControlTimer')).setValue(inputValue('refreshSourceControlTimer')).onChange(s => updateInput('refreshSourceControlTimer',s,Number(s)));
-						});
+					number('refreshSourceControlTimer',['刷新延时（毫秒）','Refresh delay (milliseconds)'],['最短 500 毫秒。','Minimum 500 milliseconds.']);
 					toggle('tree',['以目录树显示改动','Show changes as a tree']);
 					choice('diffStyle',['差异视图','Diff style'],{split:t('并排','Side by side'),unified:t('统一','Unified')});
-					row('diffTimeout',['差异计算时限（毫秒）','Diff computation timeout (milliseconds)'])
-						.addText(input => {
-							input.inputEl.type='number'; input.inputEl.min='1'; input.inputEl.max='10000';
-							input.setPlaceholder(placeholder('diffTimeout')).setValue(inputValue('diffTimeout')).onChange(s => updateInput('diffTimeout',s,Number(s)));
-						});
+					number('diffTimeout',['差异计算时限（毫秒）','Diff computation timeout (milliseconds)']);
 					choice('historyAuthor',['历史中的作者姓名','Author in history'],{hidden:t('隐藏','Hide'),initials:t('首字母','Initials'),full:t('全名','Full name')});
 					toggle('historyDate',['历史中显示日期','Show date in history']);
 					break;
@@ -308,10 +298,9 @@ class SettingsPages {
 		for (const [field,label,desc] of [
 			['parents',['知识库父目录','Library parent folders'],['每行一个 Vault 相对路径，首行是创建知识库的默认位置。','One vault-relative path per line. New libraries default to the first folder.']],
 			['templates',['目录模板','Folder templates'],['每行一个模板目录的 Vault 相对路径。','One vault-relative template folder per line.']],
-		] as const) new Setting(el).setName(plugin.t(label[0],label[1])).setDesc(plugin.t(desc[0],desc[1]))
-			.addTextArea(input => input.setPlaceholder(field === 'parents' ? plugin.t('必填，至少一个','Required · at least one') : plugin.t('可留空','Optional')).setValue(draft[field].join('\n')).onChange(s => {
+		] as const) addTextField(new Setting(el).setName(plugin.t(label[0],label[1])).setDesc(plugin.t(desc[0],desc[1])),draft[field].join('\n'),s => {
 				draft[field] = s.split('\n').map(line => line.trim()).filter(Boolean);
-			}));
+			},{example:field==='parents'?'knowledge-base':'templates/wiki'},true);
 		this.save(async () => {
 			validateFolders(plugin.disk,draft.parents,draft.templates);
 			for (const name of [...draft.parents,...draft.templates]) await plugin.disk.path(name);

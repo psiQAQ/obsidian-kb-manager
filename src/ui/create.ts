@@ -22,9 +22,9 @@ function identitySource(field:InitialIdentity['name']){
 	return sources[field.source]+(field.origin?' · '+field.origin:'');
 }
 
-function signatureLines(identity:InitialIdentity){
+function signatureFacts(identity:InitialIdentity){
 	const signature=identity.name.value+' <'+identity.email.value+'>';
-	return [tr('作者','Author')+' · '+signature,tr('提交者','Committer')+' · '+signature];
+	return [[tr('作者','Author'),signature],[tr('提交者','Committer'),signature]] as const;
 }
 
 function pathList(dialog:Dialog,title:string,paths:string[]){
@@ -34,10 +34,10 @@ function pathList(dialog:Dialog,title:string,paths:string[]){
 }
 
 function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
-	dialog.lines(['main · '+(head?head.slice(0,7)+' · ':'')+initialMessage,
-		...signatureLines(git.identity),tr('姓名来源','Name source')+' · '+identitySource(git.identity.name),
-		tr('邮箱来源','Email source')+' · '+identitySource(git.identity.email),
-		git.origin?'origin · '+git.origin:tr('未设置 origin','No origin configured')]);
+	dialog.facts([[tr('分支','Branch'),'main'+(head?' · '+head.slice(0,7):'')],
+		[tr('提交说明','Commit message'),initialMessage],...signatureFacts(git.identity),
+		[tr('姓名来源','Name source'),identitySource(git.identity.name)],
+		[tr('邮箱来源','Email source'),identitySource(git.identity.email)],['origin',git.origin||tr('未设置','Unset')]]);
 	if(git.origin)dialog.contentEl.createEl('p',{text:tr('仅保存远端地址。创建过程不会联网或设置上游分支。','Creation saves the remote address locally, without connecting or setting an upstream branch.')});
 	if(git.identity.email.value.toLowerCase().endsWith('@users.invalid'))dialog.contentEl.createEl('p',{text:tr(
 		'占位邮箱无法收信，也不会将首提交关联到 GitHub 账号。若需关联到你的账号，请填写已验证的邮箱或你自己的 GitHub noreply 地址。',
@@ -56,9 +56,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	const form=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	form.choice(tr('父目录','Parent directory'),Object.fromEntries(config.parents.map(p=>[p,p])),v=>{input.parent=v;});
 	form.choice(tr('模板','Template'),{'':tr('融合 LLM Wiki','Integrated LLM Wiki'),[kepanoSource]:tr('Kepano（含示例）','Kepano (with examples)'),...Object.fromEntries(config.templates.map(p=>[p,p]))},v=>{input.source=v;});
-	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;});
-	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;});
-	form.text(tr('简介','Description'),'',v=>{input.description=v;});
+	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
+	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
+	form.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	form.text(tr('Git 姓名','Git name'),values.name,v=>{values.name=v;});
 	form.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;});
 	form.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
@@ -86,8 +86,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		}
 		dialog.close();form.close();
 		const success=new Dialog(plugin.app,tr('知识库已创建','Library created'));
-		success.lines([result.path,'main · '+result.head.slice(0,7)+' · '+initialMessage,...signatureLines(result.identity),
-			result.origin?'origin · '+result.origin:tr('未设置 origin','No origin configured')]);
+		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),'main · '+result.head.slice(0,7)],
+			[tr('提交说明','Commit message'),initialMessage],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
 		success.action(tr('完成','Done'),async()=>{success.close();});
 		success.open();
 		await refresh();
@@ -99,7 +99,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		const preview=await previewCreate(disk,plugin.config,{...input,displayName:input.displayName||input.name,git:{defaults,values:{...values},origin}},skeleton);
 		const {git}=preview;
 		const confirm=new Dialog(plugin.app,tr('确认创建','Confirm creation'));
-		confirm.lines([preview.location,tr('模板','Template')+' · '+preview.template.id,...preview.warnings]);
+		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),preview.template.id]]);
+		if(preview.warnings.length)confirm.lines(preview.warnings);
 		showInitialPlan(confirm,git);
 		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
 		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);

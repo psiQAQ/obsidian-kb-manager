@@ -46,7 +46,7 @@ class SourceDiff extends ItemView {
 	async setState(value:unknown,result:ViewStateResult) {
 		await super.setState(value,result);
 		this.contentEl.empty();
-		const el=this.contentEl.createDiv();
+		const el=this.contentEl.createDiv({cls:'kb-diff-view'});
 		if (!isTarget(value)) return;
 		this.target=value;
 		const p=this.plugin;
@@ -118,6 +118,6 @@ class SourceDiff extends ItemView {
 				const patch=createTwoFilesPatch(left,right,a,b,undefined,undefined,{timeout:pref.diffTimeout});
 				el.createEl('pre',{text:patch ?? p.t('差异计算超时','Diff computation timed out')});
 			}
-		} catch(error){el.createEl('p',{text:String(error)});}
+		} catch(error){el.createEl('p',{cls:'kb-git-error',text:String(error)});}
 	}
 }

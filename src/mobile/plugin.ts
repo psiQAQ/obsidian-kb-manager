@@ -78,7 +78,7 @@ export default class MobilePlugin extends Plugin {
 		this.persistDevice({...this.device,bindingRepairs});
 	}
 	paused(){return this.app.loadLocalStorage(this.manifest.id+':gitDisabled')===true;}
-	report(e:unknown){new Notice(String(e),8000);}
+	report(e:unknown){new Notice(String(e),8000).messageEl.addClass('kb-notice-text');}
 	assertEnabled(){if(this.paused())throw new Error(tr('此设备已暂停知识库 Git','Library Git is paused on this device'));}
 	async exclusive<T>(key:string,action:()=>Promise<T>,lib?:Library){
 		this.assertEnabled();
