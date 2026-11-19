@@ -27,7 +27,7 @@ test('built-in Kepano edition contains the pinned templates, categories, example
 	assert.match(skeleton['LICENSE.md'], /Copyright \(c\) 2023 Steph Ango/u);
 	assert.match(skeleton['LICENSE.md'], /473697347a0eaac790a6596229c741b3915f3b77/u);
 	for (const [name, text] of Object.entries(skeleton)) {
-		if (name.startsWith('Clippings/')) assert.match(text, /\n---\n\n\[Read the source\]\(https:\/\/[^)]+\)\n$/u);
+		if (name.startsWith('Clippings/')) assert.match(text, /\r?\n---\r?\n\r?\n\[Read the source\]\(https:\/\/[^)]+\)\r?\n$/u);
 		assert.doesNotMatch(text, /!\[[^\]]*\]\(https?:/u);
 	}
 });
@@ -44,7 +44,7 @@ test('two instances resolve every generated link, view and category without borr
 					assert.ok(collection[match[1].slice(root.length + 1) + '.md'], name);
 				}
 			} else if (name.endsWith('.md')) {
-				const metadata = /^---\n([\s\S]*?)\n---/u.exec(text);
+				const metadata = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text);
 				if (metadata) parse(metadata[1]);
 				for (const match of text.matchAll(/\[\[([^|#\]]+)(?:#([^|\]]+))?(?:\|[^\]]+)?\]\]/gu)) {
 					assert.ok(match[1].startsWith(root + '/'), name + ': ' + match[0]);
@@ -74,7 +74,7 @@ test('a clean move rebinds every declared field and running it twice is idempote
 test('rebind preserves edited and additional YAML fields, comments, Markdown and fenced examples', () => {
 	const base = 'Templates/Bases/Posts.base';
 	const change = text => text.replace('list(categories).contains(link("' + previous + '/Categories/Posts"))',
-		'list(categories).contains(link("My posts"))').replace('  and:\n', '  and:\n    - file.ext == "md" # added\n');
+		'list(categories).contains(link("My posts"))').replace(/and:(\r?\n)/u, 'and:$1    - file.ext == "md" # added$1');
 	const custom = change(rendered[base]);
 	const result = rebindKepano(base, custom, previous, destination, skeleton);
 	assert.equal(result.edits.length, 1);
