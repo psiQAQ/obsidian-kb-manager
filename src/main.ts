@@ -8,14 +8,18 @@ import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
 import { registerSourceDiff, refreshSourceTabs } from './ui/source-diff.ts';
 import { migrateGitSettings } from './git/settings-migration.ts';
-import { effectivePreferences, readPreferences } from './preferences.ts';
+import { effectivePreferences, readPendingLibraryPreferences, readPreferences } from './preferences.ts';
+import type { GitPreferences, PreferenceStore } from './preferences.ts';
+import { identityFile, readManifest, writePreferences } from './kb/identity-core.ts';
+import { readManifestFile, replaceLibraryManifest } from './kb/manifest-disk.ts';
+import { previewPreferenceMigration } from './kb/preference-migration.ts';
 import { setLanguage, tr } from './i18n.ts';
 import { startAutomation } from './ui/network.ts';
 import type { AutomationGrant } from './git/network.ts';
 import { deviceGitPath } from './ui/git-path.ts';
 import { blameLine, configureGitExecutable } from './git/network-native.ts';
 import { FileSystemAdapter, Notice, Plugin, TFolder, TFile, getLanguage, setTooltip } from 'obsidian';
-import { VaultDisk } from './fs/vault.ts';
+import { VaultDisk, digest } from './fs/vault.ts';
 import { defaults, discover, recheck } from './kb/catalog.ts';
 import type { Config } from './kb/catalog.ts';
 import { isKepano } from './kb/template.ts';
@@ -37,8 +41,50 @@ export default class KnowledgeBaseManager extends Plugin {
 	templateAssets(lib:Library){return isKepano(lib.identity?.template)?this.kepanoSkeleton:this.skeleton;}
 	readonly t = tr;
 	prefs = readPreferences(undefined);
+	pendingLibraryPreferences:PreferenceStore['libraries']={};
 	grants: Record<string,AutomationGrant> = {};
 	preferences(id?:string){return effectivePreferences(this.prefs,id);}
+	observeLibraries(libraries:Library[]) {
+		const overrides:typeof this.prefs.libraries={};
+		const registered=new Set(libraries.map(lib=>lib.location));
+		for(const [id,location] of Object.entries(this.known))if(!registered.has(location))delete this.known[id];
+		for(const lib of libraries)if(lib.identity && !lib.duplicate && !lib.problem){
+			this.known[lib.identity.id]=lib.location;
+			overrides[lib.identity.id]=lib.preferences ?? {};
+		}
+		this.prefs.libraries=overrides;
+	}
+	async saveLibraryPreferences(lib:Library, overrides:Partial<GitPreferences>) {
+		await this.exclusive(lib.location,()=>this.writeLibraryPreferences(lib,overrides));
+	}
+	private async writeLibraryPreferences(lib:Library, overrides:Partial<GitPreferences>) {
+		const current=await recheck(this.disk,this.config,lib);
+		if(!current.identity || current.identity.archived)throw new Error(tr('此库只读','Library is read-only'));
+		const relative=lib.location+'/'+identityFile;
+		const initial=await readManifestFile(await this.disk.path(relative));
+		if(initial.signature!==current.signature)throw new Error(tr('清单已变更，请重新打开设置','Manifest changed. Reopen settings.'));
+		const raw=writePreferences(initial.raw,overrides);
+		await replaceLibraryManifest(this.disk,lib.location,initial.signature,raw);
+		const verified=await readManifestFile(await this.disk.path(relative));
+		if(verified.signature!==digest(raw))throw new Error(tr('未能核验已保存的清单','Could not verify the saved manifest'));
+		lib.signature=verified.signature;
+		lib.preferences=readManifest(verified.raw).preferences;
+		this.prefs.libraries[current.identity.id]=lib.preferences;
+	}
+	async previewPendingPreferences(id:string) {
+		return previewPreferenceMigration(await discover(this.disk,this.config),id,this.pendingLibraryPreferences[id]);
+	}
+	async applyPendingPreferences(id:string, preview:ReturnType<typeof previewPreferenceMigration>) {
+		await this.exclusive(preview.target.location,async()=>{
+			const fresh=await this.previewPendingPreferences(id);
+			if(JSON.stringify(fresh)!==JSON.stringify(preview))
+				throw new Error(tr('迁移预览已变化，请重新预览','The migration preview changed. Preview again'));
+			await this.writeLibraryPreferences(fresh.target,fresh.overrides);
+			delete this.pendingLibraryPreferences[id];
+			try {await this.persist();}
+			catch(error){this.pendingLibraryPreferences[id]=fresh.previous;throw error;}
+		});
+	}
 	private refreshStatus?:()=>void;
 	private language = '';
 	private ribbon?: HTMLElement;
@@ -49,12 +95,23 @@ export default class KnowledgeBaseManager extends Plugin {
 	async recordMove(record:MoveRecord) {
 		if(Object.values(this.moves).some(r=>r.phase!=='complete' && r.token!==record.token &&
 			[r.source,r.destination].some(p=>p===record.source || p===record.destination)))throw new Error(tr('此路径有待恢复的移动',"This path has a move awaiting recovery"));
-		this.moves[record.id]=record;
+		if(record.phase==='complete')delete this.moves[record.id];
+		else this.moves[record.id]=record;
 		await this.persist();
 	}
 	private pendingSave = Promise.resolve();
 	persist() {
-		const save = this.pendingSave.then(()=>this.saveData({...this.config,known:this.known,moves:this.moves,saves:this.saves,prefs:this.prefs,grants:this.grants}));
+		const save = this.pendingSave.then(async()=>{
+			for(const [id,receipt] of Object.entries(this.saves))if(receipt.committed && !receipt.problem)delete this.saves[id];
+			const key=this.manifest.id+':device-v3';
+			const local=this.app.loadLocalStorage(key) as Record<string,unknown>|null;
+			const pendingLibraryPreferences=this.pendingLibraryPreferences;
+			this.app.saveLocalStorage(key,{...local,...this.config,grants:this.grants,moves:this.moves,saves:this.saves,pendingLibraryPreferences});
+			const stored=this.app.loadLocalStorage(key) as Record<string,unknown>|null;
+			if(JSON.stringify(readPendingLibraryPreferences(stored?.pendingLibraryPreferences,undefined))!==JSON.stringify(pendingLibraryPreferences))
+				throw new Error(tr('无法核验本设备暂存的旧版每库设置','Could not verify the legacy library preferences saved on this device'));
+			await this.saveData({language:this.prefs.language,defaults:this.prefs.defaults});
+		});
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
 	}
@@ -76,13 +133,19 @@ export default class KnowledgeBaseManager extends Plugin {
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
-		if(migrateGitSettings(saved))await this.saveData(saved);
-		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? []};
-		this.prefs=readPreferences(saved?.prefs);
-		this.grants=readGrants(saved?.grants);
-		this.known=saved?.known ?? {};
-		this.moves=saved?.moves ?? {};
-		this.saves=saved?.saves ?? {};
+		migrateGitSettings(saved);
+		const device=this.app.loadLocalStorage(this.manifest.id+':device-v3') as (NonNullable<typeof saved> & {pendingLibraryPreferences?:unknown})|null;
+		const state=device ?? saved;
+		this.config={parents:state?.parents ?? [...defaults.parents],templates:state?.templates ?? []};
+		this.prefs=readPreferences(saved?.prefs ?? saved);
+		this.prefs.libraries={};
+		this.pendingLibraryPreferences=readPendingLibraryPreferences(device?.pendingLibraryPreferences,saved);
+		this.grants=readGrants(state?.grants);
+		if(!device)for(const grant of Object.values(this.grants))grant.paused='review';
+		this.moves=Object.fromEntries(Object.entries(state?.moves ?? {}).filter(([,record])=>record.phase!=='complete'));
+		this.saves=state?.saves ?? {};
+		await this.persist();
+		try{this.observeLibraries(await discover(this.disk,this.config));}catch(error){new Notice(String(error));}
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		registerSourceDiff(this);
 		this.addSettingTab(new ManagerSettings(this));
@@ -165,6 +228,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	}
 	async refresh(){
 		this.updateLanguage();
+		this.observeLibraries(await discover(this.disk,this.config));
 		await refreshSourceTabs(this);
 		refreshAuthorship(this);
 		refreshSourceEditors(this);

@@ -3,12 +3,13 @@ import { deviceGitPath, saveDeviceGitPath } from './ui/git-path.ts';
 import { hostname } from 'node:os';
 import type KnowledgeBaseManager from './main.ts';
 import { validateFolders } from './fs/vault.ts';
-import { recheck } from './kb/catalog.ts';
+import { discover, identityFile, recheck } from './kb/catalog.ts';
 import type { Library } from './kb/catalog.ts';
 import type { GitPreferences, Language } from './preferences.ts';
 import { gitDefaults, renderCommitMessage } from './preferences.ts';
 import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
 import { editRepositoryIdentity } from './ui/repository-identity.ts';
+import { Dialog } from './ui/dialog.ts';
 
 const categories = {
 	folders: ['知识库目录与模板', 'Library folders and templates'],
@@ -42,6 +43,12 @@ class SettingsPages {
 						plugin.prefs.language = value as Language;
 						try { await plugin.persist(); await plugin.refresh(); this.render(); }
 						catch (error) { new Notice(String(error)); }
+					}));
+				const pending=Object.keys(plugin.pendingLibraryPreferences).length;
+				if(pending)new Setting(el).setName(t('旧版每库设置','Legacy library preferences'))
+					.setDesc(t('待迁移的库数：','Libraries awaiting migration: ')+pending)
+					.addButton(button=>button.setButtonText(t('查看','Review')).onClick(async()=>{
+						try {await this.pendingMigration();} catch(error){new Notice(String(error));}
 					}));
 			}
 			for (const key of Object.keys(categories) as Category[]) {
@@ -252,9 +259,47 @@ class SettingsPages {
 				if (key in draft) Object.assign(merged,{[key]:draft[key]});
 				else delete merged[key];
 			}
-			if (id) plugin.prefs.libraries[id] = merged;
+			if (id && lib) await plugin.saveLibraryPreferences(lib,merged);
 			else plugin.prefs.defaults = merged;
 		});
+	}
+
+	private async pendingMigration() {
+		const {plugin}=this, t=plugin.t;
+		const libraries=await discover(plugin.disk,plugin.config);
+		const pending=Object.keys(plugin.pendingLibraryPreferences).sort();
+		const dialog=new Dialog(plugin.app,t('迁移旧版每库设置','Migrate legacy library preferences'));
+		const source=(plugin.manifest.dir??plugin.app.vault.configDir+'/plugins/'+plugin.manifest.id)+'/data.json';
+		dialog.lines([t('来源','Source')+' · '+source+' → prefs.libraries',
+			t('请登记带原 ID 的 kb.toml。迁移值保存在本设备，确认后写入所选库。','Register kb.toml with the original ID. The saved values stay on this device until you confirm the migration.')]);
+		for(const id of pending) {
+			const matches=libraries.filter(lib=>lib.identity?.id===id);
+			const lib=matches[0];
+			const available=matches.length===1 && !!lib?.signature && !lib.problem && !lib.duplicate && !lib.identity?.archived;
+			const row=new Setting(dialog.contentEl).setName(lib?.identity?.displayName??id)
+				.setDesc([id,...matches.map(item=>item.location),
+					available?'':t('等待登记唯一且可写的同 ID 知识库','Waiting for a unique, writable library with the same ID')].filter(Boolean).join(' · '));
+			if(available)row.addButton(button=>button.setButtonText(t('预览','Preview')).onClick(async()=>{
+				try {
+					const preview=await plugin.previewPendingPreferences(id);
+					const confirm=new Dialog(plugin.app,t('确认迁移每库设置','Confirm migration of library preferences'));
+					confirm.lines([source+' · prefs.libraries.'+id,
+						preview.target.location+'/'+identityFile+' · [preferences]',
+						t('已设置的同名字段将采用下方列出的迁移值。','Fields already set will take the migrated values shown below.')]);
+					const fields=Object.keys(preview.previous) as (keyof GitPreferences)[];
+					confirm.lines(fields.map(field=>{
+						const from=preview.target.preferences?.[field];
+						return field+' · '+(from===undefined?t('继承全局','Inherited'):JSON.stringify(from))+' → '+JSON.stringify(preview.previous[field]);
+					}));
+					confirm.action(t('写入清单','Apply to manifest'),async()=>{
+						await plugin.applyPendingPreferences(id,preview);
+						confirm.close();dialog.close();await plugin.refresh();this.render();
+					});
+					confirm.open();
+				}catch(error){new Notice(String(error));}
+			}));
+		}
+		dialog.open();
 	}
 
 	private folders() {

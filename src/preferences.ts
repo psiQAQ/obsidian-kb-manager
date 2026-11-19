@@ -137,6 +137,20 @@ export function readPreferences(value: unknown): PreferenceStore {
 	};
 }
 
+/** Keep pre-2.1 library overrides locally until the matching manifest is imported. */
+export function readPendingLibraryPreferences(deviceValue:unknown, legacySaved:unknown):PreferenceStore['libraries'] {
+	const saved=record(legacySaved);
+	const old=readPreferences(saved.prefs??saved).libraries;
+	const local=readPreferences({libraries:deviceValue}).libraries;
+	const pending:PreferenceStore['libraries']={};
+	for(const [id,fields] of [...Object.entries(old),...Object.entries(local)]){
+		if(!Object.keys(fields).length)continue;
+		const canonical=id.toLowerCase();
+		pending[canonical]=readGit({...pending[canonical],...fields});
+	}
+	return pending;
+}
+
 /** Remove only formerly persisted Git identities; leave all other saved state intact. */
 export function clearLegacyAuthors(saved: unknown): boolean {
 	const data=record(saved), prefs=record(data.prefs);
