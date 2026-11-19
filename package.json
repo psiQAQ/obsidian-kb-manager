@@ -1,6 +1,6 @@
 {
 	"name": "knowledge-base-manager",
-	"version": "2.1.0",
+	"version": "2.3.0",
 	"description": "Manage independent local knowledge bases in a desktop vault.",
 	"main": "main.js",
 	"type": "module",

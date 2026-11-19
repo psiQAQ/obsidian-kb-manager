@@ -29,6 +29,7 @@ mobile.manifest={id:'knowledge-base-manager'};
 await mobile.onload();
 assert.ok(commands.has('open-manager'));
 assert.ok(commands.has('create-library'));
+assert.ok(commands.has('insert-library-template'));
 mobile.setDeviceAuthor('Mobile QA','mobile@example.invalid');
 assert.equal(mobile.deviceAuthor().email,'mobile@example.invalid');
 assert.ok(![...device.values()].includes('mobile@example.invalid'));
