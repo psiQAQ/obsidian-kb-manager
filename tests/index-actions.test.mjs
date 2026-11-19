@@ -26,7 +26,8 @@ test('staging and comparing files preserves sibling and parent indexes and parti
 		assert.equal(native(dir,'show',':'+file).toString(),'original');
 		await changeIndex(dir,await previewVersion(dir),'unstage',[file]);
 		assert.equal(native(dir,'ls-files').length,0);
-		await saveVersion(dir,await previewVersion(dir),'initial',{name:'Test',email:'test@example.invalid'});
+		native(dir,'config','user.name','Test');native(dir,'config','user.email','test@example.invalid');
+		await saveVersion(dir,await previewVersion(dir),'initial');
 	}
 	const rootIndex=await readIndex(root), siblingIndex=await readIndex(second);
 	await fs.writeFile(path.join(first,file),'index');
@@ -67,12 +68,12 @@ test('hunk stage and unstage preserve CRLF, BOM and remaining worktree bytes; hi
 	const target=path.join(dir,'target.md');
 	const original='\uFEFF'+Array.from({length:25},(_,i)=>'line '+i).join('\r\n')+'\r\n';
 	await fs.writeFile(target,original);
-	const author={name:'Test',email:'test@example.invalid'};
-	const first=await saveVersion(dir,await previewVersion(dir),'first',author);
+	const native=(...args)=>execFileSync('git',['-C',dir,...args]).toString();
+	native('config','user.name','Test');native('config','user.email','test@example.invalid');
+	const first=await saveVersion(dir,await previewVersion(dir),'first');
 	assert.equal((await commitFiles(dir,first)).files[0].file,'target.md');
 	const staged=original.replace('line 0','first edit'), work=staged.replace('line 22','second edit');
 	await fs.writeFile(target,work);
-	const native=(...args)=>execFileSync('git',['-C',dir,...args]).toString();
 	const preview=await previewVersion(dir);
 	const {before,after}=await fileComparison(dir,preview,'target.md',false);
 	assert.equal(textHunks(before,after).patch.hunks.length,2);
@@ -83,7 +84,7 @@ test('hunk stage and unstage preserve CRLF, BOM and remaining worktree bytes; hi
 	await changeIndexHunk(dir,await previewVersion(dir),'unstage','target.md',0);
 	assert.equal(native('show',':target.md'),original);
 	assert.equal(await fs.readFile(target,'utf8'),work);
-	const second=await saveVersion(dir,await previewVersion(dir),'second',author);
+	const second=await saveVersion(dir,await previewVersion(dir),'second');
 	const delta=await committedComparison(dir,second,'target.md');
 	assert.equal(Buffer.from(delta.before).toString(),original);
 	assert.equal(Buffer.from(delta.after).toString(),work);
@@ -98,24 +99,26 @@ test('amend replaces only the tip and uses the previously staged bytes',async t=
 	await fs.mkdir('.tmp',{recursive:true});
 	const dir=await fs.mkdtemp(path.resolve('.tmp','source-amend-'));
 	t.after(()=>fs.rm(dir,{recursive:true,force:true}));
-	const author={name:'First Author',email:'first@example.invalid'}, name='a.md';
+	const name='a.md';
 	const native=(...args)=>execFileSync('git',['-C',dir,...args]).toString().trim();
 	await initializeRepository(dir);
 	const file=path.join(dir,name);
+	native('config','user.name','First Author');native('config','user.email','first@example.invalid');
 	await fs.writeFile(file,'one');
-	const root=await saveVersion(dir,await previewVersion(dir),'first',author);
+	const root=await saveVersion(dir,await previewVersion(dir),'first');
 	await fs.writeFile(file,'two');
-	const previous=await saveVersion(dir,await previewVersion(dir),'second',author);
+	const previous=await saveVersion(dir,await previewVersion(dir),'second');
 	await fs.writeFile(file,'staged');
 	await changeIndex(dir,await previewVersion(dir),'stage',[name]);
 	await fs.writeFile(file,'worktree');
-	const saved=await saveVersion(dir,await previewVersion(dir),'amended',{name:'Editor',email:'editor@example.invalid'},undefined,'amend');
+	native('config','user.name','Editor');native('config','user.email','editor@example.invalid');
+	const saved=await saveVersion(dir,await previewVersion(dir),'amended',undefined,'amend');
 	assert.notEqual(saved,previous);
 	assert.equal(native('rev-parse','HEAD^'),root);
 	assert.equal(native('show','-s','--format=%an/%cn'), 'First Author/Editor');
 	assert.equal(native('show','HEAD:'+name),'staged');
 	assert.equal(await fs.readFile(file,'utf8'),'worktree');
-	await assert.rejects(saveVersion(dir,await previewVersion(dir),'staged only',author,undefined,'staged'),/暂存|Stage/);
+	await assert.rejects(saveVersion(dir,await previewVersion(dir),'staged only',undefined,'staged'),/暂存|Stage/);
 });
 
 test('source control rejects ambiguous refs, unsafe editor paths and multiply linked worktree files',async t=>{

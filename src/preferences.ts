@@ -1,8 +1,6 @@
 export type Language = 'system' | 'zh' | 'en';
 
 export interface GitPreferences {
-	author: string;
-	email: string;
 	tree: boolean;
 	lineAuthor: boolean;
 	conflictResolutionMode: 'source'|'live-preview'|'both'|'disabled';
@@ -62,7 +60,7 @@ export interface PreferenceStore {
 }
 
 export const gitDefaults: GitPreferences = {
-	author: '', email: '', tree: false, lineAuthor: false, hunkCommands: false, showFileMenu: true, diffStyle: 'split', commitMessage: '',
+	tree: false, lineAuthor: false, hunkCommands: false, showFileMenu: true, diffStyle: 'split', commitMessage: '',
 	commitDateFormat: 'YYYY-MM-DD HH:mm:ss', commitHostname: '', historyAuthor: 'full', historyDate: true,
 	autoCommitMessage: 'Knowledge base backup · {{date}}',
 	autoStageOnEmptyIndex:true, listChangedFilesInMessageBody:false,
@@ -89,7 +87,7 @@ function record(value: unknown): Record<string,unknown> {
 function readGit(value: unknown): Partial<GitPreferences> {
 	const raw = record(value);
 	const result: Partial<GitPreferences> = {};
-	for (const key of ['author','email','commitMessage','autoCommitMessage','commitDateFormat','commitHostname','blameFormat','autoGlobs'] as const) {
+	for (const key of ['commitMessage','autoCommitMessage','commitDateFormat','commitHostname','blameFormat','autoGlobs'] as const) {
 		if (typeof raw[key] === 'string') result[key] = raw[key];
 	}
 	for (const key of ['tree','lineAuthor','hunkCommands','hunkSigns','showFileMenu','showStatusBar','showBranchStatusBar','changedFilesInStatusBar',
@@ -141,8 +139,20 @@ export function readPreferences(value: unknown): PreferenceStore {
 	};
 }
 
-export function effectivePreferences(store: PreferenceStore, legacy: Pick<GitPreferences,'author'|'email'>, id?: string): GitPreferences {
-	return {...gitDefaults, author: legacy.author, email: legacy.email, ...store.defaults, ...(id && store.libraries[id])};
+/** Remove only formerly persisted Git identities; leave all other saved state intact. */
+export function clearLegacyAuthors(saved: unknown): boolean {
+	const data=record(saved), prefs=record(data.prefs);
+	let changed=false;
+	for(const fields of [data,record(prefs.defaults),...Object.values(record(prefs.libraries)).map(record)]){
+		for(const key of ['author','email']){
+			if(Object.prototype.hasOwnProperty.call(fields,key)){delete fields[key];changed=true;}
+		}
+	}
+	return changed;
+}
+
+export function effectivePreferences(store: PreferenceStore, id?: string): GitPreferences {
+	return {...gitDefaults, ...store.defaults, ...(id && store.libraries[id])};
 }
 
 export function renderCommitMessage(prefs: Pick<GitPreferences,'commitMessage'|'commitHostname'>, date: string, hostname: string, files: readonly string[]) {

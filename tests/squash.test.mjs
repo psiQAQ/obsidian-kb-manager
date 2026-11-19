@@ -12,18 +12,18 @@ test('squashing keeps the original tip reachable, keeps its tree and checks the 
 	const dir=await fs.mkdtemp(path.resolve('.tmp/squash-'));
 	t.after(()=>fs.rm(dir,{recursive:true,force:true}));
 	const git=(...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8'}).trim();
-	const author={name:'Fixture',email:'author@example.invalid'};
 	await initializeRepository(dir);
+	git('config','user.name','Fixture');git('config','user.email','author@example.invalid');
 	const heads=[];
 	for(const text of ['base','first','second']){
 		await fs.writeFile(path.join(dir,'note.md'),text);
-		heads.push(await saveVersion(dir,await previewVersion(dir),text,author));
+		heads.push(await saveVersion(dir,await previewVersion(dir),text));
 	}
 	const plan=await squashPreview(dir,heads[0]);
 	await fs.writeFile(path.join(dir,'extra'),'untracked');
-	await assert.rejects(squash(dir,plan,'combined',author));
+	await assert.rejects(squash(dir,plan,'combined'));
 	await fs.unlink(path.join(dir,'extra'));
-	const oid=await squash(dir,plan,'combined',author);
+	const oid=await squash(dir,plan,'combined');
 	assert.equal(git('rev-parse','HEAD'),oid);
 	assert.equal(git('rev-parse','HEAD^'),heads[0]);
 	assert.equal(git('rev-parse','HEAD^{tree}'),git('rev-parse',heads[2]+'^{tree}'));

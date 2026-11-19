@@ -49,7 +49,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 				let message=plan.commits.map(c=>c.message).reverse().join(' / ');
 				review.text(t('合并后的提交说明','Squashed commit message'),message,value=>{message=value;});
 				review.action(t('压缩并预览推送','Squash and preview push'),async()=>{
-					await run(()=>squash(dir,plan,message,{name:prefs.author,email:prefs.email}));
+					await run(()=>squash(dir,plan,message));
 					review.close();await confirmPush(true);
 				});
 				review.action(t('保留这些提交并预览推送','Keep commits and preview push'),async()=>{review.close();await confirmPush(true);});
@@ -82,7 +82,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 			const pull=new Dialog(plugin.app,t('确认本库拉取','Confirm library pull'));
 			pull.lines([lib.location,plan.branch+' · '+plan.head.slice(0,10)+' → '+plan.oid.slice(0,10),prefs.syncMethod+' · '+prefs.mergeStrategy,...plan.changes]);
 			pull.action(t('继续','Continue'),async()=>{
-				await run(()=>applyChange(dir,plan,'pull',prefs.backend,prefs.syncMethod,prefs.mergeStrategy,prefs));
+				await run(()=>applyChange(dir,plan,'pull',prefs.backend,prefs.syncMethod,prefs.mergeStrategy));
 				recordPull(plugin,id!,plan.changes);pull.close();await plugin.refresh();await confirmPush();
 			});pull.open();
 		});fetch.open();

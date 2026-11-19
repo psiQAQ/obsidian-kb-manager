@@ -93,7 +93,7 @@ test('merge resolution stages only the confirmed blob and preserves a partially 
 	await fs.writeFile(path.join(dir,'note.md'),'after resolution');
 	const ready=await inspectMerge(dir);
 	assert.equal(ready.conflicts.length,0);
-	await finishMerge(dir,ready,'finish','Tester','test@example.invalid');
+	await finishMerge(dir,ready,'finish');
 	assert.equal(git(dir,'rev-parse','HEAD^1'),ready.head);
 	assert.equal(git(dir,'rev-parse','HEAD^2'),ready.other);
 	assert.equal(git(dir,'show','HEAD:other.md'),'staged');
@@ -138,7 +138,8 @@ test('edit debounce, recent commit and startup pull use only the authorized sche
 });
 
 test('automatic commit uses exactly the authorized glob selection and stops for a partial index',async t=>{
-	const {dir}=await fixture(t),author={name:'Auto',email:'auto@example.invalid'};
+	const {dir}=await fixture(t);
+	git(dir,'config','user.name','Auto');git(dir,'config','user.email','auto@example.invalid');
 	await fs.mkdir(path.join(dir,'wiki'));
 	await fs.writeFile(path.join(dir,'wiki','a.md'),'yes');await fs.writeFile(path.join(dir,'private.md'),'no');
 	const preview=await previewVersion(dir);
@@ -146,11 +147,12 @@ test('automatic commit uses exactly the authorized glob selection and stops for 
 	assert.deepEqual(selectPaths('exclude','private.md',files),['wiki/a.md']);
 	assert.deepEqual(selectPaths('include','',files),[]);
 	const selected=new Set(selectPaths('include','wiki/',files));
-	await saveVersion(dir,preview,'selected',author,undefined,'smart',selected);
+	await saveVersion(dir,preview,'selected',undefined,'smart',selected);
+	assert.equal(git(dir,'show','-s','--format=%an <%ae>'),'Auto <auto@example.invalid>');
 	assert.equal(git(dir,'show','HEAD:wiki/a.md'),'yes');
 	assert.ok(!git(dir,'ls-tree','--name-only','HEAD').includes('private.md'));
 	git(dir,'add','private.md');await fs.writeFile(path.join(dir,'private.md'),'different');
-	await assert.rejects(saveVersion(dir,await previewVersion(dir),'bad',author,undefined,'smart',new Set(['private.md'])));
+	await assert.rejects(saveVersion(dir,await previewVersion(dir),'bad',undefined,'smart',new Set(['private.md'])));
 	assert.equal(git(dir,'show',':private.md'),'no');
 });
 
@@ -186,11 +188,26 @@ test('manual native merge applies the previewed conflict strategy with two paren
 	const before=git(dir,'rev-parse','HEAD');
 	git(dir,'config','--unset','user.name');git(dir,'config','--unset','user.email');
 	const plan=await changePlan(dir,'refs/heads/side');
-	await applyChange(dir,plan,'pull','native','merge','theirs',{author:'Library author',email:'library@example.invalid'});
+	await assert.rejects(applyChange(dir,plan,'pull','native','merge','theirs'),/user\.name/u);
+	git(dir,'config','user.name','Library author');git(dir,'config','user.email','library@example.invalid');
+	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','native','merge','theirs');
 	assert.equal(git(dir,'rev-parse','HEAD^1'),before);
 	assert.equal(git(dir,'rev-parse','HEAD^2'),side);
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'right');
 	assert.equal(git(dir,'log','-1','--format=%an <%ae>'),'Library author <library@example.invalid>');
+});
+
+test('rebase preserves the original author and uses this repository’s committer',async t=>{
+	const {dir}=await fixture(t);
+	git(dir,'switch','-qc','side');
+	await fs.writeFile(path.join(dir,'side.md'),'incoming');
+	git(dir,'add','side.md');git(dir,'commit','-qm','side');
+	git(dir,'switch','-q','main');
+	await fs.writeFile(path.join(dir,'main.md'),'outgoing');
+	git(dir,'add','main.md');git(dir,'commit','-qm','main');
+	git(dir,'config','user.name','Rebaser');git(dir,'config','user.email','rebaser@example.invalid');
+	await applyChange(dir,await changePlan(dir,'refs/heads/side'),'pull','native','rebase');
+	assert.equal(git(dir,'show','-s','--format=%an/%cn <%ce>'),'Tester/Rebaser <rebaser@example.invalid>');
 });
 
 

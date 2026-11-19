@@ -17,8 +17,8 @@ export interface Library {
 	location: string; identity?: Identity; mapping?: Mapping; problem?: string; duplicate?: boolean;
 	git: 'local' | 'missing' | 'special'; signature?: string;
 }
-export interface Config { parents: string[]; templates: string[]; author: string; email: string }
-export const defaults: Config = { parents:['knowledge-base'], templates:[], author:'', email:'' };
+export interface Config { parents: string[]; templates: string[] }
+export const defaults: Config = { parents:['knowledge-base'], templates:[] };
 export function newIdentity(name: string, description: string, template: Identity['template'], entry?: string): Identity {
 	return { schemaVersion:1, id:randomUUID(), displayName:name, description, archived:false, template, managed:[], entry };
 }

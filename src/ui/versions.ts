@@ -11,6 +11,7 @@ import { initializeRepository } from '../git/repository.ts';
 import { showSourceHistory } from './source-history.ts';
 import { Dialog } from './dialog.ts';
 import { assertGitEnabled } from './device.ts';
+import { editRepositoryIdentity } from './repository-identity.ts';
 
 export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:'save'|'history', draft?: string, onCommitted?:()=>void|Promise<void>, commitMode:CommitMode='smart') {
 	assertGitEnabled(plugin);
@@ -51,16 +52,19 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			...preview.changes.map(c=>c.file+tr(' · 索引 '," · index: ")+state(c.head,c.stage)+tr(' · 工作区 '," · working tree: ")+(c.stage===3?tr('有其他内容',"different content"):state(c.stage,c.work)))]);
 		if(preview.changes.length){
 			const files=preview.changes.filter(c=>!preview.staged || c.head!==c.stage).map(c=>c.file);
-			let message=draft ?? renderCommitMessage(prefs,moment().format(prefs.commitDateFormat),hostname(),files),name=prefs.author,email=prefs.email;
+			let message=draft ?? renderCommitMessage(prefs,moment().format(prefs.commitDateFormat),hostname(),files);
 			dialog.text(tr('提交说明',"Commit message"),message,v=>{message=v;});
 			if(prefs.listChangedFilesInMessageBody)dialog.lines([tr('以下文件名会附在提交正文中：','These filenames will be appended to the commit body:'),...files]);
-			dialog.text(tr('本地作者',"Local author"),name,v=>{name=v;});dialog.text(tr('邮箱',"Email"),email,v=>{email=v;});
+			dialog.lines([tr('本库 Git 提交身份','Library Git commit identity')+' · '+(preview.identity.name || '—')+' <'+(preview.identity.email || '—')+'>']);
+			if(!preview.identity.name || !preview.identity.email)dialog.action(tr('设置本库 Git 身份','Set library Git identity'),async()=>{
+				await editRepositoryIdentity(plugin,lib);dialog.close();
+			});
 			const label=commitMode==='amend'?tr('修订上一次提交','Amend previous commit'):preview.staged?tr('提交已暂存内容',"Commit staged changes"):tr('保存此版本',"Save version");
 			dialog.action(label,async()=>{
 				const oid=await plugin.exclusiveGit(lib.location,async()=>{
 					await recheck(plugin.disk,plugin.config,lib);
 					const complete=prefs.listChangedFilesInMessageBody && message.trim()?message+'\n\n'+files.map(file=>'- '+file).join('\n'):message;
-					return saveVersion(dir,preview,complete,{name,email},async receipt=>{
+					return saveVersion(dir,preview,complete,async receipt=>{
 						if(!lib.identity)throw new Error(tr('库身份已失效',"Library identity is no longer valid"));
 						plugin.saves[lib.identity.id]=receipt;
 						await plugin.persist();

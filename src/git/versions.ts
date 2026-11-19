@@ -6,10 +6,12 @@ import git from 'isomorphic-git';
 import { digest, statIfPresent } from '../fs/vault.ts';
 import { guardGit } from './guard.ts';
 import { repository } from './repository.ts';
+import { readRepositoryIdentity, requireIdentity } from './identity.ts';
+import type { GitIdentity } from './identity.ts';
 
 export interface Change { file: string; head: number; work: number; stage: number; fingerprint?: string; workBytes?: number }
 export interface VersionPreview {
-	head: string; branch: string; signature: string; staged: boolean; changes: Change[];
+	head: string; branch: string; signature: string; staged: boolean; changes: Change[]; identity:GitIdentity;
 	files: number; bytes: number; elapsed: number; platform: string;
 }
 
@@ -47,16 +49,17 @@ export async function previewVersion(dir: string, ownLocks: ReadonlySet<string> 
 		}
 		changes.push({file,head:h,work:w,stage:s,fingerprint,workBytes});
 	}
-	const signature=digest(JSON.stringify([branch,head,indexHash,changes]));
-	return {head,branch,signature,staged:changes.some(c=>c.head!==c.stage),changes,files:matrix.length,bytes,elapsed:Date.now()-start,platform:process.platform};
+	const {identity}=await readRepositoryIdentity(dir);
+	const signature=digest(JSON.stringify([branch,head,indexHash,changes,identity]));
+	return {head,branch,signature,identity,staged:changes.some(c=>c.head!==c.stage),changes,files:matrix.length,bytes,elapsed:Date.now()-start,platform:process.platform};
 }
 
 export interface SaveRecord {
 	head:string; branch:string; message:string; candidate?:string; committed?:string; staged:string[]; problem?:string;
 }
 export type CommitMode = 'smart' | 'staged' | 'amend';
-export async function saveVersion(dir: string, confirmed: VersionPreview, message: string, author: {name:string;email:string}, record?:(value:SaveRecord)=>Promise<void>, mode:CommitMode='smart', selected?:ReadonlySet<string>) {
-	if(!message.trim() || !author.name.trim() || !author.email.trim())throw new Error(tr('请填写提交说明及本地作者姓名和邮箱','Enter a commit message, author name and email.'));
+export async function saveVersion(dir: string, confirmed: VersionPreview, message: string, record?:(value:SaveRecord)=>Promise<void>, mode:CommitMode='smart', selected?:ReadonlySet<string>) {
+	if(!message.trim())throw new Error(tr('请填写提交说明','Enter a commit message.'));
 	const branch=await guardGit(dir);
 	if(branch!==confirmed.branch)throw new Error(tr('当前分支已变化','The current branch changed'));
 	const repo=repository(dir), done: string[]=[];
@@ -71,7 +74,8 @@ export async function saveVersion(dir: string, confirmed: VersionPreview, messag
 			locks.set(file,await fs.open(file,'wx'));
 		}
 		const fresh=await previewVersion(dir,new Set(locks.keys()));
-		if(fresh.signature!==confirmed.signature)throw new Error(tr('HEAD、索引或工作区已变化，请重新预览','HEAD, the index or the worktree changed. Preview again.'));
+		if(fresh.signature!==confirmed.signature)throw new Error(tr('提交身份、HEAD、索引或工作区已变化，请重新预览','Commit identity, HEAD, index or worktree changed. Preview again.'));
+		const author=requireIdentity(fresh.identity);
 		if(!fresh.changes.length)throw new Error(tr('没有可提交的变更','No changes to commit'));
 		if(mode!=='smart' && !fresh.staged)throw new Error(tr('请先暂存要提交的内容','Stage changes first'));
 		if(mode==='amend' && !fresh.head)throw new Error(tr('没有可修订的提交','No commit to amend'));

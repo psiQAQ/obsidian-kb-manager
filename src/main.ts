@@ -7,7 +7,7 @@ import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.t
 import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
 import { registerSourceDiff, refreshSourceTabs } from './ui/source-diff.ts';
-import { effectivePreferences, readPreferences } from './preferences.ts';
+import { clearLegacyAuthors, effectivePreferences, readPreferences } from './preferences.ts';
 import { setLanguage, tr } from './i18n.ts';
 import { startAutomation } from './ui/network.ts';
 import type { AutomationGrant } from './git/network.ts';
@@ -36,7 +36,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	readonly t = tr;
 	prefs = readPreferences(undefined);
 	grants: Record<string,AutomationGrant> = {};
-	preferences(id?:string){return effectivePreferences(this.prefs,this.config,id);}
+	preferences(id?:string){return effectivePreferences(this.prefs,id);}
 	private refreshStatus?:()=>void;
 	private language = '';
 	private ribbon?: HTMLElement;
@@ -72,7 +72,8 @@ export default class KnowledgeBaseManager extends Plugin {
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
-		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? [],author:saved?.author ?? '',email:saved?.email ?? ''};
+		if(clearLegacyAuthors(saved))await this.saveData(saved);
+		this.config={parents:saved?.parents ?? [...defaults.parents],templates:saved?.templates ?? []};
 		this.prefs=readPreferences(saved?.prefs);
 		this.grants=readGrants(saved?.grants);
 		this.known=saved?.known ?? {};

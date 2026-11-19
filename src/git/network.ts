@@ -9,6 +9,7 @@ import {checkedNative} from './network-native.ts';
 import {endpoint,transport} from './network-http.ts';
 import {digest,statIfPresent} from '../fs/vault.ts';
 import {updateConfig} from './network-config.ts';
+import {requireIdentity} from './identity.ts';
 
 export type Backend='builtin'|'native';
 export type SyncMethod='ff-only'|'merge'|'rebase';
@@ -112,10 +113,10 @@ export async function changePlan(dir:string,ref:string){
 		try {await fs.lstat(path.join(dir,file));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
 		throw new Error(fromEnglish('Incoming path already exists: ','目标路径已存在：')+file);
 	}
-	return {ref,oid,head:preview.head,branch:preview.branch,changes};
+	return {ref,oid,head:preview.head,branch:preview.branch,changes,identity:preview.identity};
 }
 
-export async function applyChange(dir:string,plan:Awaited<ReturnType<typeof changePlan>>,operation:'switch'|'pull',backend:Backend,method:SyncMethod,strategy:'none'|'ours'|'theirs'='none',identity?:{author:string;email:string}){
+export async function applyChange(dir:string,plan:Awaited<ReturnType<typeof changePlan>>,operation:'switch'|'pull',backend:Backend,method:SyncMethod,strategy:'none'|'ours'|'theirs'='none'){
 	const fresh=await changePlan(dir,plan.ref);
 	if(JSON.stringify(fresh)!==JSON.stringify(plan))throw new Error(fromEnglish('Repository changed. Preview again.','仓库已变化，请重新预览。'));
 	const repo=repository(dir);
@@ -131,9 +132,9 @@ export async function applyChange(dir:string,plan:Awaited<ReturnType<typeof chan
 		const run=await checkedNative(dir);
 		const overrides:string[]=[];
 		const needsIdentity=method!=='ff-only' && !await git.isDescendent({...repo,oid:plan.oid,ancestor:plan.head});
-		for(const [key,value] of [['name',identity?.author],['email',identity?.email]] as const){
-			if(value?.trim())overrides.push('-c','user.'+key+'='+value.trim());
-			else if(needsIdentity && !await git.getConfig({...repo,path:'user.'+key}))throw new Error(fromEnglish('Configure an author name and email before merging or rebasing.','合并或变基前，请设置作者姓名和邮箱。'));
+		if(needsIdentity){
+			const identity=requireIdentity(fresh.identity);
+			overrides.push('-c','user.name='+identity.name,'-c','user.email='+identity.email);
 		}
 		if(method==='rebase')await run([...overrides,'rebase','--no-autostash',plan.oid]);
 		else await run([...overrides,'merge','--no-edit',method==='ff-only'?'--ff-only':'--ff',

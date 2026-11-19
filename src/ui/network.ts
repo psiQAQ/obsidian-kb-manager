@@ -89,7 +89,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 					next.action(t('应用','Apply'),async()=>{
 						await write(async folder=>{
 							if(JSON.stringify((await remoteState(folder)).target)!==JSON.stringify(target))throw new Error(fromEnglish('Remote changed','远端已变化'));
-							await applyChange(folder,plan,'pull',prefs.backend,prefs.syncMethod,prefs.mergeStrategy,prefs);
+							await applyChange(folder,plan,'pull',prefs.backend,prefs.syncMethod,prefs.mergeStrategy);
 							recordPull(plugin,id,plan.changes);
 						});
 						next.close();await plugin.refresh();
@@ -239,7 +239,7 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 							if(op==='commit' && selected.length){
 								const message=renderCommitMessage({...prefs,commitMessage:prefs.autoCommitMessage},moment().format(prefs.commitDateFormat),
 									hostname(),selected);
-								await saveVersion(dir,state.preview,message,{name:prefs.author,email:prefs.email},async receipt=>{
+								await saveVersion(dir,state.preview,message,async receipt=>{
 									plugin.saves[id]=receipt;await plugin.persist();
 								},'smart',new Set(selected));
 							}else if(op!=='commit'){
@@ -248,7 +248,7 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 								if(op==='pull' && !stopped && !gitDisabled(plugin) && plugin.grants[id]===grant){
 									const plan=await changePlan(dir,'refs/remotes/'+grant.remote+'/'+grant.remoteBranch);
 									await recheck(plugin.disk,plugin.config,lib);
-									await applyChange(dir,plan,'pull',prefs.backend,'ff-only','none',prefs);
+									await applyChange(dir,plan,'pull',prefs.backend,'ff-only');
 									recordPull(plugin,id,plan.changes);
 								}
 							}

@@ -5,10 +5,12 @@ import {digest,statIfPresent} from '../fs/vault.ts';
 import {repository} from './repository.ts';
 import {checkedNative} from './network-native.ts';
 import {tr} from '../i18n.ts';
+import {readRepositoryIdentity,requireIdentity} from './identity.ts';
+import type {GitIdentity} from './identity.ts';
 
 interface Stage {stage:number; oid:string; mode:string}
 export interface MergePlan {
-	head:string; other:string; branch:string; index:string;
+	head:string; other:string; branch:string; index:string; identity:GitIdentity;
 	conflicts:{file:string;work:string|null;stages:Stage[]}[];
 	stagedPaths:string[];
 }
@@ -36,7 +38,8 @@ export async function inspectMerge(dir:string):Promise<MergePlan> {
 		conflicts.push({file,work:stat?digest(await fs.readFile(location)):null,stages});
 	}
 	const stagedPaths=(await run(['diff','--cached','--no-ext-diff','--name-only','-z','HEAD','--'])).split('\0').filter(Boolean);
-	return {head,other,branch,index,conflicts,stagedPaths};
+	const {identity}=await readRepositoryIdentity(dir);
+	return {head,other,branch,index,conflicts,stagedPaths,identity};
 }
 
 async function stillMerging(dir:string,plan:MergePlan) {
@@ -58,11 +61,12 @@ export async function markResolved(dir:string,plan:MergePlan,file:string) {
 	await run(['update-index','--add','--cacheinfo',mode,oid,file]);
 }
 
-export async function finishMerge(dir:string,plan:MergePlan,message:string,author:string,email:string) {
-	if(plan.conflicts.length || !message.trim() || !author.trim() || !email.trim())throw new Error(tr('请先解决所有冲突，并填写作者与说明','Resolve conflicts and enter an author and merge message.'));
+export async function finishMerge(dir:string,plan:MergePlan,message:string) {
+	if(plan.conflicts.length || !message.trim())throw new Error(tr('请先解决所有冲突，并填写合并说明','Resolve conflicts and enter a merge message.'));
 	const run=await stillMerging(dir,plan);
+	const identity=requireIdentity(plan.identity);
 	if(plan.stagedPaths.includes('kb-manager.json'))throw new Error(tr('合并将改变库身份，请在外部核对','The merge would change the library identity. Review externally.'));
-	await run(['-c','user.name='+author,'-c','user.email='+email,'commit','--no-verify','--no-gpg-sign','-m',message]);
+	await run(['-c','user.name='+identity.name,'-c','user.email='+identity.email,'commit','--no-verify','--no-gpg-sign','-m',message]);
 	return (await run(['rev-parse','HEAD'])).trim();
 }
 

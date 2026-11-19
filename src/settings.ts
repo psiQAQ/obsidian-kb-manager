@@ -7,6 +7,7 @@ import type { Library } from './kb/catalog.ts';
 import type { GitPreferences, Language } from './preferences.ts';
 import { gitDefaults, renderCommitMessage } from './preferences.ts';
 import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
+import { editRepositoryIdentity } from './ui/repository-identity.ts';
 
 const categories = {
 	folders: ['知识库目录与模板', 'Library folders and templates'],
@@ -43,7 +44,7 @@ class SettingsPages {
 					}));
 			}
 			for (const key of Object.keys(categories) as Category[]) {
-				if (lib && key === 'folders') continue;
+				if (lib && key === 'folders' || !lib && key === 'identity') continue;
 				const name = t(categories[key][0],categories[key][1]);
 				new Setting(el).setName(name).addButton(button => button.setButtonText(t('打开','Open'))
 					.setTooltip(name).onClick(() => { this.page = key; this.render(); }));
@@ -56,6 +57,14 @@ class SettingsPages {
 			}));
 		if (page === 'folders') {
 			this.folders(); return;
+		}
+		if(page==='identity' && lib){
+			new Setting(el).setName(t('本库 Git 提交身份','Library Git commit identity')).setDesc(lib.location+'/.git/config')
+				.addButton(button=>button.setButtonText(t('查看或修改','View or edit')).onClick(async()=>{
+					try{await editRepositoryIdentity(plugin,lib);}catch(error){new Notice(String(error));}
+				}));
+			el.createEl('p',{text:t('远端凭据在本库的 Git 状态面板设置。','Configure remote credentials in this library’s Git status panel.')});
+			return;
 		}
 
 		const id = lib?.identity?.id;
@@ -83,7 +92,7 @@ class SettingsPages {
 			const set = <K extends keyof GitPreferences>(key: K, next: GitPreferences[K]) => {
 				draft[key] = next; touched.add(key);
 			};
-			const text = (key: 'author'|'email'|'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'blameText', label: Label, desc?: Label) =>
+			const text = (key: 'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'blameText', label: Label, desc?: Label) =>
 				row(key,label,desc).addText(input => input.setValue(value(key)).onChange(s => set(key,s)));
 			const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 				row(key,label,desc).addToggle(input => input.setValue(value(key)).onChange(b => set(key,b)));
@@ -180,10 +189,6 @@ class SettingsPages {
 					toggle('showStatusBar',['显示知识库状态栏','Show library status bar']);
 					toggle('showBranchStatusBar',['在状态栏显示分支','Show branch in the status bar']);
 					toggle('changedFilesInStatusBar',['在状态栏显示变更文件数','Show changed file count in the status bar']);
-					break;
-				case 'identity':
-					text('author',['本地提交作者','Commit author']); text('email',['提交邮箱','Commit email']);
-					note('远端凭据请在具体知识库的 Git 状态面板设置。','Set remote credentials in the Git status panel for the individual library.');
 					break;
 				case 'advanced':
 					if (!id) new Setting(inputs).setName(t('在本设备暂停知识库 Git','Pause library Git on this device'))

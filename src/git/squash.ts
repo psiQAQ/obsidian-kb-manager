@@ -4,11 +4,13 @@ import git from 'isomorphic-git';
 import {repository} from './repository.ts';
 import {previewVersion} from './versions.ts';
 import {tr} from '../i18n.ts';
+import {requireIdentity} from './identity.ts';
+import type {GitIdentity} from './identity.ts';
 
-export interface SquashPlan {head:string; branch:string; base:string; commits:{oid:string;message:string}[]}
+export interface SquashPlan {head:string; branch:string; base:string; identity:GitIdentity; commits:{oid:string;message:string}[]}
 
 export async function squashPreview(dir:string,base:string):Promise<SquashPlan>{
-	const {branch,head,changes}=await previewVersion(dir);
+	const {branch,head,changes,identity}=await previewVersion(dir);
 	if(changes.length)throw new Error(tr('压缩前请处理工作区与暂存区','Commit or store working and staged changes before squashing'));
 	if(!/^[0-9a-f]{40}$/u.test(base))throw new Error(tr('上游提交无效','Invalid upstream commit'));
 	const commits:SquashPlan['commits']=[];
@@ -19,12 +21,13 @@ export async function squashPreview(dir:string,base:string):Promise<SquashPlan>{
 		commits.push({oid,message:commit.message.trim()});
 		oid=commit.parent[0]!;
 	}
-	return {head,branch,base,commits};
+	return {head,branch,base,commits,identity};
 }
 
-export async function squash(dir:string,plan:SquashPlan,message:string,author:{name:string;email:string}){
-	if(plan.commits.length<2 || !message.trim() || !author.name.trim() || !author.email.trim())throw new Error(tr('压缩需要至少两次提交、说明和作者','Squashing requires two commits, a message and an author'));
+export async function squash(dir:string,plan:SquashPlan,message:string){
+	if(plan.commits.length<2 || !message.trim())throw new Error(tr('压缩需要至少两次提交和说明','Squashing requires two commits and a message'));
 	const fresh=await squashPreview(dir,plan.base);
+	const author=requireIdentity(fresh.identity);
 	if(JSON.stringify(plan)!==JSON.stringify(fresh))throw new Error(tr('提交范围已变化','The commit range changed'));
 	const repo=repository(dir),ref='refs/heads/'+plan.branch,branchFile=join(repo.gitdir,ref);
 	await fs.mkdir(dirname(branchFile),{recursive:true});
