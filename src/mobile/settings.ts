@@ -1,8 +1,8 @@
 import {PluginSettingTab,Setting} from 'obsidian';
 import type {App} from 'obsidian';
 import {tr} from '../i18n.ts';
-import {readPreferences} from '../preferences.ts';
 import {Dialog} from '../ui/dialog.ts';
+import {registryIgnoreForm} from './registration-forms.ts';
 import type MobilePlugin from './plugin.ts';
 
 export class MobileSettings extends PluginSettingTab {
@@ -11,6 +11,9 @@ export class MobileSettings extends PluginSettingTab {
 		const el=this.containerEl;el.empty();
 		const p=this.plugin;
 		new Setting(el).setName(tr('目录与语言','Directories and language')).addButton(c=>c.setButtonText(tr('打开','Open')).onClick(()=>this.directories()));
+		new Setting(el).setName(tr('Vault Git 忽略规则','Vault Git ignore rule')).addButton(c=>c.setButtonText(tr('预览','Preview')).onClick(async()=>{
+			try{await registryIgnoreForm(p);}catch(error){p.report(error);}
+		}));
 		new Setting(el).setName(tr('本设备的 Vault 提交身份','Vault commit identity on this device')).addButton(c=>c.setButtonText(tr('设置','Configure')).onClick(()=>this.identity()));
 		new Setting(el).setName(tr('暂停本设备 Git','Pause Git on this device')).addToggle(c=>c.setValue(p.paused()).onChange(async v=>{
 			p.app.saveLocalStorage(p.manifest.id+':gitDisabled',v);await p.refresh();
@@ -20,7 +23,7 @@ export class MobileSettings extends PluginSettingTab {
 	}
 	private directories(){
 		const p=this.plugin,ctx=p.ctx;
-		let parents=ctx.parents.join('\n'),templates=ctx.templates.join('\n'),language:string=readPreferences(p.saved.prefs).language;
+		let parents=ctx.parents.join('\n'),templates=ctx.templates.join('\n'),language:string=p.saved.language;
 		const dlg=new Dialog(p.app,tr('目录与语言','Directories and language'));
 		for(const [label,value,placeholder,change] of [
 			[tr('知识库父目录（每行一个）','Library parent directories (one per line)'),parents,'knowledge-base',(v:string)=>{parents=v;}],

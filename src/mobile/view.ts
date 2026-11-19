@@ -7,6 +7,7 @@ import {commit,editIndex,effectiveAuthor,localAuthor,mobileHistory,mobileStatus}
 import {applyPull,pullPlan,secretKey,transfer,upstream} from './remote.ts';
 import {mobileHttp} from './http.ts';
 import {cloneForm,confirm,createForm,librarySettings,remoteSettings} from './forms.ts';
+import {adoptLegacy,bindingForm,manifestForm,removeRegistration,resolveDuplicate,scanForm} from './registration-forms.ts';
 import type MobilePlugin from './plugin.ts';
 
 export const viewType='knowledge-base-manager-view';
@@ -29,6 +30,8 @@ export class MobileView extends ItemView {
 		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();
 		const toolbar=new Setting(el);
 		this.button(toolbar,tr('刷新','Refresh'),()=>this.draw());
+		this.button(toolbar,tr('登记','Register'),()=>manifestForm(p));
+		this.button(toolbar,tr('扫描','Scan'),()=>scanForm(p));
 		if(!p.paused()){
 			this.button(toolbar,tr('创建','Create'),()=>createForm(p));
 			this.button(toolbar,tr('克隆','Clone'),()=>cloneForm(p));
@@ -36,13 +39,27 @@ export class MobileView extends ItemView {
 		try{
 			const libs=await discoverMobile(p.ctx);
 			if(this.revision!==revision)return;
-			if(!libs.length)el.createEl('p',{text:tr('已登记的父目录中没有知识库','No knowledge bases found in the configured parent folders')});
+			if(!libs.length)el.createEl('p',{text:tr('还没有登记知识库','No registered knowledge bases')});
 			for(const lib of libs){
 				const row=new Setting(el).setName(lib.identity?.displayName??lib.location).setDesc(lib.location);
-				if(lib.problem || lib.duplicate || !lib.identity){
-					row.setDesc(lib.location+' · '+(lib.problem??(lib.duplicate?tr('身份重复','Duplicate identity'):tr('旧库，可在桌面接管','Legacy library. Adopt on desktop.'))));continue;
+				if(lib.missing){
+					row.setDesc(lib.location+' · '+tr('登记路径失联','Registered path missing'));
+					this.button(row,tr('重新定位','Locate'),()=>manifestForm(p,lib.location));
+					this.button(row,tr('移除登记','Remove registration'),()=>removeRegistration(p,lib));continue;
 				}
-				if(p.paused())continue;
+				if(lib.problem){row.setDesc(lib.location+' · '+lib.problem);continue;}
+				if(lib.duplicate){
+					row.setDesc(lib.location+' · '+tr('身份重复','Duplicate identity')+' · '+lib.identity?.id);
+					this.button(row,tr('处理重复 ID','Resolve duplicate ID'),()=>resolveDuplicate(p,lib));continue;
+				}
+				if(lib.legacy){this.button(row,tr('按新库接管','Adopt as a new library'),()=>adoptLegacy(p,lib));continue;}
+				if(p.bindingRecovery(lib.location)){
+					this.button(row,tr('恢复绑定更新','Resume binding changes'),()=>bindingForm(p,lib));continue;
+				}
+				if(lib.identity?.managed.some(item=>item.root && item.root!==lib.location)){
+					this.button(row,tr('路径绑定','Path bindings'),()=>bindingForm(p,lib));
+				}
+				if(p.paused() || !lib.identity)continue;
 				const id=lib.identity.id;
 				this.button(row,'Git',async()=>{this.selected=this.selected===id?undefined:id;await this.draw();});
 				if(this.selected===id){
@@ -104,10 +121,14 @@ export class MobileView extends ItemView {
 		const target=await upstream(s,state.branch);
 		if(this.revision!==rev || !target)return;
 		const network=new Setting(el).setName(target.remote+'/'+target.branch);
-		for(const op of ['fetch','push'] as const){
+		for(const op of p.preferences(lib).disablePush?['fetch'] as const:['fetch','push'] as const){
 			const label=op==='fetch'?tr('获取','Fetch'):tr('推送','Push');
 			this.button(network,label,()=>confirm(p,label,[lib.location,state.branch,state.head,target.url,'refs/heads/'+target.branch],async()=>{
 				await p.exclusive(lib.location,async()=>{
+					if(op==='push'){
+						const current=(await discoverMobile(p.ctx)).find(entry=>entry.location===lib.location);
+						if(!current || p.preferences(current).disablePush)throw new Error(tr('此库已禁用推送','Push is disabled for this library'));
+					}
 					const stored=p.app.secretStorage.getSecret(await secretKey(id,target.url));
 					const auth=stored?JSON.parse(stored) as {username:string;password:string}:undefined;
 					await transfer(s,state,op,target,mobileHttp(target.url),auth);

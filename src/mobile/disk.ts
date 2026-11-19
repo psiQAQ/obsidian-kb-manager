@@ -2,7 +2,7 @@ import type {DataAdapter} from 'obsidian';
 import {segments} from '../fs/segments.ts';
 import {tr} from '../i18n.ts';
 
-export type Disk=Pick<DataAdapter,'stat'|'list'|'read'|'readBinary'|'write'|'writeBinary'|'mkdir'|'rmdir'|'remove'|'copy'|'rename'>;
+export type Disk=Pick<DataAdapter,'stat'|'list'|'read'|'readBinary'|'write'|'writeBinary'|'mkdir'|'rmdir'|'remove'|'copy'|'rename'|'process'>;
 export const key=(s:string)=>s.normalize('NFC').toLowerCase();
 export const bytes=(s:string)=>new TextEncoder().encode(s);
 export const decode=(data:Uint8Array)=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(data);
@@ -60,6 +60,22 @@ export async function ensureFolder(disk:Disk,path:string){
 		if(!stat)await disk.mkdir(parent);
 		else if(stat.type!=='folder')throw new Error(tr('目录位置已被占用','Folder path is occupied')+': '+parent);
 	}
+}
+
+export async function replaceText(disk:Disk,path:string,before:string|undefined,after:string,allowApplied=false){
+	await checkSpelling(disk,path);
+	if(before===after)return;
+	if(before===undefined){
+		const temp=path.slice(0,path.lastIndexOf('/')+1)+'.writing-'+crypto.randomUUID();
+		await disk.write(temp,after);
+		try{await disk.copy(temp,path);}finally{await disk.remove(temp);}
+		return;
+	}
+	await disk.process(path,current=>{
+		if(allowApplied && current===after)return current;
+		if(current!==before)throw new Error(tr('文件已变化，请重新预览','File changed. Review it again.')+' · '+path);
+		return after;
+	});
 }
 
 function fsError(code:string,path:string){return Object.assign(new Error(code+': '+path),{code});}

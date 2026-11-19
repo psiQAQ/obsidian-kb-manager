@@ -1,5 +1,7 @@
 import git from 'isomorphic-git';
+import {parse} from 'smol-toml';
 import {tr} from '../i18n.ts';
+import {identityFile} from '../kb/identity-core.ts';
 import {bytes,buffer,children,decode,ensureFolder,hash,key,mobileRepo,relative} from './disk.ts';
 import type {Disk} from './disk.ts';
 
@@ -7,6 +9,11 @@ export interface Store {disk:Disk;root:string;configDir:string}
 export interface Author {name:string;email:string}
 export const repo=(s:Store)=>mobileRepo(s.disk,s.root,s.configDir);
 const meta=(s:Store,name:string)=>s.root+'/.git/'+name;
+export const portableManifestError=()=>new Error(tr('Git 中含有本地 kb.toml 清单。请在桌面检查暂存区和提交历史。','Git contains the local kb.toml manifest. Review the index and commit history on desktop.'));
+export function containsPrivateManifest(raw:string){
+	const manifest=parse(raw.replace(/^\uFEFF/u,''));
+	return manifest.manager!==undefined || manifest.preferences!==undefined;
+}
 export const changed=()=>new Error(tr('目标已变化，请重新预览','Target changed. Review the preview again.'));
 export function branchName(name:string){
 	if(!/^[\p{L}\p{N}_][\p{L}\p{N}._/-]*$/u.test(name) || name==='HEAD' || name.includes('..') ||
@@ -150,6 +157,7 @@ export async function editIndex(s:Store,old:Snapshot,files:string[],stage:boolea
 		for(const file of new Set(files)){
 			const change=old.changes.find(c=>c.file===file && (stage?c.w!==c.i:c.i!==c.h));
 			if(!change)throw changed();
+			if(stage && change.w && key(file)===identityFile)throw portableManifestError();
 			if(stage && change.w && old.executables.includes(file))
 				throw new Error(tr('请在桌面暂存可执行文件以保留权限','Stage executable files on desktop to preserve their mode')+': '+file);
 			if(stage && change.w)await git.add({...target,filepath:file});
@@ -167,8 +175,19 @@ export async function commit(s:Store,old:Snapshot,message:string,device:Author){
 	await ensureFolder(s.disk,meta(s,ref.slice(0,ref.lastIndexOf('/'))));
 	await locked(s,['index.lock','HEAD.lock',ref+'.lock'],async locks=>{
 		await expectSnapshot(s,old,locks);
+		const r=repo(s);
+		if((await git.listFiles(r)).includes(identityFile)){
+			await git.walk({...r,trees:[git.STAGE()],map:async(path,[entry])=>{
+				if(path==='.')return undefined;
+				if(path===identityFile && entry){
+					const {blob}=await git.readBlob({...r,oid:await entry.oid()});
+					if(containsPrivateManifest(decode(blob)))throw portableManifestError();
+				}
+				return null;
+			}});
+		}
 		const author=effectiveAuthor(await localAuthor(s),device);
-		await git.commit({...repo(s),author,message:message.trim(),disallowEmpty:true});
+		await git.commit({...r,author,message:message.trim(),disallowEmpty:true});
 	});
 }
 export async function mobileHistory(s:Store,cursor?:string){

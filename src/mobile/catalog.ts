@@ -1,62 +1,27 @@
 import git from 'isomorphic-git';
 import {tr} from '../i18n.ts';
 import {segments} from '../fs/segments.ts';
-import {identityFile,parseIdentity} from '../kb/identity-core.ts';
+import {identityFile,readManifest,withManifestIgnore,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
-import {readMapping} from '../kb/mapping.ts';
 import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
 import type {Template,Variables} from '../kb/template-core.ts';
 import {buffer,bytes,checkSpelling,children,decode,ensureFolder,hash,key,mobileRepo,relative,settingsPaths} from './disk.ts';
-import type {Disk} from './disk.ts';
+import {applyMobileRegistryIgnore,libraryPath,nested,previewMobileRegistryIgnore,readMobileRegistry,updateMobileRegistry} from './registration.ts';
+import type {Catalog} from './registration.ts';
 
-export interface Catalog {disk:Disk;configDir:string;parents:string[];templates:string[]}
-export interface Library {location:string;identity?:Identity;legacy?:boolean;problem?:string;duplicate?:boolean}
+export {discoverMobile,verifyLibrary} from './registration.ts';
+export type {Catalog,Library} from './registration.ts';
 export interface Templates {wiki:Record<string,string>;kepano:Record<string,string>}
 export interface Creation {parent:string;name:string;displayName:string;description:string;source:string}
 
-async function nested(ctx:Catalog,path:string){
-	let dir='';
-	for(const part of ['',...path.split('/')]){
-		if(part)dir=dir?dir+'/'+part:part;
-		for(const name of [identityFile,'kb.toml']){
-			if(await ctx.disk.stat(dir?dir+'/'+name:name))return true;
-		}
-	}
-	return false;
+export function newIdentity(displayName:string,description='',template={id:'unknown',version:'unknown'},entry?:string):Identity{
+	return {schemaVersion:1,id:crypto.randomUUID(),displayName,description,archived:false,template,entry,managed:[]};
 }
-export async function discoverMobile(ctx:Catalog){
-	settingsPaths(ctx.parents,ctx.templates,ctx.configDir);
-	const libs:Library[]=[];
-	for(const parent of ctx.parents){
-		await checkSpelling(ctx.disk,parent);
-		if(!await ctx.disk.stat(parent) || await nested(ctx,parent))continue;
-		for(const location of (await children(ctx.disk,parent)).folders){
-			if(location.slice(parent.length+1).startsWith('.'))continue;
-			const lib:Library={location};
-			try{
-				const meta=location+'/'+identityFile,toml=location+'/kb.toml';
-				if(await ctx.disk.stat(meta))lib.identity=parseIdentity(await ctx.disk.read(meta));
-				if(await ctx.disk.stat(toml)){readMapping(await ctx.disk.read(toml));lib.legacy=!lib.identity;}
-				if(!lib.identity && !lib.legacy)continue;
-			}catch(e){lib.problem=String(e);}
-			libs.push(lib);
-		}
-	}
-	const counts=new Map<string,number>();
-	for(const lib of libs)if(lib.identity)counts.set(lib.identity.id,(counts.get(lib.identity.id)??0)+1);
-	for(const lib of libs)if(lib.identity)lib.duplicate=counts.get(lib.identity.id)!>1;
-	return libs;
-}
-export async function verifyLibrary(ctx:Catalog,expected:Library,write=false){
-	const lib=(await discoverMobile(ctx)).find(l=>l.location===expected.location);
-	if(!lib?.identity || lib.problem || lib.duplicate || lib.identity.id!==expected.identity?.id || (write && lib.identity.archived))
-		throw new Error(tr('知识库身份或状态已变化，请刷新','Library identity or state changed. Refresh the manager.'));
-	return lib.identity;
-}
+
 export async function destination(ctx:Catalog,parent:string,name:string){
 	settingsPaths(ctx.parents,ctx.templates,ctx.configDir);
 	if(!ctx.parents.includes(parent) || segments(name).length!==1 || await nested(ctx,parent))throw new Error(tr('请选择有效的目标目录','Choose a valid destination'));
-	const path=parent+'/'+name;
+	const path=libraryPath(ctx,parent+'/'+name);
 	await checkSpelling(ctx.disk,path);
 	if(await ctx.disk.stat(path))throw new Error(tr('目标已存在','Destination already exists')+': '+path);
 	return path;
@@ -72,12 +37,14 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 		const list=await children(ctx.disk,dir);
 		for(const path of [...list.files,...list.folders].sort()){
 			const name=path.slice(dir.length+1),file=path.slice(root.length+1);
-			if(key(name)===identityFile)throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
+			if(key(name)==='kb-manager.json')throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
 			if(key(name)===key(ctx.configDir) || excludedNames.has(key(name)) || file==='kb-template.json' ||
 				(name.startsWith('.') && !['.gitignore','.gitkeep'].includes(name) && !spec.hidden?.includes(file))){excluded.push(file);continue;}
 			relative(file,ctx.configDir);
 			if(list.folders.includes(path)){folders.push(file);await scan(path);continue;}
 			let data:Uint8Array=new Uint8Array(await ctx.disk.readBinary(path));
+			if(key(name)===identityFile && (file!==identityFile || readManifest(decode(data)).identity))
+				throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
 			sourceFiles.push(file+':'+await hash(data));
 			const fields=spec.text?.[file];
 			if(fields)data=bytes(decode(data).replace(/\{\{(kb_name|description|kb_root)\}\}/gu,(s,field:string)=>fields.includes(field)?values[field]!:s));
@@ -96,9 +63,10 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates)
 	const vars={...input,destination:location};
 	const template=input.source===kepanoSource?kepanoTemplate(assets.kepano,location):input.source?
 		await directoryTemplate(ctx,input.source,vars):builtinTemplate(assets.wiki,vars);
-	const signature=await hash(JSON.stringify([input,template.id,template.version,template.folders,template.excluded,template.entry,
+	const registryIgnore=await previewMobileRegistryIgnore(ctx);
+	const signature=await hash(JSON.stringify([input,template.id,template.version,template.folders,template.excluded,template.entry,registryIgnore,
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
-	return {location,input:{...input},template,signature};
+	return {location,input:{...input},template,signature,registryIgnore};
 }
 
 export async function scratch(ctx:Catalog,parent:string){
@@ -130,12 +98,14 @@ export async function publish(ctx:Catalog,src:string,parent:string,name:string){
 export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeof createPreview>>,assets:Templates){
 	const {input}=confirmed, fresh=await createPreview(ctx,input,assets);
 	if(fresh.signature!==confirmed.signature)throw new Error(tr('模板已变化，请重新预览','Template changed. Review it again.'));
+	await readMobileRegistry(ctx);
 	const temp=await scratch(ctx,input.parent), template=fresh.template;
 	try{
-		const identity:Identity={schemaVersion:1,id:crypto.randomUUID(),displayName:input.displayName,description:input.description,
-			archived:false,template:{id:template.id,version:template.version},entry:template.entry,managed:[]};
+		const identity=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
+		const asset=(name:string)=>template.files.find(file=>file.name===name);
 		for(const sub of template.folders)await ensureFolder(ctx.disk,temp+'/'+relative(sub,ctx.configDir));
 		for(const file of template.files){
+			if([identityFile,'.gitignore'].includes(file.name))continue;
 			const loc=temp+'/'+relative(file.name,ctx.configDir);
 			await ensureFolder(ctx.disk,loc.slice(0,loc.lastIndexOf('/')));await ctx.disk.writeBinary(loc,buffer(file.bytes));
 			if(input.source===kepanoSource && kepanoBinding(assets.kepano,file.name))
@@ -143,9 +113,14 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 			else if((!input.source || template.overview) && file.name==='knowledge.base')
 				identity.managed.push({path:file.name,root:fresh.location,fingerprint:await hash(file.bytes),role:input.source?'overview-bindings':undefined});
 		}
-		await ctx.disk.write(temp+'/'+identityFile,JSON.stringify(identity,null,2)+'\n');
+		const manifest=asset(identityFile),ignore=asset('.gitignore');
+		await ctx.disk.write(temp+'/'+identityFile,writeIdentity(manifest?decode(manifest.bytes):'',identity));
+		await ctx.disk.write(temp+'/.gitignore',withManifestIgnore(ignore?decode(ignore.bytes):''));
 		await git.init({...mobileRepo(ctx.disk,temp,ctx.configDir),defaultBranch:'main'});
+		await applyMobileRegistryIgnore(ctx,fresh.registryIgnore);
 		await publish(ctx,temp,input.parent,input.name);
+		try{await updateMobileRegistry(ctx,{add:[fresh.location]});}
+		catch(error){throw new Error(String(error)+tr('。目录已创建，可通过扫描登记：','. The folder was created and can be registered from a scan: ')+fresh.location);}
 		return identity;
 	}finally{await ctx.disk.rmdir(temp,true);}
 }

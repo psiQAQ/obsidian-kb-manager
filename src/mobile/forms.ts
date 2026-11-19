@@ -1,11 +1,16 @@
 import {Setting} from 'obsidian';
 import {tr} from '../i18n.ts';
+import {readManifest} from '../kb/identity-core.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {createPreview,instantiate} from './catalog.ts';
 import type {Library} from './catalog.ts';
+import {bindingLines} from './bindings.ts';
+import {decode} from './disk.ts';
 import {branchName,configure,localAuthor,mobileStatus} from './git.ts';
 import {download,endpoint,secretKey,upstream} from './remote.ts';
+import type {CloneChoice} from './remote.ts';
 import {mobileHttp} from './http.ts';
+import {registryIgnoreLines} from './registration.ts';
 import type MobilePlugin from './plugin.ts';
 
 export function confirm(plugin:MobilePlugin,title:string,lines:string[],apply:()=>Promise<void>,close?:()=>void) {
@@ -28,8 +33,10 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.action(tr('预览','Preview'),async()=>{
 		plugin.assertEnabled();
 		const p=await createPreview(ctx,{...input,displayName:input.displayName||input.name},plugin.templates);
-		confirm(plugin,tr('确认创建知识库','Confirm library creation'),[p.location,p.template.id,...p.template.files.map(f=>f.name)],async()=>{
-			await plugin.exclusive(p.location,()=>instantiate(plugin.ctx,p,plugin.templates));
+		confirm(plugin,tr('确认创建知识库','Confirm library creation'),[p.location,p.template.id,...registryIgnoreLines(p.registryIgnore),
+			...new Set(['kb.toml','.gitignore',...p.template.files.map(f=>f.name)])],async()=>{
+			plugin.assertEnabled();
+			await plugin.catalogWrite(()=>instantiate(plugin.ctx,p,plugin.templates));
 		},()=>dlg.close());
 	});
 	dlg.open();
@@ -55,13 +62,30 @@ export function cloneForm(plugin:MobilePlugin) {
 		class CloneReview extends Dialog {
 			onClose(){super.onClose();closed=true;if(!publishing)void result.cleanup().catch(e=>plugin.report(e));}
 		}
-		const review=new CloneReview(plugin.app,tr('确认克隆','Confirm clone'));
+		const review=new CloneReview(plugin.app,tr('选择克隆清单','Choose the clone manifest'));
 		review.lines([result.location,address,result.branch,result.head,...result.files]);
-		review.action(tr('写入目标目录','Create destination'),async()=>{
-			publishing=true;
-			try{await plugin.exclusive(dest,()=>result.publish(plugin.ctx));review.close();await plugin.refresh();}
-			finally{publishing=false;if(closed)await result.cleanup();}
-		});
+		if(result.tracked)review.lines([tr('远端跟踪 kb.toml。请另外检查 Git 索引和历史。','The remote tracks kb.toml. Review the Git index and history separately.')]);
+		async function preview(choice:CloneChoice){
+			const approved=await result.review(plugin.ctx,choice,plugin.templates.kepano),manifest=readManifest(approved.source);
+			confirm(plugin,tr('确认克隆','Confirm clone'),[result.location,address,result.branch,result.head,
+				manifest.identity!.displayName+' · '+manifest.identity!.id,...(manifest.identity!.entry?[manifest.identity!.entry]:[]),
+				...Object.entries(manifest.preferences).map(([key,value])=>'preferences.'+key+' = '+String(value)),
+				...bindingLines(approved.bindings),...registryIgnoreLines(approved.registryIgnore)],async()=>{
+				publishing=true;
+				try{plugin.assertEnabled();await plugin.catalogWrite(()=>result.publish(plugin.ctx,approved,plugin.templates.kepano));review.close();}
+				finally{publishing=false;if(closed)await result.cleanup();}
+			});
+		}
+		if(result.hasManifest)review.action(tr('预览远端自带清单','Preview the remote manifest'),()=>preview({mode:'embedded'}));
+		else{
+			const picker=review.contentEl.createEl('input',{attr:{type:'file',accept:'.toml','aria-label':tr('原知识库的 kb.toml','Original library kb.toml')}});
+			review.action(tr('预览原知识库清单','Preview the original manifest'),async()=>{
+				const file=picker.files?.[0];
+				if(!file || file.name!=='kb.toml')throw new Error(tr('请选择原知识库的 kb.toml','Select kb.toml from the original library'));
+				await preview({mode:'original',raw:decode(new Uint8Array(await file.arrayBuffer()))});
+			});
+			review.action(tr('预览按新库接管','Preview adoption as a new library'),()=>preview({mode:'new'}));
+		}
 		review.open();
 	});
 	dlg.open();
