@@ -125,7 +125,19 @@ export interface NoteRecord {
 	body: string;
 	properties?: Record<string, unknown>;
 	lineOffset: number;
-	problem?: {line: number; code: string};
+	problem?: {line: number; code: string; dynamic?: boolean};
+}
+
+function noteProperties(yaml: string) {
+	const document = parseDocument(yaml);
+	const error = document.errors[0];
+	if (error) throw error;
+	visit(document, {Pair(_, pair) {
+		if (!isScalar(pair.key) || typeof pair.key.value !== 'string') throw new Error('invalid-property-key');
+	}});
+	const data: unknown = document.toJS();
+	if (data != null && !isRecord(data)) throw new Error('properties-not-a-mapping');
+	return JSON.parse(JSON.stringify(data ?? {})) as Record<string, unknown>;
 }
 
 function noteRecord(file: string, raw: string): NoteRecord {
@@ -134,25 +146,24 @@ function noteRecord(file: string, raw: string): NoteRecord {
 	const closing = hasHeader ? lines.findIndex((line, i) => i > 0 && /^(?:---|\.\.\.)[ \t]*$/u.test(line)) : -1;
 	const lineOffset = closing + 1;
 	if (!hasHeader) return {path:file, body:raw, properties:{}, lineOffset};
+	const yaml = lines.slice(1,closing).join('\n');
 	try {
 		if (closing < 0) throw new Error('missing-end-marker');
-		const document = parseDocument(lines.slice(1,closing).join('\n'));
-		const error = document.errors[0];
-		if (error) throw error;
-		visit(document, {Pair(_, pair) {
-			if (!isScalar(pair.key) || typeof pair.key.value !== 'string') throw new Error('invalid-property-key');
-		}});
-		const data: unknown = document.toJS();
-		if (data != null && !isRecord(data)) throw new Error('properties-not-a-mapping');
 		// Round-trip YAML values to plain JSON data before sharing with a checker.
-		const properties = JSON.parse(JSON.stringify(data ?? {})) as Record<string, unknown>;
+		const properties = noteProperties(yaml);
 		return {path: file, body: lines.slice(lineOffset).join('\n'), properties, lineOffset};
 	} catch (error) {
 		const positions = isRecord(error) ? error.linePos : undefined;
 		const first: unknown = Array.isArray(positions) ? positions[0] : undefined;
 		const line = isRecord(first) && typeof first.line === 'number' ? first.line + 1 : 1;
+		let dynamic = false;
+		let placeholder = 0;
+		const replaced = yaml.replace(/\{\{[^{}\n]+\}\}|<%[\s\S]*?%>/gu, () => `template-value-${++placeholder}`);
+		if (closing >= 0 && placeholder) {
+			try {noteProperties(replaced); dynamic = true;} catch {/* The original YAML also has a static error. */}
+		}
 		return {path: file, body: closing >= 0 ? lines.slice(lineOffset).join('\n') : '', lineOffset,
-			problem: {line, code: hasHeader && closing < 0 ? 'unclosed-frontmatter' : 'invalid-frontmatter'}};
+			problem: {line, code: closing < 0 ? 'unclosed-frontmatter' : 'invalid-frontmatter', dynamic}};
 	}
 }
 

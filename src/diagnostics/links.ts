@@ -3,6 +3,7 @@ import {tr} from '../i18n.ts';
 import {parseMarkdown, prose, wikiPattern} from '../kb/audit-markdown.ts';
 import {baseViewNames} from './base-view.ts';
 import {fencedBlocks} from './fences.ts';
+import {inspectFootnotes, inspectPdfFragment} from './references.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, NoteRecord} from './snapshot.ts';
 import {printable} from './types.ts';
@@ -11,6 +12,7 @@ import type {DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkReque
 const newlineOnly = (text: string) => text.replace(/[^\n]/gu, '');
 const local = (value: string) => !/^(?:[A-Za-z][\w+.-]*:|\/\/)/u.test(value);
 const attachment = (target: string) => /\.(?:apng|avif|bmp|gif|jpe?g|png|svg|webp|ico|pdf|mp3|wav|m4a|ogg|flac|mp4|mov|mkv|webm|canvas|base|txt|csv|json|epub|zip)$/iu.test(target);
+const image = /\.(?:apng|avif|bmp|gif|jpe?g|png|svg|webp|ico)(?:[|#]|$)/iu;
 const within = (target: string, folder: string) => !folder || target.startsWith(folder + '/');
 const normalize = (value: string) => value.normalize('NFC').toLowerCase();
 export const dynamicTarget = (value: string) => /\{\{|<%|__(?:KB_ROOT|WIKI_PATH|NOTES_PATH|WIKI_DIR|TEMPLATES_DIR|CATEGORY_PATH)__/u.test(value);
@@ -37,7 +39,8 @@ export function staticOccurrences(note: NoteRecord): LinkOccurrence[] {
 }
 
 export function linkRequest(source: string, occurrence: LinkOccurrence): LinkRequest | undefined {
-	const {target: value, kind, syntax} = occurrence;
+	const {target: raw, kind, syntax} = occurrence;
+	const value = kind === 'embed' && image.test(raw) ? raw.replace(/\\?\|\d+(?:x\d+)?$/iu,'') : raw;
 	if (!local(value)) return undefined;
 	const hash = value.indexOf('#');
 	const target = (hash < 0 ? value : value.slice(0, hash)).trim();
@@ -153,6 +156,9 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 		check.coverage.skipped += inventory.skipped;
 	}
 	for (const note of inventory.notes) {
+		const footnotes = links ?? anchors;
+		if (footnotes && (note.body.includes('[^') || note.body.includes('^[')))
+			inspectFootnotes(footnotes,maskLiterals(prose(note.body)),note.path,note.lineOffset);
 		const dynamic = fencedBlocks(note.body).filter(block => /^(?:base|dataview(?:js)?|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language)).length;
 		if (dynamic) for (const check of all) {
 			check.coverage.skipped += dynamic;
@@ -197,7 +203,9 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 						tr('目前无法确认 Obsidian 链接目标。','Obsidian could not resolve this link yet.') :
 						tr('离线环境无法确认 Obsidian 的实际链接目标。','Run this check in Obsidian to confirm where the link resolves.')});
 			}
-			if (anchors && link.fragment) {
+			const media = anchors ?? links;
+			const pdf = media && inspectPdfFragment(media,link,found,{...position,evidence});
+			if (anchors && link.fragment && !pdf) {
 				if (found.status === 'missing') anchors.coverage.skipped++;
 				else if (!found.anchor || found.anchor === 'unknown') {
 					anchors.coverage.unknown++;

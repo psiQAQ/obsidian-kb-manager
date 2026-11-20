@@ -78,7 +78,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				case 'properties': inspectProperties(check, found, templateDirs); break;
 				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined); break;
 				case 'canvas': await inspectCanvas(check, root, found, options, relative); break;
-				case 'bases': await inspectBases(check, root, found, templateDirs); break;
+				case 'bases': await inspectBases(check, root, found); break;
 				case 'links': case 'anchors': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}

@@ -2,6 +2,7 @@ import {parse} from 'yaml';
 import {tr} from '../i18n.ts';
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
+import {inspectPdfFragment} from './references.ts';
 import {decode, hash, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, manifestSnapshot} from './snapshot.ts';
 import {isRecord} from './types.ts';
@@ -48,7 +49,7 @@ export function inspectManifest(check: DiagnosticCheckResult, options: Diagnosti
 export function inspectProperties(check: DiagnosticCheckResult, inventory: Inventory, templateDirs: readonly string[]) {
 	check.coverage.skipped = inventory.skipped;
 	for (const note of inventory.notes) {
-		if (note.problem && templateDirs.some(dir => note.path.startsWith(dir + '/'))) {
+		if (note.problem?.dynamic && templateDirs.some(dir => note.path.startsWith(dir + '/'))) {
 			check.coverage.unknown++;
 			check.reason = tr('有模板的属性只有在实际插入时才能验证。','Check template properties after inserting the template into a note.');
 			continue;
@@ -93,7 +94,9 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 		}
 		async function target(value: unknown, fragment?: string) {
 			if (!relativePath(value)) {fail('canvas-file-path', tr('Canvas 文件路径不是有效的 Vault 相对路径。','Use a valid vault-relative path for the Canvas file reference.')); return;}
-			const found = await resolve(file, {source:vaultPath(file), target:value, fragment, kind:'embed', syntax:'wiki', canvasPath:true});
+			const link = {source:vaultPath(file), target:value, fragment, kind:'embed', syntax:'wiki', canvasPath:true} as const;
+			const found = await resolve(file, link);
+			const pdf = inspectPdfFragment(check, link, found, {file,evidence:found.path ?? value});
 			if (found.status === 'unknown') {
 				check.coverage.unknown++;
 				check.diagnostics.push({file,severity:'info',code:'canvas-target-unverified',message:tr('未能确认 Canvas 引用的文件。','Could not verify the Canvas file reference.'),evidence:value});
@@ -101,8 +104,8 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 			else {
 				check.coverage.checked++;
 				if (found.status === 'missing') fail('canvas-target-missing',tr('Canvas 引用的文件不存在。','The Canvas references a missing file. Restore it or update the node.'));
-				else if (fragment && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 引用的标题或块不存在。','The Canvas references a missing heading or block. Check the node’s subpath.'));
-				else if (fragment && found.anchor !== 'resolved') check.coverage.unknown++;
+				else if (!pdf && fragment && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 引用的标题或块不存在。','The Canvas references a missing heading or block. Check the node’s subpath.'));
+				else if (!pdf && fragment && found.anchor !== 'resolved') check.coverage.unknown++;
 			}
 		}
 		async function textLinks(body: string) {
@@ -112,13 +115,14 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 					if (!link || dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {check.coverage.skipped++; continue;}
 					const found = await resolve(file,link);
 					const evidence = found.path ?? (relativePath(link.target) ? link.target : undefined);
-					if (found.status === 'unknown' || found.status === 'resolved' && link.fragment && (!found.anchor || found.anchor === 'unknown')) {
+					const pdf = inspectPdfFragment(check,link,found,{file,evidence});
+					if (found.status === 'unknown' || !pdf && found.status === 'resolved' && link.fragment && (!found.anchor || found.anchor === 'unknown')) {
 						check.coverage.unknown++;
 						check.diagnostics.push({file,evidence,severity:'info',code:'canvas-text-link-unverified',message:tr('未能确认文本节点中的链接或片段。','Could not verify the link or fragment in the Canvas text node.')});
 					} else {
 						check.coverage.checked++;
 						if (found.status === 'missing') check.diagnostics.push({file,evidence,...missingLink(link.target,link.kind)});
-						else if (found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 文本节点的链接引用不存在的标题、块或视图。','The Canvas text node links to a missing heading, block, or view. Check the link fragment.'));
+						else if (!pdf && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 文本节点的链接引用不存在的标题、块或视图。','The Canvas text node links to a missing heading, block, or view. Check the link fragment.'));
 					}
 				} catch {fail('canvas-link-encoding',tr('Canvas 文本节点的链接包含无效 URL 转义。','The Canvas text node contains a link with invalid URL encoding.'));}
 			}
@@ -169,7 +173,7 @@ function validFilter(value: unknown, depth = 0): boolean {
 	return ['and','or','not'].includes(operator) && Array.isArray(operands) && operands.every(item => validFilter(item, depth + 1));
 }
 
-export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory, templateDirs: readonly string[]) {
+export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory) {
 	function inspect(file: string, text: string, line?: number) {
 		let base: unknown;
 		try {base = parse(text);} catch {/* Invalid schema below. */}
@@ -194,8 +198,6 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 			if (!validFilter(scope.filters)) fail('base-filter',tr('Base 过滤器须用语句或 and/or/not 的嵌套列表。','Use an expression or nested and/or/not lists for the Base filter.'));
 			else check.coverage.unknown++;
 		}
-		if (!templateDirs.some(dir => file.startsWith(dir + '/')) && /__(?:KB_ROOT|WIKI_PATH|NOTES_PATH|WIKI_DIR|TEMPLATES_DIR|CATEGORY_PATH)__/u.test(text))
-			fail('base-unbound-placeholder',tr('Base 仍有未绑定的模板占位符。','Fill in the remaining template placeholders in the Base.'));
 	}
 	await inspectStructuredFiles(check, root, inventory, '.base', inspect);
 	for (const note of inventory.notes) for (const block of fencedBlocks(note.body)) {

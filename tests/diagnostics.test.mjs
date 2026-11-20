@@ -158,6 +158,51 @@ test('template diagnostics check stable links, defer variables, and validate nam
 	assert.match(cross.evidence,/所属库 libraries\/other.*同名候选.*notes\/固定说明\.md/u);
 });
 
+test('footnotes, PDF page selectors and image dimensions keep their own syntax and source locations', async t => {
+	const {options,put} = await fixture(t);
+	await put('manual.pdf','Fixture for target existence.');
+	await put('image.png','Fixture for target existence.');
+	await put('name.md',[
+		'---','title: Media','---',
+		'Confirmed[^defined] Missing[^missing] and inline ^[正文].',
+		'[^defined]: Defined text.',
+		'`[^inline-code]` <!-- [^html-comment] --> %% [^obsidian-comment] %% $[^formula]$',
+		'    [^indented-code]', '```md', '[^fenced-code]', '```', '\\[^escaped]',
+		'![[libraries/示例库/manual.pdf#page=0]]',
+		'![[libraries/示例库/manual.pdf#page=-1]]',
+		'[Decimal](./manual.pdf#page=1.5)',
+		'![[libraries/示例库/manual.pdf#page=3&height=400]]',
+		'![[libraries/示例库/image.png|100x145]]',
+		'![Photo|100](./image.png)',
+	].join('\n'));
+	const report = await runDiagnostics({...options,selected:['links','anchors']});
+	const links = result(report,'links');
+	assert.deepEqual(links.diagnostics.map(({code,line,evidence}) => [code,line,evidence]),[['missing-footnote-definition',4,'missing']]);
+	assert.equal(result(report,'anchors').status,'partial');
+	assert.deepEqual(result(report,'anchors').diagnostics.map(({code,line}) => [code,line]),[
+		['invalid-pdf-page',12], ['invalid-pdf-page',13], ['invalid-pdf-page',14], ['unverified-pdf-page',15],
+	]);
+	const native = await runDiagnostics({...options,selected:['links','anchors'],
+		collectLinks:source => source.endsWith('/name.md') ? [{target:'image.png|100x145',kind:'embed',line:16,syntax:'wiki'}] : [],
+		resolveLink:link => {assert.equal(link.target,'image.png'); assert.equal(link.fragment,undefined); return {status:'resolved',path:`${relative}/image.png`};},
+	});
+	assert.deepEqual(codes(result(native,'links')),['missing-footnote-definition']);
+	assert.equal(result(native,'anchors').status,'skipped');
+});
+
+test('only placeholder-caused template YAML errors defer and ordinary Base text stays literal', async t => {
+	const {options,put} = await fixture(t);
+	await put('templates/static.md','---\nname: [\n---\n');
+	await put('templates/dynamic.md','---\ndate: {{date}}\n---\n');
+	await put('templates/mixed.md','---\ndate: {{date}}\nname: [\n---\n');
+	await put('sample.base','properties:\n  note.status: {displayName: "__WIKI_PATH__ __CATEGORY_PATH__"}\nviews: [{type: table, name: Report}]\n');
+	const report = await runDiagnostics({...options,selected:['properties','bases']});
+	const properties = result(report,'properties');
+	assert.equal(properties.coverage.unknown,1);
+	assert.deepEqual(properties.diagnostics.map(item => item.file),['templates/mixed.md','templates/static.md']);
+	assert.equal(result(report,'bases').status,'passed');
+});
+
 test('trusted check executes approved bytes on portable context and writes one log per concurrent invocation', async t => {
 	const {root,options,put} = await fixture(t);
 	const script = `export default function check({template,manifest,libraryRoot,notes}) {
