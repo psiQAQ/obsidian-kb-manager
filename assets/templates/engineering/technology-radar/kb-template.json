@@ -1,0 +1,35 @@
+{
+  "id": "technology-radar",
+  "version": "1",
+  "name": "技术雷达",
+  "description": "用评估、试用、采用和暂缓记录工具选型及证据。",
+  "purpose": "engineering",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Views/Radar.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "采用依据与状态",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/masonlr/obsidian-starter-templates",
+      "author": "masonlr",
+      "commit": "cf66e8a1aa5b6a6c605744258c7797ca72194b3d",
+      "license": "CC0-1.0",
+      "path": "technology_radar"
+    }
+  ]
+}

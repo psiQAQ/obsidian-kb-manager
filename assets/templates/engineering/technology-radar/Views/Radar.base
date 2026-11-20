@@ -1,0 +1,31 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 按阶段
+    filters:
+      and:
+        - type == "radar-tool"
+    order:
+      - file.name
+      - status
+      - topic
+      - adoption_reason
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 待验证
+    filters:
+      and:
+        - type == "radar-tool"
+        - status == "assess" || status == "trial"
+    order:
+      - file.name
+      - topic
+      - history

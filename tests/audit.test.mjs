@@ -9,13 +9,14 @@ import { auditChecks } from '../src/kb/audit-types.ts';
 import { inspect } from '../src/kb/catalog.ts';
 
 const location = 'knowledge-base/资料';
-const template = path.resolve('assets/llm-wiki');
+const template = path.resolve('assets/templates/ai-workflows/llm-wiki');
 async function setup(t) {
 	await fs.mkdir('.tmp',{recursive:true});
 	const vault = await fs.mkdtemp(path.resolve('.tmp/audit-'));
 	t.after(() => fs.rm(vault,{recursive:true,force:true}));
 	const root = path.join(vault,location);
-	await fs.cp(template,root,{recursive:true});
+	// The comparison target is the pre-v3 Python audit and its content layout.
+	await fs.cp(template,root,{recursive:true,filter:file=>!['Checks guide.md','checks','kb-template.json'].includes(path.basename(file))});
 	const put = async (file,text) => {
 		const target = path.join(root,file);
 		await fs.mkdir(path.dirname(target),{recursive:true});

@@ -1,0 +1,33 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 闪念
+    filters:
+      and:
+        - type == "fleeting"
+        - status == "inbox"
+    order:
+      - file.name
+      - status
+  - type: table
+    name: 永久卡
+    filters:
+      and:
+        - type == "permanent-card"
+    order:
+      - file.name
+      - origin
+      - literature
+  - type: table
+    name: 结构入口
+    filters:
+      and:
+        - type == "structure-card"
+    order:
+      - file.name

@@ -1,0 +1,44 @@
+{
+  "id": "project-review",
+  "version": "1",
+  "name": "项目推进与周期复盘",
+  "description": "在项目正文推进任务，用周复盘保留完成、重复和已归档的结果。",
+  "purpose": "projects",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Reviews/2026-W38.md": [
+      "kb_root"
+    ],
+    "Integrations/建立本周回顾.md": [
+      "kb_root"
+    ],
+    "Views/Projects.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "归档前的未完成任务",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "obsidian-tasks-plugin",
+    "templater-obsidian"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/mathisgauthey/obsidian-workflow-template",
+      "author": "Mathis Gauthey",
+      "commit": "7e09f84cca037b06073629d2bb9f0fef7244d107",
+      "license": "MIT"
+    }
+  ]
+}

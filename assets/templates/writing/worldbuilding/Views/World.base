@@ -1,0 +1,22 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 设定实体
+    filters:
+      and:
+        - type == "world-character" || type == "world-place" || type == "world-faction" || type == "world-event" || type == "world-culture" || type == "world-belief" || type == "world-item"
+    order:
+      - file.name
+      - type
+      - role
+      - faction
+      - location
+    groupBy:
+      property: type
+      direction: ASC

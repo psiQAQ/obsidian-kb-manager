@@ -1,0 +1,48 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 体验中
+    filters:
+      and:
+        - type == "media-item"
+        - status == "active"
+    order:
+      - file.name
+      - medium
+      - unit
+      - progress
+      - total
+      - rating
+  - type: table
+    name: 排队或搁置
+    filters:
+      and:
+        - type == "media-item"
+        - status == "queued" || status == "paused"
+    order:
+      - file.name
+      - medium
+      - status
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 已完成
+    filters:
+      and:
+        - type == "media-item"
+        - status == "completed"
+    order:
+      - file.name
+      - medium
+      - finished
+      - rating
+    sort:
+      - property: finished
+        direction: ASC

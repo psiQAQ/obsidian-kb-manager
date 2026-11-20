@@ -1,0 +1,53 @@
+{
+  "id": "worldbuilding",
+  "version": "1",
+  "name": "世界观与时间线",
+  "description": "用人物、地点、阵营和事件等互链建立可查询设定。",
+  "purpose": "writing",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Characters/沈禾.md": [
+      "kb_root"
+    ],
+    "Places/芦汀驿站.md": [
+      "kb_root"
+    ],
+    "Events/驿站换班.md": [
+      "kb_root"
+    ],
+    "Cultures/沿河聚落.md": [
+      "kb_root"
+    ],
+    "Items/手绘到站图.md": [
+      "kb_root"
+    ],
+    "Views/World.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "事件日期与地点",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "dataview"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/Vaultorial/obsidian-templates",
+      "author": "Vaultorial",
+      "commit": "6a53e5da320b607d03b3d98184849134b2f336b8",
+      "license": "MIT",
+      "path": "worldbuilding-vault"
+    }
+  ]
+}

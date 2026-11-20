@@ -15,7 +15,7 @@ export function validateKepanoRoot(root: string) {
 
 export function renderKepano(skeleton: Skeleton, root: string): Skeleton {
 	validateKepanoRoot(root);
-	return Object.fromEntries(Object.entries(skeleton).map(([name, source]) => [name, source.split(rootToken).join(root)]));
+	return Object.fromEntries(Object.entries(skeleton).map(([name, source]) => [name, /\.(?:md|base)$/iu.test(name) ? source.split(rootToken).join(root) : source]));
 }
 
 interface Edit { start: number; end: number; old: string; value: string; role: string; replacement: string }

@@ -1,0 +1,40 @@
+{
+  "id": "ai-worklog",
+  "version": "1",
+  "name": "AI 协作工作记忆",
+  "description": "由工作卡、会话交接和决策页接续同库的人机工作。",
+  "purpose": "ai-workflows",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Handoffs/首轮入口调整.md": [
+      "kb_root"
+    ],
+    "Decisions/采用本地索引.md": [
+      "kb_root"
+    ],
+    "Views/Work.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "决策取代关系",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/breferrari/obsidian-mind",
+      "author": "Brenno Ferrari",
+      "commit": "fae7be467fc5e23bf9d51df7207d41f0c07e2754",
+      "license": "MIT"
+    }
+  ]
+}

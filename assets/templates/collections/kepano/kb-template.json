@@ -1,0 +1,26 @@
+{
+  "id": "kepano",
+  "version": "4",
+  "name": "Kepano（含示例）",
+  "description": "按分类属性收集书影音、人物、地点、剪藏和日常笔记。",
+  "purpose": "collections",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "checks": [
+    {
+      "id": "category-links",
+      "name": "分类链接",
+      "path": "checks/category-links.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/kepano/kepano-obsidian",
+      "author": "Steph Ango",
+      "commit": "473697347a0eaac790a6596229c741b3915f3b77",
+      "license": "MIT"
+    }
+  ]
+}

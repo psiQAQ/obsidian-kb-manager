@@ -1,0 +1,34 @@
+{
+  "id": "minimal-first-week",
+  "version": "1",
+  "name": "首周笔记",
+  "description": "用一页指引和每日一条记录熟悉笔记与双链。",
+  "purpose": "starter",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Views/Journal.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "日记入口与日期",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/andrewmcodes/obsidian-beginner-vault-template",
+      "author": "Andrew Mason",
+      "commit": "771f1a4d6e8a37f420974eb6c5425dfeb4890c22",
+      "license": "MIT"
+    }
+  ]
+}

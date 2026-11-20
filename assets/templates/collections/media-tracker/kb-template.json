@@ -1,0 +1,49 @@
+{
+  "id": "media-tracker",
+  "version": "1",
+  "name": "媒体体验记录",
+  "description": "统一记录书影音进度、评分、体验感想和合集。",
+  "purpose": "collections",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Media/远岸电台.md": [
+      "kb_root"
+    ],
+    "Collections/短篇声音故事.md": [
+      "kb_root"
+    ],
+    "Templates/媒体合集.md": [
+      "kb_root"
+    ],
+    "Views/Media.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "媒体进度和评分",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "dataview",
+    "obsidian-meta-bind-plugin",
+    "quickadd"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/JackyGaoym/obsidian-media-library-template",
+      "author": "Obsidian Media Library Template contributors",
+      "commit": "642db682e32ac43484484bb5f93e8a03a891efb5",
+      "license": "MIT",
+      "path": "媒体库"
+    }
+  ]
+}

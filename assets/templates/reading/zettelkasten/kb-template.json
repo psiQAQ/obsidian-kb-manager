@@ -1,0 +1,38 @@
+{
+  "id": "zettelkasten",
+  "version": "1",
+  "name": "卡片盒",
+  "description": "把闪念和文献批注提炼成永久卡，由结构页编排阅读脉络。",
+  "purpose": "reading",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Permanent/理解需要检验.md": [
+      "kb_root"
+    ],
+    "Views/Cards.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "永久卡来由",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/groepl/Obsidian-Zettelkasten-Starter-Kit",
+      "author": "Edmund Gröpl",
+      "commit": "42b4677f3964fad9f5061cf3658e116101873368",
+      "license": "MIT",
+      "path": "Starter-Kit"
+    }
+  ]
+}

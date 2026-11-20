@@ -51,19 +51,19 @@ function fixture() {
 	return { root, access: { disk, configDir: '.settings' }, files, dirs };
 }
 
-const [wiki, kepano] = await Promise.all([assets('assets/llm-wiki'), assets('assets/kepano')]);
+const [wiki, kepano] = await Promise.all([assets('assets/templates/ai-workflows/llm-wiki'), assets('assets/templates/collections/kepano')]);
 const identity = {
 	schemaVersion: 1, id: '41058c33-9509-450f-9d8f-a59c9d0d9b5a', displayName: 'QA',
 	description: '', archived: false, managed: [],
 };
 
-test('Fusion v4 bundles operation logs and recognizes previous template versions', () => {
+test('Fusion v5 bundles operation logs and recognizes previous template versions', () => {
 	const root = 'Libraries/QA';
 	const fusion = builtinTemplate(wiki, { displayName: 'QA', description: '', destination: root });
 	const personal = kepanoTemplate(kepano, root);
 	const names = template => template.files.map(file => file.name);
-	assert.equal(fusion.version, '4');
-	assert.equal(personal.version, '3');
+	assert.equal(fusion.version, '5');
+	assert.equal(personal.version, '4');
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 7);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
 	assert.ok(names(fusion).includes('wiki/logs/.gitkeep'));
@@ -75,9 +75,9 @@ test('Fusion v4 bundles operation logs and recognizes previous template versions
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 52);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 30);
 	assert.ok(!names(personal).some(name => name.startsWith('README.v')));
-	for (const version of ['1', '2', '3', '4']) {
+	for (const version of ['1', '2', '3', '4', '5']) {
 		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
-		assert.equal(isKepano({ id: personal.id, version }), version !== '4');
+		assert.equal(isKepano({ id: personal.id, version }), version !== '5');
 	}
 	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = wiki['kb.toml'].replace(/^templates = .*\r?\n/mu, '');

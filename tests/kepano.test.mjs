@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { parse } from 'yaml';
 import { renderKepano, rebindKepano } from '../src/kb/kepano.ts';
 
-const dir = new URL('../assets/kepano/', import.meta.url);
+const dir = new URL('../assets/templates/collections/kepano/', import.meta.url);
 function entries(subdirectory = '') {
 	return readdirSync(new URL(subdirectory, dir), { withFileTypes: true }).flatMap(file => {
 		const name = subdirectory + file.name;
@@ -23,7 +23,7 @@ test('built-in Kepano edition contains the pinned templates, categories, example
 	assert.equal(names.filter(n => /^Categories\/[^/]+\.md$/u.test(n)).length, 21);
 	assert.equal(names.filter(n => n.endsWith('.base')).length, 30);
 	assert.ok(['README.md','Clippings/Buy wisely.md','Daily/2023-09-12.md','Notes/2023 Japan Trip.md','References/Out of Control.md','Attachments/.gitkeep'].every(n => names.includes(n)));
-	assert.ok(names.every(n => n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
+	assert.ok(names.every(n => ['kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
 	assert.match(skeleton['LICENSE.md'], /Copyright \(c\) 2023 Steph Ango/u);
 	assert.match(skeleton['LICENSE.md'], /473697347a0eaac790a6596229c741b3915f3b77/u);
 	for (const [name, text] of Object.entries(skeleton)) {

@@ -1,0 +1,30 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 项目
+    filters:
+      and:
+        - type == "review-project"
+    order:
+      - file.name
+      - status
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 周期笔记
+    filters:
+      and:
+        - type == "project-review"
+    order:
+      - file.name
+      - week
+    sort:
+      - property: week
+        direction: ASC

@@ -1,0 +1,26 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 证据
+    filters:
+      and:
+        - type == "evidence-claim"
+    order:
+      - file.name
+      - sources
+      - topics
+  - type: table
+    name: 来源
+    filters:
+      and:
+        - type == "evidence-source"
+    order:
+      - file.name
+      - authors
+      - source_url

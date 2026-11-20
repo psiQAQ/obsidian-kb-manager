@@ -1,0 +1,43 @@
+{
+  "id": "manuscript",
+  "version": "1",
+  "name": "长篇书稿",
+  "description": "一部书稿一个大纲，通过独立章节撰写和修订。",
+  "purpose": "writing",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Outline/回声计划大纲.md": [
+      "kb_root"
+    ],
+    "Manuscript/Chapters/01-启程.md": [
+      "kb_root"
+    ],
+    "Manuscript/Chapters/02-回声.md": [
+      "kb_root"
+    ],
+    "Views/Chapters.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "书稿内章节序号",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/rrbaker/obsidian-novel-starter-vault",
+      "author": "rrbaker",
+      "commit": "402b6f2ee36d2012a0d57091a4d0cb7e5a53db55",
+      "license": "CC0-1.0"
+    }
+  ]
+}

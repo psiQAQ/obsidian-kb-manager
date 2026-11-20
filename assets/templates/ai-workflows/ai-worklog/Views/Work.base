@@ -1,0 +1,38 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 当前工作
+    filters:
+      and:
+        - type == "ai-work"
+        - status == "active"
+    order:
+      - file.name
+      - status
+  - type: table
+    name: 最近交接
+    filters:
+      and:
+        - type == "ai-handoff"
+    order:
+      - file.name
+      - work
+      - date
+    sort:
+      - property: date
+        direction: ASC
+  - type: table
+    name: 决定
+    filters:
+      and:
+        - type == "ai-decision"
+    order:
+      - file.name
+      - status
+      - supersedes

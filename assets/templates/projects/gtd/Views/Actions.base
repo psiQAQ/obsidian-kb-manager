@@ -1,0 +1,52 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 收件箱
+    filters:
+      and:
+        - type == "gtd-inbox"
+        - status == "inbox"
+    order:
+      - file.name
+      - status
+  - type: table
+    name: 下一步
+    filters:
+      and:
+        - type == "gtd-action"
+        - status == "next"
+    order:
+      - file.name
+      - project
+      - every
+      - next
+    sort:
+      - property: next
+        direction: ASC
+  - type: table
+    name: 等待
+    filters:
+      and:
+        - type == "gtd-action"
+        - status == "waiting"
+    order:
+      - file.name
+      - project
+      - follow_up
+    sort:
+      - property: follow_up
+        direction: ASC
+  - type: table
+    name: 项目
+    filters:
+      and:
+        - type == "gtd-project"
+    order:
+      - file.name
+      - status

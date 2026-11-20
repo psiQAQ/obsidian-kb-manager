@@ -1,0 +1,24 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 章节
+    filters:
+      and:
+        - type == "chapter"
+    order:
+      - file.name
+      - manuscript
+      - chapter
+      - status
+    sort:
+      - property: chapter
+        direction: ASC
+    groupBy:
+      property: manuscript
+      direction: ASC

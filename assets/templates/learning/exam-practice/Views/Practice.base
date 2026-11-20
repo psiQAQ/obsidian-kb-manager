@@ -1,0 +1,27 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 待复做
+    filters:
+      and:
+        - type == "exam-practice"
+        - status == "retry"
+    order:
+      - file.name
+      - topic
+  - type: table
+    name: 已掌握
+    filters:
+      and:
+        - type == "exam-practice"
+        - status == "mastered"
+    order:
+      - file.name
+      - topic
+      - attempts

@@ -1,0 +1,47 @@
+{
+  "id": "coursework",
+  "version": "1",
+  "name": "课程学习",
+  "description": "用课程结构管理课堂、讲义、作业和截止日期。",
+  "purpose": "learning",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Courses/实验入门/Lectures/第一课.md": [
+      "kb_root"
+    ],
+    "Courses/实验入门/Assignments/图表作业.md": [
+      "kb_root"
+    ],
+    "Integrations/建立课程结构.md": [
+      "kb_root"
+    ],
+    "Views/Courses.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "有效课程和截止日",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "templater-obsidian"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/SoRobby/ObsidianStarterVault",
+      "author": "Robert",
+      "commit": "2be66d84abc78d643a3249469f6d69eaf95d95ec",
+      "license": "MIT",
+      "path": "Vault/Learning"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "id": "research-evidence",
+  "version": "1",
+  "name": "研究证据图谱",
+  "description": "用作者、来源、原子证据和主题页组织跨资料分析。",
+  "purpose": "research",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Sources/读数报告.md": [
+      "kb_root"
+    ],
+    "Evidence/重复测量.md": [
+      "kb_root"
+    ],
+    "Views/Evidence.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "证据来源类型",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/robertmartin8/MolecularNotes",
+      "author": "Robert Martin",
+      "commit": "e34ae4068ffa8d2caa12cebd12a4bcc35806eb91",
+      "license": "MIT"
+    }
+  ]
+}

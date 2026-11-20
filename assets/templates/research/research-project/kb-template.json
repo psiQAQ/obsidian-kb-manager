@@ -1,0 +1,41 @@
+{
+  "id": "research-project",
+  "version": "1",
+  "name": "课题研究",
+  "description": "把研究问题、资料、研究日志和阶段结论联系起来。",
+  "purpose": "research",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Projects/同一份样品的重复测量.md": [
+      "kb_root"
+    ],
+    "Records/重复测量观察.md": [
+      "kb_root"
+    ],
+    "Views/Research.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "结论证据",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/masonlr/obsidian-starter-templates",
+      "author": "masonlr",
+      "commit": "cf66e8a1aa5b6a6c605744258c7797ca72194b3d",
+      "license": "CC0-1.0",
+      "path": "researcher"
+    }
+  ]
+}

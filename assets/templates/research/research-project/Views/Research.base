@@ -1,0 +1,32 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 课题
+    filters:
+      and:
+        - type == "research-project"
+    order:
+      - file.name
+      - status
+      - evidence
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 研究记录
+    filters:
+      and:
+        - type == "research-record"
+    order:
+      - file.name
+      - project
+      - date
+    sort:
+      - property: date
+        direction: ASC

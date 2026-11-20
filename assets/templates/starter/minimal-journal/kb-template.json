@@ -1,0 +1,40 @@
+{
+  "id": "minimal-journal",
+  "version": "1",
+  "name": "日记与知识札记",
+  "description": "日记保留当天经过，札记按年归档并关联想法。",
+  "purpose": "starter",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Integrations/归档当前札记.md": [
+      "kb_root"
+    ],
+    "Views/Notes.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "札记归档年份",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "templater-obsidian"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/amatzk/obsidian-amatzk-template",
+      "author": "amatzk",
+      "commit": "e604a322762f83685bd29d8d0dc1e43d8ef72ff1",
+      "license": "MIT"
+    }
+  ]
+}

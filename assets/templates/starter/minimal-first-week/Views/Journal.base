@@ -1,0 +1,19 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 按日期
+    filters:
+      and:
+        - type == "daily-note"
+    order:
+      - file.name
+      - date
+    sort:
+      - property: date
+        direction: ASC

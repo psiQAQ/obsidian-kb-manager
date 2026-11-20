@@ -1,0 +1,74 @@
+import { segments } from '../fs/segments.ts';
+import { tr } from '../i18n.ts';
+
+export interface CheckDeclaration {id:string; name:string; path:string; description?:string}
+export interface TemplateSource {url:string; author:string; commit:string; license:string; path?:string}
+export interface Declaration {
+	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
+	entry?:string; pageTemplates?:string[]; dependencies?:string[]; sources?:TemplateSource[];
+	variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
+}
+
+function object(input:unknown):input is Record<string,unknown> {
+	return !!input && typeof input==='object' && !Array.isArray(input);
+}
+function strings(input:unknown):input is string[] {
+	return Array.isArray(input) && input.every(value=>typeof value==='string' && value.trim()) && new Set(input).size===input.length;
+}
+const reservedChecks=new Set(['manifest','properties','links','anchors','canvas','bases','bindings','portability','all']);
+const slug=/^[a-z0-9][a-z0-9-]*$/u;
+function bad(field:string):never {throw new Error(tr('模板声明字段无效：','Invalid template declaration field: ')+field);}
+
+export function declaration(raw:string):Declaration {
+	const data:unknown=JSON.parse(raw);
+	if(!object(data))bad('kb-template.json');
+	for(const name of Object.keys(data))if(!['id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','variables','managed','hidden','text','checks'].includes(name))bad(name);
+	for(const name of ['id','version','entry','name','description','purpose']) {
+		if(name in data && (typeof data[name]!=='string' || (!data[name] && name!=='description')))bad(name);
+	}
+	if(typeof data.entry==='string')segments(data.entry);
+	for(const name of ['purposes','pageTemplates','dependencies','hidden'])if(name in data && !strings(data[name]))bad(name);
+	for(const folder of (data.pageTemplates??[]) as string[])segments(folder);
+	if([data.purpose,...(data.purposes??[]) as string[]].some(value=>value!==undefined && (typeof value!=='string' || !slug.test(value))))bad('purpose');
+	if(data.managed!==undefined && (!strings(data.managed) || data.managed.length!==1 || data.managed[0]!=='knowledge.base:overview-bindings'))bad('managed');
+	if(data.variables!==undefined){
+		if(!object(data.variables))bad('variables');
+		for(const [key,value] of Object.entries(data.variables)){
+			if(!/^[a-zA-Z][a-zA-Z0-9_]*$/u.test(key) || !['string','number','boolean'].includes(typeof value) || (typeof value==='number' && !Number.isFinite(value)))bad('variables.'+key);
+		}
+	}
+	if(data.text!==undefined){
+		if(!object(data.text))bad('text');
+		for(const [file,fields] of Object.entries(data.text)){
+			segments(file);
+			if(Array.isArray(fields) && fields.includes('kb_root') && !/\.(?:md|base|canvas|txt|json|ya?ml)$/iu.test(file))bad('text.'+file);
+			if(/^(?:checks\/|kb-template\.json$|kb\.toml$)/iu.test(file) || !strings(fields) || !fields.every(field=>['kb_name','description','kb_root'].includes(field)))bad('text.'+file);
+		}
+	}
+	if(data.checks!==undefined){
+		if(!Array.isArray(data.checks) || data.checks.length>64)bad('checks');
+		if(data.checks.length && (!data.id || !data.version))bad('checks require id and version');
+		const ids=new Set<string>(), paths=new Set<string>();
+		for(const check of data.checks as unknown[]){
+			if(!object(check) || typeof check.id!=='string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/u.test(check.id) || reservedChecks.has(check.id) || typeof check.name!=='string' || !check.name.trim() ||
+				typeof check.path!=='string' || !/^checks\/[^/]+\.mjs$/u.test(check.path) || (check.description!==undefined && typeof check.description!=='string'))bad('checks');
+			segments(check.path);
+			if(ids.has(check.id) || paths.has(check.path.toLowerCase()))bad('checks.'+check.id);
+			ids.add(check.id); paths.add(check.path.toLowerCase());
+		}
+	}
+	if(data.sources!==undefined){
+		if(!Array.isArray(data.sources))bad('sources');
+		for(const source of data.sources as unknown[]){
+			if(!object(source) || typeof source.url!=='string' || !/^https?:\/\//u.test(source.url) ||
+				['author','license','commit'].some(key=>typeof source[key]!=='string' || !source[key]) || (source.path!==undefined && typeof source.path!=='string'))bad('sources');
+		}
+	}
+	return data;
+}
+
+export function verifyDeclaration(spec:Declaration,files:readonly string[],folders:readonly string[]) {
+	for(const file of [...Object.keys(spec.text??{}),...(spec.checks??[]).map(check=>check.path),...(spec.entry?[spec.entry]:[]),...(spec.managed?.length?['knowledge.base']:[])])
+		if(!files.includes(file))throw new Error(tr('缺少声明的文件：','Missing declared file: ')+file);
+	for(const dir of spec.pageTemplates??[])if(!folders.includes(dir) && !files.some(name=>name.startsWith(dir+'/')))bad('pageTemplates.'+dir);
+}

@@ -1,0 +1,40 @@
+{
+  "id": "gtd",
+  "version": "1",
+  "name": "行动清单与 GTD",
+  "description": "从收件箱整理下一步行动、等待事项和重复行动。",
+  "purpose": "projects",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Actions/等待确认取样时间.md": [
+      "kb_root"
+    ],
+    "Views/Actions.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "等待事项跟进日期",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "quickadd"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/kuswanto/MDOGTD",
+      "author": "MGTD",
+      "commit": "5b2d4f7d77e1b129c337c3321f885429868b6d12",
+      "license": "MIT"
+    }
+  ]
+}

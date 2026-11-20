@@ -1,0 +1,37 @@
+{
+  "id": "exam-practice",
+  "version": "1",
+  "name": "专题备考与错题复做",
+  "description": "按专题训练题型，记录错因和复做结果。",
+  "purpose": "learning",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Practice/读时间复杂度.md": [
+      "kb_root"
+    ],
+    "Views/Practice.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "掌握状态的复做记录",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/ditn/interviewprep",
+      "author": "ditn",
+      "commit": "cc77081e0587d6e81d800e6facc9186833af88d8",
+      "license": "Apache-2.0"
+    }
+  ]
+}

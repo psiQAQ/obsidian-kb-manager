@@ -1,0 +1,37 @@
+{
+  "id": "domain-reading",
+  "version": "1",
+  "name": "领域阅读与间隔复习",
+  "description": "从领域入口安排阅读，将术语写成可间隔复习的问答。",
+  "purpose": "reading",
+  "entry": "README.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_root"
+    ],
+    "Views/Reading.base": [
+      "kb_root"
+    ]
+  },
+  "checks": [
+    {
+      "id": "workflow",
+      "name": "复习卡问答",
+      "path": "checks/workflow.mjs"
+    }
+  ],
+  "dependencies": [
+    "obsidian-spaced-repetition"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/tuan3w/obsidian-template",
+      "author": "Tuan Nguyen",
+      "commit": "2730e5b215fcd000dd714863f47893e2634fd73e",
+      "license": "MIT"
+    }
+  ]
+}

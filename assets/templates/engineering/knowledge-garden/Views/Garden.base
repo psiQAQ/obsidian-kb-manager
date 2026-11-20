@@ -1,0 +1,29 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 种子和草稿
+    filters:
+      and:
+        - type == "garden-note"
+        - maturity == "seed" || maturity == "draft"
+    order:
+      - file.name
+      - maturity
+      - visibility
+  - type: table
+    name: 准备分享
+    filters:
+      and:
+        - type == "garden-note"
+        - maturity == "evergreen"
+        - publish_ready == true
+    order:
+      - file.name
+      - related
+      - visibility

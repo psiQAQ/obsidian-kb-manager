@@ -1,0 +1,29 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 阅读状态
+    filters:
+      and:
+        - type == "reading-item"
+    order:
+      - file.name
+      - status
+      - source
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 待复习术语
+    filters:
+      and:
+        - type == "term"
+        - review == true
+    order:
+      - file.name
+      - tags

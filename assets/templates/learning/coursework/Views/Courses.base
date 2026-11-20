@@ -1,0 +1,32 @@
+filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - this.file.path.startsWith("{{kb_root}}/")
+    - file.ext == "md"
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: 课程
+    filters:
+      and:
+        - type == "course"
+    order:
+      - file.name
+      - status
+    groupBy:
+      property: status
+      direction: ASC
+  - type: table
+    name: 已排期作业
+    filters:
+      and:
+        - type == "assignment"
+        - status == "scheduled"
+    order:
+      - file.name
+      - course
+      - due
+    sort:
+      - property: due
+        direction: ASC

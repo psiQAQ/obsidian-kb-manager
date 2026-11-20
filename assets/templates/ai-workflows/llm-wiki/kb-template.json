@@ -1,0 +1,45 @@
+{
+  "id": "llm-wiki",
+  "version": "5",
+  "name": "融合 LLM Wiki",
+  "description": "保存资料原件，建立可追溯的知识页、索引和操作日志。",
+  "purpose": "ai-workflows",
+  "entry": "wiki/index.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "README.md": [
+      "kb_name",
+      "description"
+    ]
+  },
+  "checks": [
+    {
+      "id": "analysis-evidence",
+      "name": "知识页索引与分析证据",
+      "path": "checks/analysis-evidence.mjs"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/psiQAQ/obsidian-agent-wiki",
+      "author": "psiQAQ",
+      "commit": "592dd626be508e65316368533c980bdf77003969",
+      "license": "See LICENSES.md",
+      "path": "knowledge-base-template/llm-wiki"
+    },
+    {
+      "url": "https://github.com/Astro-Han/karpathy-llm-wiki",
+      "author": "Yuhan Lei",
+      "commit": "eafcc77001e496cc43499e4923b663aec722c813",
+      "license": "MIT"
+    },
+    {
+      "url": "https://github.com/kepano/kepano-obsidian",
+      "author": "Steph Ango",
+      "commit": "473697347a0eaac790a6596229c741b3915f3b77",
+      "license": "MIT"
+    }
+  ]
+}
