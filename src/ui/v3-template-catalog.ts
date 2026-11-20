@@ -63,7 +63,7 @@ export function showTemplateDetails(parent:HTMLElement,template:TemplateChoice) 
 		details.createEl('dd',{text:value});
 	};
 	const purposes=[...new Set([template.purpose,...(template.purposes ?? [])])].filter(Boolean);
-	if(purposes.length)line(tr('用途','Use cases'),purposes.map(id=>labels[id] ?? id).join(' · '));
+	if(purposes.length)line(tr('用途','Use cases'),purposes.map(id=>Object.prototype.hasOwnProperty.call(labels,id)?labels[id]:id).join(' · '));
 	if(template.personal)line(tr('模板目录','Template folder'),template.source);
 	if(template.entry)line(tr('首页','Home note'),template.entry);
 	line(tr('社区插件','Community plugins'),template.dependencies?.length?template.dependencies.map(dependencyLabel).join(' · '):tr('无','None'));
@@ -86,14 +86,17 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 	const templates=[...builtinTemplates(),...await Promise.all(plugin.config.templates.map(source=>personalTemplate(plugin,source)))];
 	const dialog=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	dialog.modalEl.addClass('kb-v3-dialog');
-	const labels=purposeLabels();
-	const personal='personal';
+	const labels:Record<string,string>=purposeLabels();
+	const purposes=new Set(templates.flatMap(template=>[template.purpose,...(template.purposes ?? [])]).filter(Boolean));
+	const order=[...new Set([...Object.keys(labels).filter(id=>purposes.has(id)),...purposes])];
+	const options=Object.fromEntries(order.map(id=>[id,Object.prototype.hasOwnProperty.call(labels,id)?labels[id]:id]));
+	const personal='@personal';
 	let purpose=initial?(initial.personal?personal:initial.purpose):'';
 	let selected=initial;
 	const prompt=tr('选择用途','Select a use case');
 	new Setting(dialog.contentEl).setName(tr('用途','Use case')).addDropdown(input=>{
 		input.selectEl.setAttribute('aria-label',tr('用途','Use case'));
-		input.addOptions({'':prompt,...labels,[personal]:tr('个人目录模板','Personal folder templates')}).setValue(purpose).onChange(value=>{
+		input.addOptions({'':prompt,...options,[personal]:tr('我的模板','My templates')}).setValue(purpose).onChange(value=>{
 			purpose=value;
 			selected=undefined;
 			render();
@@ -114,7 +117,7 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 	function render(){
 		cards.empty();
 		if(purpose){
-			const matched=templates.filter(p=>purpose===personal?p.personal:!p.personal && (p.purpose===purpose||p.purposes?.includes(purpose)));
+			const matched=templates.filter(p=>purpose===personal?p.personal:p.purpose===purpose||p.purposes?.includes(purpose));
 			if(!matched.length)cards.createEl('p',{cls:'kb-v3-muted',text:tr('尚无目录模板。可在知识库目录与模板设置中制作或登记。','Create or register a folder template in the library folders and templates settings.')});
 			for(const template of matched){
 				const card=cards.createEl('button',{cls:'kb-v3-template-card',attr:{type:'button','data-template-source':template.source,'aria-pressed':String(template.source===selected?.source)}});
