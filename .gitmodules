@@ -13,3 +13,48 @@
 [submodule "references/kepano-obsidian"]
 	path = references/kepano-obsidian
 	url = https://github.com/kepano/kepano-obsidian.git
+[submodule "references/templates/obsidian-beginner-vault-template"]
+	path = references/templates/obsidian-beginner-vault-template
+	url = https://github.com/andrewmcodes/obsidian-beginner-vault-template.git
+[submodule "references/templates/obsidian-amatzk-template"]
+	path = references/templates/obsidian-amatzk-template
+	url = https://github.com/amatzk/obsidian-amatzk-template.git
+[submodule "references/templates/obsidian-media-library-template"]
+	path = references/templates/obsidian-media-library-template
+	url = https://github.com/JackyGaoym/obsidian-media-library-template.git
+[submodule "references/templates/obsidian-starter-templates"]
+	path = references/templates/obsidian-starter-templates
+	url = https://github.com/masonlr/obsidian-starter-templates.git
+[submodule "references/templates/MolecularNotes"]
+	path = references/templates/MolecularNotes
+	url = https://github.com/robertmartin8/MolecularNotes.git
+[submodule "references/templates/Obsidian-Zettelkasten-Starter-Kit"]
+	path = references/templates/Obsidian-Zettelkasten-Starter-Kit
+	url = https://github.com/groepl/Obsidian-Zettelkasten-Starter-Kit.git
+[submodule "references/templates/obsidian-template"]
+	path = references/templates/obsidian-template
+	url = https://github.com/tuan3w/obsidian-template.git
+[submodule "references/templates/ObsidianStarterVault"]
+	path = references/templates/ObsidianStarterVault
+	url = https://github.com/SoRobby/ObsidianStarterVault.git
+[submodule "references/templates/interviewprep"]
+	path = references/templates/interviewprep
+	url = https://github.com/ditn/interviewprep.git
+[submodule "references/templates/obsidian-garden"]
+	path = references/templates/obsidian-garden
+	url = https://github.com/tanepiper/obsidian-garden.git
+[submodule "references/templates/MDOGTD"]
+	path = references/templates/MDOGTD
+	url = https://github.com/kuswanto/MDOGTD.git
+[submodule "references/templates/obsidian-workflow-template"]
+	path = references/templates/obsidian-workflow-template
+	url = https://github.com/mathisgauthey/obsidian-workflow-template.git
+[submodule "references/templates/obsidian-novel-starter-vault"]
+	path = references/templates/obsidian-novel-starter-vault
+	url = https://github.com/rrbaker/obsidian-novel-starter-vault.git
+[submodule "references/templates/obsidian-templates"]
+	path = references/templates/obsidian-templates
+	url = https://github.com/Vaultorial/obsidian-templates.git
+[submodule "references/templates/obsidian-mind"]
+	path = references/templates/obsidian-mind
+	url = https://github.com/breferrari/obsidian-mind.git
