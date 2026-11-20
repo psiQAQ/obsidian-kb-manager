@@ -57,6 +57,13 @@ test('mobile adapter creates all template types and preserves each library index
 	for(const [name,source] of [['a',''],['b','builtin:kepano'],['c','templates/sample']]){
 		const preview=await createPreview(ctx,{name,parent:'libs',displayName:name,description:'demo',source,author},assets);
 		const result=await instantiate(ctx,preview,assets);
+		if(name!=='c'){
+			const clone=path.join(root,'checkout-'+name);
+			execFileSync('git',['-c','core.autocrlf=true','clone','--quiet','--no-local',path.join(root,'libs',name),clone]);
+			assert.match(execFileSync('git',['-C',clone,'check-attr','eol','--','README.md']).toString(),/eol: lf/u);
+			assert.equal((await fs.readFile(path.join(clone,'README.md'),'utf8')).includes('\r\n'),false);
+			assert.equal(execFileSync('git',['-C',clone,'status','--porcelain']).length,0);
+		}
 		assert.equal(result.head,native(name,'rev-parse','HEAD').toString().trim());
 		assert.equal(native(name,'log','-1','--format=%s%n%an%n%ae%n%cn%n%ce').toString().trim(),
 			['Initial commit',author.name,author.email,author.name,author.email].join('\n'));

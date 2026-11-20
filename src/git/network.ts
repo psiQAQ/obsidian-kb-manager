@@ -1,3 +1,4 @@
+import {attributesPath,markdownAttributes} from './markdown-attributes.ts';
 import {fromEnglish} from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -110,7 +111,9 @@ export async function tree(dir:string,oid:string){
   const hit=/^(040000 tree|100644 blob|100755 blob) ([a-f0-9]+)\t([\s\S]+)$/u.exec(row);
   if(!hit)throw new Error(fromEnglish('Unsupported target tree entry','目标树包含不支持的条目'));
   const file=hit[3]!,parts=file.split('/');
-  if(parts.some(name=>!name || Array.from(name).some(c=>c.charCodeAt(0)<32) || /[<>:"\\|?*]/u.test(name) || /[. ]$/u.test(name) ||
+  const safeAttributes=file===attributesPath && hit[1]==='100644 blob' &&
+   createHash(hit[2]!.length===64?'sha256':'sha1').update('blob '+markdownAttributes.length+'\0'+markdownAttributes).digest('hex')===hit[2];
+  if(!safeAttributes && parts.some(name=>!name || Array.from(name).some(c=>c.charCodeAt(0)<32) || /[<>:"\\|?*]/u.test(name) || /[. ]$/u.test(name) ||
    /^(?:\.git(?:attributes|modules)?|git~\d+|\.\.?|(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?)$/iu.test(name)))throw new Error(fromEnglish('Unsupported target tree path','目标树包含不支持的路径'));
   const key=file.normalize('NFC').toLowerCase();if(seen.has(key))throw new Error(fromEnglish('Path collision','路径冲突'));seen.add(key);
   if(!hit[1]!.startsWith('040000'))files.set(file,hit[2]+':'+hit[1]!.slice(0,6));

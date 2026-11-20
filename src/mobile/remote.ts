@@ -1,3 +1,4 @@
+import {attributesPath,markdownAttributes} from '../git/markdown-attributes.ts';
 import git from 'isomorphic-git';
 import type {HttpClient,GitAuth} from 'isomorphic-git';
 import {tr} from '../i18n.ts';
@@ -61,7 +62,9 @@ export async function tree(s:Store,oid:string){
 		for(const item of (await git.readTree({...r,oid:ref})).tree){
 			const file=prefix+component(item.path);
 			relative(file,s.configDir);
-			if(['.gitattributes','.gitmodules'].includes(key(item.path)) || !['040000','100644','100755'].includes(item.mode) || names.has(key(file)))
+			const safeAttributes=file===attributesPath && item.mode==='100644' &&
+				item.oid===(await git.hashBlob({object:new TextEncoder().encode(markdownAttributes)})).oid;
+			if((!safeAttributes && ['.gitattributes','.gitmodules'].includes(key(item.path))) || !['040000','100644','100755'].includes(item.mode) || names.has(key(file)))
 				throw new Error(tr('不支持的 Git 树路径或类型','Unsupported Git tree path or mode')+': '+file);
 			names.add(key(file));
 			if(item.type==='tree')await visit(file+'/',item.oid);else files.set(file,item.oid+':'+item.mode);

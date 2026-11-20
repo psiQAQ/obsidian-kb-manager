@@ -1,3 +1,4 @@
+import {builtinAttributesFile} from '../git/markdown-attributes.ts';
 import { fromEnglish } from '../i18n.ts';
 import { segments } from '../fs/segments.ts';
 import { renderKepano } from './kepano.ts';
@@ -38,7 +39,8 @@ export function kepanoTemplate(skeleton:Record<string,string>, root:string):Temp
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
 	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
-	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(text)}));
+	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(name.endsWith('.md') ? text.replace(/\r\n/gu,'\n') : text)}));
+	files.push(builtinAttributesFile());
 	return {id:'kepano',version:'3',entry:'README.md',files,folders:[],excluded:[]};
 }
 
@@ -65,8 +67,9 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 		if (name === 'README.md') text = text.replace(/\{\{kb_name\}\}|\{\{description\}\}/gu,
 			token => token === '{{kb_name}}' ? vars.displayName : vars.description);
 		if (name === 'knowledge.base') text = renderBase(text, vars.destination);
-		return { name, bytes: new TextEncoder().encode(text) };
+		return { name, bytes: new TextEncoder().encode(name.endsWith('.md') ? text.replace(/\r\n/gu,'\n') : text) };
 	});
+	files.push(builtinAttributesFile());
 	return { id:'llm-wiki', version:wikiVersion, entry:'wiki/index.md', files, folders:[], excluded:[] };
 }
 
