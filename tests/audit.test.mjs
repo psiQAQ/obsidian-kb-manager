@@ -72,7 +72,7 @@ test('sources, archival, metadata, Base and ingestion diagnostics match the lega
 	await put('wiki/bad.md','---\ntype: concept\ntype: entity\n---\n');
 	await put('reports/bad.base','views: [invalid]\n');
 	await put('main.base','filters: __WIKI_PATH__\n');
-	await put('templates/note.base','filters: __WIKI_PATH__\n');
+	await put('Templates/note.base','filters: __WIKI_PATH__\n');
 	await put('raw/bad.base','views: [invalid]\n');
 	const files=['Notes/草稿.md','raw/快照.md','wiki/page.md','wiki/log.md','knowledge.base'];
 	const bytes=()=>Promise.all(files.map(f=>fs.readFile(path.join(root,f))));

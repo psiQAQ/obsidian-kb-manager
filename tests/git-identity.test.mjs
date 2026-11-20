@@ -6,6 +6,7 @@ import {initializeRepository} from '../src/git/repository.ts';
 import {readRepositoryIdentity,writeRepositoryIdentity} from '../src/git/identity.ts';
 import {previewVersion,saveVersion,history} from '../src/git/versions.ts';
 import {gitResult} from '../src/git/network-native.ts';
+import {withIndex} from '../src/git/index-transaction.ts';
 
 async function setup(t){
 	await fs.mkdir('.tmp',{recursive:true});
@@ -114,4 +115,19 @@ test('native author and committer overrides must match the preview before stagin
 	}finally{if(before===undefined)delete process.env[key];else process.env[key]=before;}
 	await saveVersion(dir,plan,'matched identity');
 	assert.equal((await history(dir)).entries.length,2);
+	assert.equal((await gitResult(dir,['show','HEAD:note.md'])).stdout.toString(),'changed\n');
+});
+
+test('copying and publishing an index never advances its Git stat-cache cutoff',async t=>{
+	const {dir}=await setup(t);
+	await fs.writeFile(path.join(dir,'note.md'),'initial\n');
+	await gitResult(dir,['add','--','note.md']);
+	const index=path.join(dir,'.git','index'), cutoff=new Date('2024-02-01T12:00:00.750Z');
+	await fs.utimes(index,cutoff,cutoff);
+	await withIndex(dir,async(candidate,_locks,publish)=>{
+		const candidateTime=(await fs.stat(candidate)).mtimeMs;
+		assert.ok(candidateTime<=cutoff.getTime());
+		await publish();
+		assert.ok((await fs.stat(index)).mtimeMs<=candidateTime);
+	});
 });

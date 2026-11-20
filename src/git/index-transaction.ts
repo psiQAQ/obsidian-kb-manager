@@ -16,9 +16,18 @@ export async function withIndex<T>(dir:string,action:(indexFile:string,locks:Set
 	try{
 		temporary=await fs.mkdtemp(join(gitdir,'kb-index-'));
 		const candidate=join(temporary,'index'),old=await statIfPresent(index);
-		if(old){await fs.copyFile(index,candidate);await handle.chmod(old.mode&0o777);}
+		if(old){
+			await fs.copyFile(index,candidate);
+			// Git uses the index mtime to decide when same-size worktree files need rehashing.
+			// Round down so copying the index never advances that cutoff.
+			await fs.utimes(candidate,old.atime,Math.floor(old.mtimeMs / 1000));
+			await handle.chmod(old.mode&0o777);
+		}
 		return await action(candidate,new Set([lockPath]),async()=>{
-			await handle.writeFile(await fs.readFile(candidate));await handle.sync();await handle.close();
+			const stat=await fs.stat(candidate);
+			await handle.writeFile(await fs.readFile(candidate));
+			await handle.utimes(stat.atime,Math.floor(stat.mtimeMs / 1000));
+			await handle.sync();await handle.close();
 			if(!await owns())throw new Error(tr('索引锁已变化，请重新预览','Index lock changed. Preview again.'));
 			await fs.rename(lockPath,index);published=true;
 		});
