@@ -41,5 +41,15 @@
       "commit": "473697347a0eaac790a6596229c741b3915f3b77",
       "license": "MIT"
     }
-  ]
+  ],
+  "paths": {
+    "raw": "raw",
+    "clippings": "Clippings",
+    "wiki": "wiki",
+    "reports": "reports",
+    "templates": "Templates",
+    "index": "wiki/index.md",
+    "log": "wiki/log.md",
+    "overview": "wiki/overview.md"
+  }
 }

@@ -14,6 +14,7 @@ import type { Config, Library } from './catalog.ts';
 import { examine } from './maintenance.ts';
 import type { Repair, VisibleFiles } from './maintenance.ts';
 import { isKepano, kepanoBinding, kepanoBindingAssets } from './template.ts';
+import {rebindSlots} from './instance-text.ts';
 import { validateKepanoRoot } from './kepano.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { registerVaultLibrary } from '../registry/discovery.ts';
@@ -89,7 +90,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	const bindingAssets=kepanoBindingAssets(kepanoSkeleton,identity.template.version);
 	for(const item of record.changes){
 		const binding=identity.managed.find(m=>m.path===item.file);
-		const allowed=isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(bindingAssets,item.file):item.file==='knowledge.base' && !!binding;
+		const allowed=binding?.role==='template-root' || (isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(bindingAssets,item.file):item.file==='knowledge.base' && !!binding);
 		if(item.file!==identityFile && !allowed)throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
 		if(item.file!==identityFile && binding?.fingerprint!==item.before && !(current===destination && binding?.fingerprint===digest(item.after)))
 			throw new Error(tr('受管文件的指纹已变化','A managed file fingerprint changed'));
@@ -97,7 +98,10 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		const f=path.join(current,item.file);
 		const stat=await fs.lstat(f);
 		if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('受管路径发生变化：','Managed path changed: ')+item.file);
-		const hash=digest(await fs.readFile(f));
+		const bytes=await fs.readFile(f),hash=digest(bytes);
+		if(hash===item.before && binding?.role==='template-root' && binding.root && binding.offsets &&
+			rebindSlots(bytes.toString('utf8'),binding.offsets,binding.root,record.destination)!==item.after)
+			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}
 	if(current!==destination){

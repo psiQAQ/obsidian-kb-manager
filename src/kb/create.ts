@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { gitResult } from '../git/network-native.ts';
 import { guardGit } from '../git/guard.ts';
+import {instanceManifestSeed} from './template-declaration.ts';
+import {renderPack} from './template-pack.ts';
 import { rebind } from './bindings.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
@@ -11,7 +13,7 @@ import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/va
 import { headOid, repository } from '../git/repository.ts';
 import { commitInitialRepository, initialConfig, previewInitialRepository, reviewInitialRepository, verifyInitialRepository } from '../git/initial.ts';
 import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial.ts';
-import { discover, identityFile, newIdentity, readManifest, recheck, withManifestIgnore, writeIdentity } from './catalog.ts';
+import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
@@ -71,6 +73,7 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	let template: Template;
 	if (!input.source) template = builtinTemplate(skeleton,vars);
 	else if (input.source===kepanoSource) template=kepanoTemplate(skeleton,location);
+	else if(input.source.startsWith('builtin:')) template=renderPack(input.source.slice(8),vars);
 	else {
 		if (!config.templates.includes(input.source)) throw new Error(fromEnglish('Select a registered template','请选择已登记的模板'));
 		template = await folderTemplate(await disk.path(input.source),disk.configDir,vars);
@@ -84,7 +87,7 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	if(manifest && readManifest(decoder.decode(manifest.bytes)).identity)
 		throw new Error(tr('模板目录含已有的知识库身份','The template folder already has a library identity'));
 	const ignore=template.files.find(file=>file.name==='.gitignore');
-	const bytes=new TextEncoder().encode(withManifestIgnore(ignore?decoder.decode(ignore.bytes):''));
+	const bytes=new TextEncoder().encode(withLibraryIgnores(ignore?decoder.decode(ignore.bytes):''));
 	if(ignore)ignore.bytes=bytes;
 	else template.files.push({name:'.gitignore',bytes});
 	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,warnings,
@@ -95,6 +98,8 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>){
 	const {template,input,location}=creation;
 	const manifest=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
+	manifest.schemaVersion=2;
+	await fs.mkdir(path.join(dir,'.log'));
 	let original='';
 	for(const folder of template.folders)await fs.mkdir(path.join(dir,folder),{recursive:true});
 	for(const file of template.files){
@@ -105,14 +110,17 @@ async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof descr
 		const target=path.join(dir,file.name);
 		await fs.mkdir(path.dirname(target),{recursive:true});
 		await fs.writeFile(target,file.bytes,{flag:'wx'});
-		if(input.source===kepanoSource && kepanoBinding(skeleton,file.name)){
+		const offsets=template.rootSlots?.[file.name];
+		if(offsets?.length){
+			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'template-root',offsets});
+		}else if(input.source===kepanoSource && kepanoBinding(skeleton,file.name)){
 			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'kepano-bindings'});
 		}else if((!input.source || template.overview) && file.name==='knowledge.base'){
 			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,
 				role:input.source?'overview-bindings':undefined});
 		}
 	}
-	const raw=writeIdentity(original,manifest);
+	const raw=writeIdentity(original || instanceManifestSeed(template),manifest);
 	await fs.writeFile(path.join(dir,identityFile),raw,{flag:'wx'});
 	return {manifest,manifestSignature:digest(raw)};
 }
@@ -134,7 +142,9 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	const owned=await fs.lstat(temporary,{bigint:true});
 	try{
 		await writeTemplate(temporary,creation,skeleton);
-		return {...creation,gitConfig,git:await previewInitialRepository(temporary,creationPaths(creation.template),gitConfig)};
+		const git=await previewInitialRepository(temporary,creationPaths(creation.template),gitConfig);
+		if(git.ignored.some(name=>name==='kb-template.json' || name.startsWith('checks/')))throw new Error(tr('模板清单与专项脚本必须可提交','Template declarations and checks must be tracked'));
+		return {...creation,gitConfig,git};
 	}finally{await removePreviewDirectory(temporary,owned);}
 }
 

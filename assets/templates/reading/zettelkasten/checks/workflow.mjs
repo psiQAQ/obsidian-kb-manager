@@ -3,7 +3,7 @@ export default async function check({ libraryRoot, notes }) {
 	return notes.flatMap(({ path, properties }) => {
 		if (!path.startsWith('Permanent/') || properties.type !== 'permanent-card' || properties.origin !== 'literature') return [];
 		const linked = [properties.literature].flat().some(value => {
-			const target = typeof value === 'string' && value.match(/^\[\[([^#|\]]+)/u)?.[1];
+			const target = typeof value === 'string' ? value.match(/^\[\[([^#|\]]+)/u)?.[1] : undefined;
 			const relative = target?.startsWith(libraryRoot + '/') ? target.slice(libraryRoot.length + 1) : target;
 			return relative && literature.has(relative.replace(/\.md$/u, ''));
 		});

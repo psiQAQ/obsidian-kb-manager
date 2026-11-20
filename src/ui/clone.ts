@@ -40,7 +40,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 			const preview=new ImportPreview(plugin.app,t('导入知识库','Import library'));
 			preview.lines([target.relative,clone.branch+' · '+clone.head,...clone.files]);
 			if(clone.tracked)preview.lines([t('远端跟踪 kb.toml。Git 历史和暂存区将保留；导入后若要同步，请先在 Git 中将清单取消跟踪。','The remote tracks kb.toml. Git history and the index are retained. Untrack the manifest in Git before syncing.')]);
-			preview.lines([t('导入后可从库菜单的“体检”检查路径绑定。','After importing, select Check library from the library menu to review path bindings.')]);
+			preview.lines([t('导入后可从“体检”检查链接与可移植性。恢复原清单时可按原记录复核受管路径；按新库接管时请核对旧链接。','After import, check links and portability. The original manifest supplies binding records. Review existing links when adopting a new identity.')]);
 			const publish=async(choice?:CloneManifestChoice)=>{
 				publishing=true;
 				try{

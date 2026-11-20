@@ -12,6 +12,7 @@ import { initialIdentityDefaults } from '../src/git/initial.ts';
 import { headOid, readCommit } from '../src/git/repository.ts';
 import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
+import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import { readMapping } from '../src/kb/mapping.ts';
 
 async function setup(t) {
@@ -33,13 +34,14 @@ async function setup(t) {
 	const disk=new VaultDisk(root,'.settings');
 	const config={...defaults,templates:['样板']};
 	const skeleton={};
-	const assets=path.resolve('assets/llm-wiki');
+	const assets=path.resolve('assets/templates/ai-workflows/llm-wiki');
 	for(const item of await fs.readdir(assets,{recursive:true,withFileTypes:true})){
 		if(item.isFile()){
 			const absolute=path.join(item.parentPath,item.name);
 			skeleton[path.relative(assets,absolute).split(path.sep).join('/')]=await fs.readFile(absolute,'utf8');
 		}
 	}
+	skeleton['kb.toml']=instanceManifestSeed(JSON.parse(skeleton['kb-template.json']),1);
 	const input={parent:'knowledge-base',name:'光学 研究',displayName:'光学',description:'研究',source:''};
 	return {root,disk,config,skeleton,input,global};
 }
@@ -69,7 +71,7 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.equal(run('remote'),'');
 	assert.deepEqual(run('ls-files','-z').split('\0').filter(Boolean).sort(),p.git.staged);
 	assert.match(execFileSync('git',['-C',root,'check-ignore','-v','kb.toml']).toString(),/\.gitignore:.*:\/kb\.toml/u);
-	assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith('kb-')),[]);
+	assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith('kb-')),['kb-template.json']);
 	assert.equal((await discover(new VaultDisk(disk.root,'.settings'),config))[0].identity.id,lib.identity.id);
 });
 test('folder template respects ignored files, preserves binary files, and writes only edited identity fields and origin',async t=>{
@@ -114,7 +116,7 @@ test('folder template respects ignored files, preserves binary files, and writes
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'{{kb_name}}!');
 	assert.equal(await fs.readFile(path.join(dir,'cache','local.bin'),'utf8'),'local');
 	assert.deepEqual(await fs.readdir(path.join(dir,'empty')),[]);
-	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n!kb.toml\r\n/kb.toml\r\n');
+	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n!kb.toml\r\n/.log/\r\n/kb.toml\r\n');
 	const {identity,mapping}=readManifest(await fs.readFile(path.join(dir,'kb.toml'),'utf8'));
 	assert.equal(identity.displayName,input.displayName);
 	assert.equal(mapping,undefined);

@@ -1,4 +1,4 @@
-import {attributesPath,markdownAttributes} from '../git/markdown-attributes.ts';
+import {attributesPath,attributePolicies} from '../git/markdown-attributes.ts';
 import git from 'isomorphic-git';
 import {parse} from 'smol-toml';
 import {tr} from '../i18n.ts';
@@ -62,7 +62,7 @@ async function checkWorktree(s:Store,dir=s.root):Promise<void>{
 		const file=path.slice(s.root.length+1);
 		if(file==='.git')continue;
 		relative(file,s.configDir);
-		if(file===attributesPath && entries.files.includes(path) && (await s.disk.stat(path))?.size===markdownAttributes.length && await s.disk.read(path)===markdownAttributes)continue;
+		if(file===attributesPath && entries.files.includes(path) && attributePolicies.includes(await s.disk.read(path)))continue;
 		if(['.gitmodules','.gitattributes'].includes(key(path.slice(dir.length+1))))throw new Error(tr('此库使用移动版不支持的 Git 工作区配置','Unsupported Git worktree configuration on mobile')+': '+file);
 	}
 	for(const folder of entries.folders)if(folder!==s.root+'/.git')await checkWorktree(s,folder);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { VaultDisk } from '../src/fs/vault.ts';
@@ -16,12 +17,14 @@ async function setup(t) {
 	t.after(() => fs.rm(vault,{recursive:true,force:true}));
 	const root = path.join(vault,location);
 	// The comparison target is the pre-v3 Python audit and its content layout.
-	await fs.cp(template,root,{recursive:true,filter:file=>!['Checks guide.md','checks','kb-template.json'].includes(path.basename(file))});
+	await fs.cp(template,root,{recursive:true,filter:file=>!['Checks guide.md','checks','kb-template.json','kb.toml'].includes(path.basename(file))});
 	const put = async (file,text) => {
 		const target = path.join(root,file);
 		await fs.mkdir(path.dirname(target),{recursive:true});
 		await fs.writeFile(target,text);
 	};
+	const descriptor=JSON.parse(await fs.readFile(path.join(template,'kb-template.json'),'utf8'));
+	await put('kb.toml',instanceManifestSeed(descriptor,1));
 	// Match an instantiated Base after the template bindings have been rendered.
 	await put('knowledge.base','views: [{type: table}]\n');
 	const disk = new VaultDisk(vault,'.settings');

@@ -5,6 +5,8 @@ import { segments } from '../fs/paths.ts';
 import { digest, key, statIfPresent } from '../fs/vault.ts';
 import { declaration, excludedNames, renderBase } from './template-core.ts';
 import type { Template, TemplateFile, Variables } from './template-core.ts';
+import {instanceText} from './instance-text.ts';
+import {verifyDeclaration} from './template-declaration.ts';
 export * from './template-core.ts';
 
 export async function folderTemplate(root: string, configDir: string, vars: Variables): Promise<Template> {
@@ -15,7 +17,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 	const spec = specStat ? declaration(await fs.readFile(specPath,'utf8')) : {};
 	const files: TemplateFile[] = [], folders: string[] = [], excluded: string[] = [];
 	const sourceFiles: string[] = [];
-	const variables: Record<string,string> = {kb_name:vars.displayName,description:vars.description,kb_root:vars.destination};
+	const rootSlots:Record<string,number[]>={};
 	async function walk(relative: string) {
 		const directory = path.join(root,relative);
 		const names = (await fs.readdir(directory)).sort();
@@ -24,7 +26,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 			const file = relative ? relative + '/' + name : name;
 			const absolute = path.join(root,file);
 			if (key(name) === 'kb-manager.json') throw new Error(fromEnglish('Template contains a knowledge base identity: ','模板含知识库身份文件：') + file);
-			if (key(name) === key(configDir) || excludedNames.has(key(name)) || file === specName ||
+			if (key(name) === key(configDir) || excludedNames.has(key(name)) ||
 				(name.startsWith('.') && !['.gitignore','.gitkeep'].includes(name) && !spec.hidden?.includes(file))) {
 				excluded.push(file); continue;
 			}
@@ -37,8 +39,9 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 			const fields = spec.text?.[file];
 			if (fields) {
 				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
-				bytes = Buffer.from(original.replace(/\{\{(kb_name|description|kb_root)\}\}/gu,(token,field: string) =>
-					fields.includes(field) ? variables[field] ?? token : token));
+				const rendered=instanceText(file,original,fields,vars);
+				bytes=Buffer.from(rendered.content);
+				if(rendered.offsets.length)rootSlots[file]=rendered.offsets;
 			}
 			if (file === 'knowledge.base' && spec.managed?.length) {
 				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
@@ -48,9 +51,7 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 		}
 	}
 	await walk('');
-	for (const name of [...Object.keys(spec.text ?? {}), ...(spec.managed?.length ? ['knowledge.base'] : []), ...(spec.entry ? [spec.entry] : [])]) {
-		if (!files.some(file => file.name === name)) throw new Error(fromEnglish('Missing declared file: ','缺少已声明的文件：') + name);
-	}
+	verifyDeclaration(spec,files.map(file=>file.name),folders);
 	return { id:spec.id ?? 'folder', version:spec.version ?? digest(JSON.stringify([spec,folders,sourceFiles])),
-		overview:!!spec.managed?.length, entry:spec.entry, files, folders, excluded };
+		paths:spec.paths, overview:!!spec.managed?.length, entry:spec.entry, rootSlots, files, folders, excluded };
 }

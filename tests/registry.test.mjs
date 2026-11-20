@@ -20,7 +20,7 @@ async function setup(t) {
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
 	const disk = new VaultDisk(root,configDir);
 	const config = {...defaults,templates:['Templates']};
-	const asset = await fs.readFile('assets/llm-wiki/knowledge.base','utf8');
+	const asset = await fs.readFile('assets/templates/ai-workflows/llm-wiki/knowledge.base','utf8');
 	const assets = () => ({'knowledge.base':asset});
 	const create = async (location, identity=newIdentity(location,'',{id:'llm-wiki',version:'1'}), managed=location) => {
 		const folder = await disk.path(location);

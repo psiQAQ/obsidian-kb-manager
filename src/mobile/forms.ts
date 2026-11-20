@@ -1,4 +1,5 @@
 import {Setting} from 'obsidian';
+import {builtinPacks,builtinSource} from '../kb/template-pack.ts';
 import {tr} from '../i18n.ts';
 import {readManifest} from '../kb/identity-core.ts';
 import {reviewTemplateFilter} from '../ui/template-filter.ts';
@@ -31,7 +32,7 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
 	dlg.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
 	dlg.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
-	dlg.choice(tr('模板','Template'),{'':'LLM Wiki','builtin:kepano':'Kepano',...Object.fromEntries(ctx.templates.map(v=>[v,v]))},v=>{input.source=v;});
+	dlg.choice(tr('模板','Template'),{'':'LLM Wiki','builtin:kepano':'Kepano',...Object.fromEntries(builtinPacks().map(pack=>[builtinSource(pack.id),pack.name])),...Object.fromEntries(ctx.templates.map(v=>[v,v]))},v=>{input.source=v;});
 	dlg.text(tr('提交姓名','Commit author name'),input.author.name,v=>{input.author.name=v;});
 	dlg.text(tr('提交邮箱','Commit author email'),input.author.email,v=>{input.author.email=v;});
 	dlg.text(tr('origin HTTPS 地址（可选）','origin HTTPS URL (optional)'),'',v=>{input.origin=v;});

@@ -1,3 +1,4 @@
+import {stringify} from 'smol-toml';
 import { segments } from '../fs/segments.ts';
 import { tr } from '../i18n.ts';
 
@@ -6,7 +7,7 @@ export interface TemplateSource {url:string; author:string; commit:string; licen
 export interface Declaration {
 	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
 	entry?:string; pageTemplates?:string[]; dependencies?:string[]; sources?:TemplateSource[];
-	variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
+	paths?:Record<string,string>; variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
 }
 
 function object(input:unknown):input is Record<string,unknown> {
@@ -22,7 +23,7 @@ function bad(field:string):never {throw new Error(tr('模板声明字段无效�
 export function declaration(raw:string):Declaration {
 	const data:unknown=JSON.parse(raw);
 	if(!object(data))bad('kb-template.json');
-	for(const name of Object.keys(data))if(!['id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','variables','managed','hidden','text','checks'].includes(name))bad(name);
+	for(const name of Object.keys(data))if(!['id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks'].includes(name))bad(name);
 	for(const name of ['id','version','entry','name','description','purpose']) {
 		if(name in data && (typeof data[name]!=='string' || (!data[name] && name!=='description')))bad(name);
 	}
@@ -31,6 +32,13 @@ export function declaration(raw:string):Declaration {
 	for(const folder of (data.pageTemplates??[]) as string[])segments(folder);
 	if([data.purpose,...(data.purposes??[]) as string[]].some(value=>value!==undefined && (typeof value!=='string' || !slug.test(value))))bad('purpose');
 	if(data.managed!==undefined && (!strings(data.managed) || data.managed.length!==1 || data.managed[0]!=='knowledge.base:overview-bindings'))bad('managed');
+	if(data.paths!==undefined){
+		if(!object(data.paths))bad('paths');
+		for(const [key,value] of Object.entries(data.paths)){
+			if(!/^[A-Za-z][A-Za-z0-9_-]*$/u.test(key) || typeof value!=='string')bad('paths.'+key);
+			segments(value);
+		}
+	}
 	if(data.variables!==undefined){
 		if(!object(data.variables))bad('variables');
 		for(const [key,value] of Object.entries(data.variables)){
@@ -66,6 +74,8 @@ export function declaration(raw:string):Declaration {
 	}
 	return data;
 }
+
+export function instanceManifestSeed(spec:Declaration,version:1|2=2){return stringify({version,paths:spec.paths});}
 
 export function verifyDeclaration(spec:Declaration,files:readonly string[],folders:readonly string[]) {
 	for(const file of [...Object.keys(spec.text??{}),...(spec.checks??[]).map(check=>check.path),...(spec.entry?[spec.entry]:[]),...(spec.managed?.length?['knowledge.base']:[])])

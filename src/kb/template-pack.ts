@@ -33,5 +33,5 @@ export function renderPack(id:string,vars:Variables):Template {
 	for(const [name,encoded] of Object.entries(pack.binary))
 		files.push({name,bytes:Uint8Array.from(atob(encoded),letter=>letter.charCodeAt(0))});
 	if(!files.some(file=>file.name==='.gitattributes'))files.push(builtinAttributesFile());
-	return {id,version:descriptor.version,entry:descriptor.entry,files,folders:[...pack.folders],rootSlots,excluded:[]};
+	return {id,paths:descriptor.paths,version:descriptor.version,entry:descriptor.entry,files,folders:[...pack.folders],rootSlots,excluded:[]};
 }

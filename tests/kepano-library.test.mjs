@@ -19,7 +19,7 @@ async function setup(t) {
 	const root=await fs.mkdtemp(path.resolve('.tmp/kepano-library-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
 	const disk=new VaultDisk(root,'.settings');
-	const assets=path.resolve('assets/kepano');
+	const assets=path.resolve('assets/templates/collections/kepano');
 	const skeleton={};
 	for(const item of await fs.readdir(assets,{withFileTypes:true,recursive:true})){
 		if(!item.isFile())continue;

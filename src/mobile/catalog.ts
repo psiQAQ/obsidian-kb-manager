@@ -1,6 +1,9 @@
+import {renderPack} from '../kb/template-pack.ts';
+import {instanceManifestSeed,verifyDeclaration} from '../kb/template-declaration.ts';
+import {instanceText} from '../kb/instance-text.ts';
 import {tr} from '../i18n.ts';
 import {segments} from '../fs/segments.ts';
-import {identityFile,readManifest,withManifestIgnore,writeIdentity} from '../kb/identity-core.ts';
+import {identityFile,readManifest,withLibraryIgnores,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
 import type {Template,Variables} from '../kb/template-core.ts';
@@ -39,13 +42,13 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 	const specPath=root+'/kb-template.json';
 	const spec=(await ctx.disk.stat(specPath))?declaration(await ctx.disk.read(specPath)):{};
 	const files:Template['files']=[],folders:string[]=[],excluded:string[]=[],sourceFiles:string[]=[];
-	const values:Record<string,string>={kb_root:vars.destination,kb_name:vars.displayName,description:vars.description};
+	const rootSlots:Record<string,number[]>={};
 	async function scan(dir:string){
 		const list=await children(ctx.disk,dir);
 		for(const path of [...list.files,...list.folders].sort()){
 			const name=path.slice(dir.length+1),file=path.slice(root.length+1);
 			if(key(name)==='kb-manager.json')throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
-			if(key(name)===key(ctx.configDir) || excludedNames.has(key(name)) || file==='kb-template.json' ||
+			if(key(name)===key(ctx.configDir) || excludedNames.has(key(name)) ||
 				(name.startsWith('.') && !['.gitignore','.gitkeep'].includes(name) && !spec.hidden?.includes(file))){excluded.push(file);continue;}
 			relative(file,ctx.configDir);
 			if(list.folders.includes(path)){folders.push(file);await scan(path);continue;}
@@ -54,15 +57,18 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 				throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
 			sourceFiles.push(file+':'+await hash(data));
 			const fields=spec.text?.[file];
-			if(fields)data=bytes(decode(data).replace(/\{\{(kb_name|description|kb_root)\}\}/gu,(s,field:string)=>fields.includes(field)?values[field]!:s));
+			if(fields){
+				const rendered=instanceText(file,decode(data),fields,vars);
+				data=bytes(rendered.content);
+				if(rendered.offsets.length)rootSlots[file]=rendered.offsets;
+			}
 			if(file==='knowledge.base' && spec.managed?.length)data=bytes(renderBase(decode(data),vars.destination));
 			files.push({name:file,bytes:data});
 		}
 	}
 	await scan(root);
-	for(const f of [...Object.keys(spec.text??{}),...(spec.entry?[spec.entry]:[]),...(spec.managed?['knowledge.base']:[])])
-		if(!files.some(item=>item.name===f))throw new Error(tr('模板缺少文件','Missing template file')+': '+f);
-	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,excluded,entry:spec.entry,overview:!!spec.managed?.length};
+	verifyDeclaration(spec,files.map(file=>file.name),folders);
+	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,rootSlots,paths:spec.paths,excluded,entry:spec.entry,overview:!!spec.managed?.length};
 }
 export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,id:string=crypto.randomUUID()){
 	const location=await destination(ctx,input.parent,input.name);
@@ -71,15 +77,17 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,
 	const author=effectiveAuthor(input.author,{name:'',email:''});
 	input={...input,author,origin};
 	const vars={...input,destination:location};
-	const template=input.source===kepanoSource?kepanoTemplate(assets.kepano,location):input.source?
+	const template=input.source===kepanoSource?kepanoTemplate(assets.kepano,location):input.source.startsWith('builtin:')?renderPack(input.source.slice(8),vars):input.source?
 		await directoryTemplate(ctx,input.source,vars):builtinTemplate(assets.wiki,vars);
 	for(const name of [identityFile,'.gitignore'])if(template.folders.some(folder=>key(folder)===name) ||
 		template.files.some(file=>key(file.name)===name && file.name!==name))
 		throw new Error(tr('模板路径冲突','Conflicting template path')+' · '+name);
 	const ignore=template.files.find(file=>file.name==='.gitignore');
-	const ignoreBytes=bytes(withManifestIgnore(ignore?decode(ignore.bytes):''));
+	const ignoreBytes=bytes(withLibraryIgnores(ignore?decode(ignore.bytes):''));
 	if(ignore)ignore.bytes=ignoreBytes;else template.files.push({name:'.gitignore',bytes:ignoreBytes});
 	const files=await previewInitialFiles({root:location,disk:ctx.disk,configDir:ctx.configDir},template.files);
+	const staged=new Set(files.map(file=>file.name));
+	if(template.files.some(file=>(file.name==='kb-template.json' || file.name.startsWith('checks/')) && !staged.has(file.name)))throw new Error(tr('模板清单与专项脚本必须可提交','Template declarations and checks must be tracked'));
 	const registryIgnore=await previewMobileRegistryIgnore(ctx);
 	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.entry,template.overview,files.map(file=>file.name),
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
@@ -134,13 +142,16 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 	const {input,initial,template}=confirmed;
 	const location=await creationLocation(ctx,input.parent,input.name),store={root:location,disk:ctx.disk,configDir:ctx.configDir};
 	const identity=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry,confirmed.id);
+	identity.schemaVersion=2;
 	for(const file of template.files){
-		if(input.source===kepanoSource && kepanoBinding(assets.kepano,file.name))
+		const offsets=template.rootSlots?.[file.name];
+		if(offsets?.length)identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:'template-root',offsets});
+		else if(input.source===kepanoSource && kepanoBinding(assets.kepano,file.name))
 			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:'kepano-bindings'});
 		else if((!input.source || template.overview) && file.name==='knowledge.base')
 			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:input.source?'overview-bindings':undefined});
 	}
-	const asset=template.files.find(file=>file.name===identityFile),manifest=writeIdentity(asset?decode(asset.bytes):'',identity);
+	const asset=template.files.find(file=>file.name===identityFile),manifest=writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity);
 	const manifestPath=location+'/'+identityFile;
 	const verified=async()=>{
 		if(await ctx.disk.read(manifestPath)!==manifest)throw new Error(tr('目标清单已变化','The destination manifest changed')+' · '+manifestPath);
@@ -169,6 +180,7 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 	if(fresh.signature!==confirmed.signature)throw new Error(tr('模板已变化，请重新预览','Template changed. Review it again.'));
 	const temp=await scratch(ctx,input.parent);
 	try{
+		await ensureFolder(ctx.disk,temp+'/.log');
 		for(const sub of template.folders)await ensureFolder(ctx.disk,temp+'/'+relative(sub,ctx.configDir));
 		for(const file of template.files){
 			if(file.name===identityFile)continue;

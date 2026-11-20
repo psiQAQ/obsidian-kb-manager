@@ -1,4 +1,5 @@
 import {tr} from '../i18n.ts';
+import {rebindSlots} from '../kb/instance-text.ts';
 import {rebind} from '../kb/bindings.ts';
 import {identityFile,parseIdentity,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity,ManagedFile} from '../kb/identity-core.ts';
@@ -15,6 +16,7 @@ export interface BindingPreview {
 
 function rebindFile(item:ManagedFile,identity:Identity,source:string,location:string,skeleton:Record<string,string>){
 	if(!item.root || item.root===location)return undefined;
+	if(item.role==='template-root' && item.offsets)return {content:rebindSlots(source,item.offsets,item.root,location),manual:[]};
 	if(item.role==='kepano-bindings' && isKepano(identity.template)){
 		const assets=kepanoBindingAssets(skeleton,identity.template.version);
 		return kepanoBinding(assets,item.path)?rebindKepano(item.path,source,item.root,location,assets):undefined;

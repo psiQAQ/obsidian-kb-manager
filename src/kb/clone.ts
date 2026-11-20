@@ -7,10 +7,11 @@ import { address } from '../git/network-http.ts';
 import { tree,resolveRef,authOptions } from '../git/network.ts';
 import type { Credentials } from '../git/network.ts';
 import { VaultDisk, key, statIfPresent, validateFolders } from '../fs/vault.ts';
+import {declaration,instanceManifestSeed} from './template-declaration.ts';
 import { segments } from '../fs/paths.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { ancestorWarnings } from './create.ts';
-import { discover, identityFile, newIdentity, parseIdentity, readManifest, withManifestIgnore, writeIdentity } from './catalog.ts';
+import { discover, identityFile, newIdentity, parseIdentity, readManifest, withLibraryIgnores, writeIdentity } from './catalog.ts';
 import type { Config } from './catalog.ts';
 import { registerVaultLibrary } from '../registry/discovery.ts';
 
@@ -63,8 +64,10 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 					identity=parseIdentity(choice.raw);
 					raw=choice.raw;
 				}else if(choice?.kind==='new'){
-					identity=newIdentity(input.name,'',{id:'unknown',version:'unknown'},incoming?.mapping?.index);
-					raw=writeIdentity(raw??'',identity);
+					const spec=files.has('kb-template.json')?declaration((await gitResult(temporary,['cat-file','blob',head+':kb-template.json'])).stdout.toString('utf8')):undefined;
+					identity=newIdentity(input.name,'',{id:spec?.id??'unknown',version:spec?.version??'unknown'},spec?.entry??incoming?.mapping?.index);
+					identity.schemaVersion=2;
+					raw=writeIdentity(raw??instanceManifestSeed(spec??{}),identity);
 				}else throw new Error(tr('请选择原始清单或明确接管为新库','Choose the original manifest or explicitly adopt as a new library'));
 			}
 			if((await discover(disk,current)).some(l=>l.identity?.id===identity.id))throw new Error(tr('相同身份的知识库已存在','A library with the same ID already exists'));
@@ -75,7 +78,7 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 				await fs.mkdir(info,{recursive:true});
 				const exclude=join(info,'exclude'), stat=await statIfPresent(exclude);
 				const before=stat?await fs.readFile(exclude,'utf8'):'';
-				await fs.writeFile(exclude,withManifestIgnore(before));
+				await fs.writeFile(exclude,withLibraryIgnores(before));
 				if((await gitResult(temporary,['check-ignore','--quiet','--',identityFile],{allowedExitCodes:[0,1]})).code!==0)
 					throw new Error(tr('远端忽略规则使 kb.toml 无法忽略，请先核对远端 .gitignore','Remote ignore rules expose kb.toml. Review the remote .gitignore before importing'));
 			}
@@ -83,6 +86,7 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 				const file=join(temporary,identityFile);
 				await fs.writeFile(file,raw!,{flag:tracked || await statIfPresent(file)?'w':'wx'});
 			}
+			if(identity.schemaVersion===2)await fs.mkdir(join(temporary,'.log'),{recursive:true});
 			await renameNewDirectory(temporary,await disk.path(target.relative));
 			published=true;
 			try {await registerVaultLibrary(disk,current,target.relative);}

@@ -170,6 +170,13 @@ test('first-week entry rejects missing, other-library, and non-diary targets', a
 	}
 });
 
+test('citation checks handle missing and non-link Properties values', async () => {
+	const permanent = { path:'Permanent/待整理.md', properties:{type:'permanent-card',origin:'literature'}, body:'' };
+	const graph = { path:'Evidence/待核对.md', properties:{type:'evidence-claim',sources:[42]}, body:'' };
+	assert.deepEqual((await zettelkasten({libraryRoot:root,notes:[permanent]})).map(item => item.code), ['literature-card-missing']);
+	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).map(item => item.code), ['evidence-source-invalid']);
+});
+
 function workspace(activeFile, assets) {
 	const files = new Map(Object.keys(assets).map(path => [path, { path, extension:path.split('.').at(-1) }]));
 	const opened = [];

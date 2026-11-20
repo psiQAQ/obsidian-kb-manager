@@ -1,8 +1,9 @@
-import {attributesPath,markdownAttributes} from '../git/markdown-attributes.ts';
+import {attributesPath,attributePolicies} from '../git/markdown-attributes.ts';
 import git from 'isomorphic-git';
 import type {HttpClient,GitAuth} from 'isomorphic-git';
 import {tr} from '../i18n.ts';
-import {readManifest,identityFile,withManifestIgnore,writeIdentity} from '../kb/identity-core.ts';
+import {declaration,instanceManifestSeed} from '../kb/template-declaration.ts';
+import {readManifest,identityFile,withLibraryIgnores,writeIdentity} from '../kb/identity-core.ts';
 import {checkSpelling,component,decode,hash,key,relative,ensureFolder,replaceText} from './disk.ts';
 import {branchName,changed,containsPrivateManifest,expectSnapshot,locked,mobileStatus,portableManifestError,repo} from './git.ts';
 import type {Store,Snapshot} from './git.ts';
@@ -63,7 +64,7 @@ export async function tree(s:Store,oid:string){
 			const file=prefix+component(item.path);
 			relative(file,s.configDir);
 			const safeAttributes=file===attributesPath && item.mode==='100644' &&
-				item.oid===(await git.hashBlob({object:new TextEncoder().encode(markdownAttributes)})).oid;
+				(await Promise.all(attributePolicies.map(policy=>git.hashBlob({object:new TextEncoder().encode(policy)})))).some(hash=>hash.oid===item.oid);
 			if((!safeAttributes && ['.gitattributes','.gitmodules'].includes(key(item.path))) || !['040000','100644','100755'].includes(item.mode) || names.has(key(file)))
 				throw new Error(tr('不支持的 Git 树路径或类型','Unsupported Git tree path or mode')+': '+file);
 			names.add(key(file));
@@ -131,14 +132,16 @@ export async function download(ctx:Catalog,parent:string,name:string,url:string,
 			if(embedded?.identity && choice.mode!=='embedded')throw new Error(tr('请使用远端已有的知识库清单','Use the existing manifest from the remote'));
 			let source=choice.mode==='original'?choice.raw:manifest;
 			if(choice.mode==='new'){
-				const identity=newIdentity(name,'',undefined,embedded?.mapping?.index);
+				const spec=files.has('kb-template.json')?declaration(await read('kb-template.json')):undefined;
+				const identity=newIdentity(name,'',{id:spec?.id??'unknown',version:spec?.version??'unknown'},spec?.entry??embedded?.mapping?.index);
+				identity.schemaVersion=2;
 				if(approved)identity.id=approved.bindings.id;
-				source=writeIdentity(manifest,identity);
+				source=writeIdentity(manifest||instanceManifestSeed(spec??{}),identity);
 			}else if(!source || !readManifest(source).identity){
 				throw new Error(tr('所选清单缺少原知识库 ID','The selected manifest has no original library ID'));
 			}
 			const bindings=await previewBindings(current,location,temp,source,skeleton);
-			const nextIgnore=withManifestIgnore(ignore??'');
+			const nextIgnore=withLibraryIgnores(ignore??'');
 			return {choice,source,bindings,ignore,nextIgnore,registryIgnore:await previewMobileRegistryIgnore(current)};
 		}
 		return {location,head,files:[...files.keys()],branch,tracked:remoteManifest!==undefined,hasManifest:!!embedded?.identity,cleanup,review,publish:async(current:Catalog,approved:CloneReview,skeleton:Record<string,string>)=>{
@@ -155,6 +158,7 @@ export async function download(ctx:Catalog,parent:string,name:string,url:string,
 			if(remoteManifest===undefined && !await git.isIgnored({...r,filepath:identityFile}))
 				throw new Error(tr('远端忽略规则使 kb.toml 无法忽略，请检查 .gitignore','Remote ignore rules expose kb.toml. Review .gitignore'));
 			await applyMobileRegistryIgnore(current,fresh.registryIgnore);
+			if(readManifest(merged).identity?.schemaVersion===2)await ensureFolder(current.disk,temp+'/.log');
 			await publish(current,temp,parent,name);
 			try{await updateMobileRegistry(current,{add:[location]});}
 			catch(error){throw new Error(String(error)+tr('。目录已导入，可通过扫描登记：','. The folder was imported and can be registered from a scan: ')+location);}

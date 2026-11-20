@@ -5,6 +5,7 @@ import type { Identity } from '../kb/identity-core.ts';
 import { bindSharedKepanoPage } from '../kb/kepano.ts';
 import { insertTemplate } from '../kb/insert.ts';
 import type { Mapping } from '../kb/mapping.ts';
+import {declaration} from '../kb/template-declaration.ts';
 import { kepanoBinding, sharedTemplateKind } from '../kb/template-core.ts';
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder, previewTemplateRestore, restoreTemplateFile } from '../kb/template-files.ts';
 import type { Preset, TemplateAccess } from '../kb/template-files.ts';
@@ -35,8 +36,14 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		&& view.file === target && target.path === targetPath;
 	await checkTemplateFile(access, targetPath, location);
 	const kind = sharedTemplateKind(template);
+	const specPath=location+'/kb-template.json';
+	let declared:string[]|undefined;
+	if(await disk.stat(specPath)){
+		await checkTemplateFile(access,specPath,location);
+		declared=declaration(await disk.read(specPath)).pageTemplates;
+	}
 	let local = '', localWarning = '';
-	try { local = localTemplateFolder(location, template.id, scope.mapping); }
+	try { local = declared ? (declared[0]?location+'/'+declared[0]:'') : localTemplateFolder(location, template.id, scope.mapping); }
 	catch (error) {
 		if (!kind) throw error;
 		localWarning = String(error);
@@ -61,7 +68,13 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 			local = '';
 		}
 	}
+	const otherFiles:{path:string;name:string;shared:boolean}[]=[];
+	for(const folder of declared?.slice(1)??[]){
+		for(const name of await listTemplateFiles(access,location+'/'+folder,location))
+			otherFiles.push({path:location+'/'+folder+'/'+name,name:folder+'/'+name,shared:false});
+	}
 	const files = [
+		...otherFiles,
 		...Array.from(localFiles).sort(compareRegistryPaths).map(name => ({ path: local + '/' + name, name, shared: false })),
 		...Array.from(legacy.files).sort(compareRegistryPaths)
 			.map(name => ({ path: legacy.folder + '/' + name, name, shared: true })),

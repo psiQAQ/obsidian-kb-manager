@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { statIfPresent } from '../fs/vault.ts';
 import type { VaultDisk } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
+import { withLibraryIgnores } from '../kb/identity-core.ts';
 import { parseRegistry, registryDirectory, registryIgnoreRule, registryKey, registryName, serializeRegistry, validateRegistryDirectory, withIgnoreRule } from './paths.ts';
 
 export interface RegistrySnapshot {raw:string|null;paths:string[]}
@@ -113,19 +114,39 @@ async function ignoreFilename(disk:VaultDisk, location:string) {
 	return exactChild(location ? await disk.path(location) : await fs.realpath(disk.root),'.gitignore');
 }
 
-export async function previewIgnoreRule(disk:VaultDisk, location:string, rule:string) {
+type IgnorePreview = {before:string|null;after:string;location:string};
+type IgnoreEdit = (raw:string|null)=>string;
+
+async function previewIgnore(disk:VaultDisk,location:string,edit:IgnoreEdit):Promise<IgnorePreview> {
 	const before = (await readFile(await ignoreFilename(disk,location)))?.raw ?? null;
-	return {before,after:withIgnoreRule(before,rule),location,rule};
+	return {before,after:edit(before),location};
 }
 
-export async function applyIgnoreRule(disk:VaultDisk, preview:Awaited<ReturnType<typeof previewIgnoreRule>>) {
+async function applyIgnore(disk:VaultDisk,preview:IgnorePreview,edit:IgnoreEdit) {
 	const filename = await ignoreFilename(disk,preview.location);
 	return serializeUpdate(filename,async()=>{
 		const current = await readFile(filename);
 		const raw = current?.raw ?? null;
-		if (raw !== preview.before || withIgnoreRule(raw,preview.rule) !== preview.after) throw new Error(tr('忽略规则已变化，请重新预览','Ignore rules changed. Preview the update again'));
+		if (raw !== preview.before || edit(raw) !== preview.after) throw new Error(tr('忽略规则已变化，请重新预览','Ignore rules changed. Preview the update again'));
 		await replaceFile(filename,raw,preview.after,current?.mode ?? 0o644);
 	});
+}
+
+export async function previewIgnoreRule(disk:VaultDisk, location:string, rule:string) {
+	return {...await previewIgnore(disk,location,raw=>withIgnoreRule(raw,rule)),rule};
+}
+
+export function applyIgnoreRule(disk:VaultDisk, preview:IgnorePreview & {rule:string}) {
+	return applyIgnore(disk,preview,raw=>withIgnoreRule(raw,preview.rule));
+}
+
+const libraryIgnore:IgnoreEdit=raw=>withLibraryIgnores(raw ?? '');
+export function previewLibraryIgnores(disk:VaultDisk,location:string) {
+	return previewIgnore(disk,location,libraryIgnore);
+}
+
+export function applyLibraryIgnores(disk:VaultDisk,preview:IgnorePreview) {
+	return applyIgnore(disk,preview,libraryIgnore);
 }
 
 export function previewRegistryIgnore(disk:VaultDisk) {

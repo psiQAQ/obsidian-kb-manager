@@ -19,6 +19,7 @@ export function templateCatalog(root){
 			function scan(relative){
 				for(const entry of readdirSync(join(base,relative),{withFileTypes:true})){
 					const path=relative?relative+'/'+entry.name:entry.name;
+					if(path==='kb.toml')continue; // Instance manifests are local, including those left in an author's folder.
 					if(!['.gitignore','.gitkeep','.gitattributes'].includes(entry.name))segments(entry.name);
 					if(entry.isDirectory()){folders.push(path);scan(path);continue;}
 					if(!entry.isFile())throw new Error('Unsupported resource: '+path);

@@ -18,7 +18,7 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	const disk=new VaultDisk(root,'.settings'),config={parents:['A','B'],templates:[],author:'',email:''};
 	const libdir=path.join(root,'A','光学');
 	await fs.mkdir(libdir,{recursive:true});await fs.mkdir(path.join(root,'B'));
-	const skeleton={'knowledge.base':await fs.readFile('assets/llm-wiki/knowledge.base','utf8')};
+	const skeleton={'knowledge.base':await fs.readFile('assets/templates/ai-workflows/llm-wiki/knowledge.base','utf8')};
 	const base=renderBase(skeleton['knowledge.base'],'A/光学').replace('file.inFolder("A/光学/Notes")','file.name == "私人条件"')+'\n# 人工注释\n';
 	const manifest=newIdentity('光学','本地',{id:'llm-wiki',version:'1'});
 	manifest.managed.push({path:'knowledge.base',fingerprint:digest(base),root:'A/光学'});
@@ -71,7 +71,7 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	assert.deepEqual((await examine(disk,current,skeleton)).repairs,[]);
 	await fs.unlink(moved);
 	const [repair]=(await examine(disk,current,skeleton)).repairs;
-	await applyRepair(disk,config,current,repair,files);
+	await applyRepair(disk,config,current,repair,files,skeleton);
 	const repaired=(await discover(disk,config))[0];
 	const intermediate=await planMove(disk,config,repaired,'B','Optics',skeleton);
 	await executeMove(disk,config,intermediate,files,persist);

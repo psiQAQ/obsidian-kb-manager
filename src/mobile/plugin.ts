@@ -13,13 +13,12 @@ import type {BindingPreview} from './bindings.ts';
 import {readMobileStorage} from './storage.ts';
 import type {Device,Saved} from './storage.ts';
 
-declare const KB_BUILTIN:Record<string,string>;
-declare const KB_KEPANO:Record<string,string>;
+import {packText} from '../kb/template-pack.ts';
 export default class MobilePlugin extends Plugin {
 	ctx!:Catalog;
 	saved:Saved={language:'system',defaults:{}};
 	private device!:Device;
-	readonly templates={wiki:KB_BUILTIN,kepano:KB_KEPANO};
+	readonly templates={wiki:packText('llm-wiki'),kepano:packText('kepano')};
 	readonly drafts=new Map<string,string>();
 	private busy=new Set<string>();
 	private identityKey='';

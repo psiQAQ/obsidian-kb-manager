@@ -1,5 +1,6 @@
 import {builtinAttributesFile} from '../git/markdown-attributes.ts';
 import { fromEnglish } from '../i18n.ts';
+import {declaration} from './template-declaration.ts';
 export { declaration } from './template-declaration.ts';
 import { renderKepano } from './kepano.ts';
 import { parseDocument, isScalar } from 'yaml';
@@ -7,7 +8,7 @@ import { parseDocument, isScalar } from 'yaml';
 export interface TemplateFile { name: string; bytes: Uint8Array }
 export interface Template {
 	id: string; version: string; entry?: string;
-	rootSlots?: Record<string, number[]>; overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
+	paths?:Record<string,string>; rootSlots?: Record<string, number[]>; overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
 }
 export interface Variables { displayName: string; description: string; destination: string }
 
@@ -35,11 +36,14 @@ export function kepanoBindingAssets(skeleton:Record<string,string>, version:stri
 export function kepanoBinding(skeleton:Record<string,string>, name:string) {
 	return /\.(?:md|base)$/iu.test(name) && Object.prototype.hasOwnProperty.call(skeleton,name) && skeleton[name]!.includes('__KB_ROOT__');
 }
+function bundledText(name:string,text:string){
+	return /\.(?:md|base|canvas)$/iu.test(name) || name==='kb-template.json' || /^checks\/[^/]+\.mjs$/u.test(name) ? text.replace(/\r\n/gu,'\n') : text;
+}
 export function kepanoTemplate(skeleton:Record<string,string>, root:string):Template {
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
 	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
-	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(name.endsWith('.md') ? text.replace(/\r\n/gu,'\n') : text)}));
+	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(bundledText(name,text))}));
 	files.push(builtinAttributesFile());
 	return {id:'kepano',version:'4',entry:'README.md',files,folders:[],excluded:[]};
 }
@@ -63,14 +67,15 @@ export function renderBase(source: string, root: string): string {
 }
 
 export function builtinTemplate(skeleton: Record<string,string>, vars: Variables): Template {
-	const files = Object.entries(skeleton).map(([name, text]) => {
+	const paths=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']).paths:undefined;
+	const files = Object.entries(skeleton).filter(([name])=>name!=='kb.toml' || !paths).map(([name, text]) => {
 		if (name === 'README.md') text = text.replace(/\{\{kb_name\}\}|\{\{description\}\}/gu,
 			token => token === '{{kb_name}}' ? vars.displayName : vars.description);
 		if (name === 'knowledge.base') text = renderBase(text, vars.destination);
-		return { name, bytes: new TextEncoder().encode(name.endsWith('.md') ? text.replace(/\r\n/gu,'\n') : text) };
+		return { name, bytes: new TextEncoder().encode(bundledText(name,text)) };
 	});
 	files.push(builtinAttributesFile());
-	return { id:'llm-wiki', version:wikiVersion, entry:'wiki/index.md', files, folders:[], excluded:[] };
+	return { id:'llm-wiki', version:wikiVersion, paths, entry:'wiki/index.md', files, folders:[], excluded:[] };
 }
 
 export const excludedNames = new Set(['.git','.obsidian','.log','.cache','.venv','__pycache__','node_modules']);

@@ -6,6 +6,7 @@ import { identityFile, parseIdentity, recheck, writeIdentity } from './catalog.t
 import type { Config, Library } from './catalog.ts';
 import { isBuiltinWiki, isKepano, kepanoBinding, kepanoBindingAssets, renderBase } from './template.ts';
 import { renderKepano, rebindKepano } from './kepano.ts';
+import {rebindSlots} from './instance-text.ts';
 import { rebind } from './bindings.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 
@@ -31,10 +32,23 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 
 export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location):Promise<Report>{
 	const manual:string[]=[], repairs:Repair[]=[];
+	for(const binding of lib.identity?.managed??[]){
+		if(binding.role!=='template-root' || !binding.offsets || !binding.root)continue;
+		try{
+			const file=await disk.path(lib.location+'/'+binding.path),stat=await statIfPresent(file);
+			if(!stat?.isFile() || stat.nlink!==1)throw new Error(tr('受管文件缺失或不再是独立文件','Managed file is missing or linked'));
+			const text=await fs.readFile(file,'utf8');
+			if(digest(text)!==binding.fingerprint)throw new Error(tr('受管文件已编辑，保留原文','Managed file was edited. Keeping contents.'));
+			const after=rebindSlots(text,binding.offsets,binding.root,destination);
+			if(text!==after)repairs.push({file:binding.path,before:binding.fingerprint,after,fields:[binding.root+' → '+destination]});
+		}catch(error){manual.push(binding.path+' · '+String(error));}
+	}
+	if(lib.identity?.schemaVersion===2 && !lib.identity.managed.some(item=>item.role!=='template-root'))return {manual,repairs};
 	if(lib.identity && isKepano(lib.identity.template)){
 		const bindingAssets=kepanoBindingAssets(skeleton,lib.identity.template.version);
 		let originals:Record<string,string>|undefined;
 		for(const item of lib.identity.managed){
+			if(item.role==='template-root')continue;
 			if(item.role!=='kepano-bindings' || !kepanoBinding(bindingAssets,item.path)){
 				manual.push(tr('检查未知绑定：','Review unrecognized binding: ')+item.path);
 				continue;
@@ -102,15 +116,17 @@ export interface VisibleFiles {
 }
 export async function applyRepair(disk:VaultDisk,config:Config,lib:Library,item:Repair,files:VisibleFiles,skeleton:Record<string,string>={}){
 	const current=await recheck(disk,config,lib);
-	const binding=lib.identity?.managed.find(m=>m.path===item.file);
+	const binding=current.identity?.managed.find(m=>m.path===item.file);
 	const template=lib.identity?.template;
-	const authorized=template && isKepano(template)
+	const authorized=binding?.role==='template-root' ? item.before!==null : template && isKepano(template)
 		? binding?.role==='kepano-bindings' && kepanoBinding(kepanoBindingAssets(skeleton,template.version),item.file)
 			&& (item.before!==null || item.file.endsWith('.base') || (template.version!=='1' && /^Templates\/.+\.md$/u.test(item.file)))
 		: item.file==='knowledge.base';
 	if(!binding || !authorized || lib.identity?.archived)throw new Error(tr('此文件未授权修复','This file is not managed for repair'));
 	if(item.before!==null && item.before!==binding.fingerprint)
 		throw new Error(tr('受管文件已编辑','Managed file was edited'));
+	const fresh=(await examineBindings(disk,current,skeleton)).repairs.find(candidate=>candidate.file===item.file);
+	if(!fresh || fresh.before!==item.before || fresh.after!==item.after)throw new Error(tr('修复预览已变化','Repair preview changed'));
 	const {raw,signature}=await readManifestFile(await disk.path(lib.location+'/'+identityFile));
 	if(signature!==current.signature)throw new Error(tr('清单已变化，请重新预览','Manifest changed. Preview again'));
 	const identity=parseIdentity(raw);

@@ -1,4 +1,4 @@
-import {attributesPath,markdownAttributes} from './markdown-attributes.ts';
+import {attributesPath,attributePolicies} from './markdown-attributes.ts';
 import { tr, fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -63,7 +63,7 @@ export async function guardGit(dir: string, ownLocks: ReadonlySet<string> = new 
 			if(!metadata && parent===root && name==='.git')continue;
 			if(!metadata && parent===root && entry.name===attributesPath && entry.isFile()){
 				const file=path.join(parent,entry.name),stat=await fs.lstat(file);
-				if(stat.nlink===1 && stat.size===markdownAttributes.length && (await fs.readFile(file)).equals(Buffer.from(markdownAttributes)))continue;
+				if(stat.nlink===1 && attributePolicies.some(policy=>policy.length===stat.size) && attributePolicies.includes(await fs.readFile(file,'utf8')))continue;
 			}
 			if(entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory()) || (!metadata && ['.git','.gitattributes','.gitmodules'].includes(name)) ||
 				(metadata && !historyOnly && name.endsWith('.lock') && !ownLocks.has(path.join(parent,entry.name))))throw new Error(tr('特殊仓库路径：','Unsupported repository path: ')+path.relative(dir,path.join(parent,entry.name)));

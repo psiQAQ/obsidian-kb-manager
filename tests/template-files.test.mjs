@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 import test from 'node:test';
 import { parse } from 'yaml';
 import { readManifest, writeIdentity } from '../src/kb/identity-core.ts';
+import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import { bindSharedKepanoPage, rebindKepano } from '../src/kb/kepano.ts';
 import { builtinTemplate, isBuiltinWiki, isKepano, kepanoBindingAssets, kepanoTemplate, sharedTemplateKind } from '../src/kb/template-core.ts';
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder,
@@ -80,7 +81,7 @@ test('Fusion v5 bundles operation logs and recognizes previous template versions
 		assert.equal(isKepano({ id: personal.id, version }), version !== '5');
 	}
 	assert.equal(sharedTemplateKind(fusion), undefined);
-	const old = wiki['kb.toml'].replace(/^templates = .*\r?\n/mu, '');
+	const old = instanceManifestSeed(JSON.parse(wiki['kb-template.json']),1).replace(/^templates = .*\r?\n/mu, '');
 	const v2 = { ...identity, template: { id: 'llm-wiki', version: '2' } };
 	assert.equal(sharedTemplateKind(v2.template), 'llm-wiki');
 	const block = writeIdentity('', v2).replace(/^version = 1\n/u, '');
