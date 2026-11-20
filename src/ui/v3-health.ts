@@ -1,0 +1,301 @@
+import { ButtonComponent, Notice, Setting, TFile, resolveSubpath, setIcon } from 'obsidian';
+import { readFile, writeFile } from 'node:fs/promises';
+import { digest, statIfPresent } from '../fs/vault.ts';
+import { tr } from '../i18n.ts';
+import { generalChecks, listDiagnosticHistory, listSpecialChecks, portabilityCheck, runDiagnostics } from '../diagnostics/index.ts';
+import { officialCheckDigests } from '../kb/template-pack.ts';
+import type { Library } from '../kb/catalog.ts';
+import { readVaultRegistry } from '../registry/desktop.ts';
+import type KnowledgeBaseManager from '../main.ts';
+import { Dialog } from './dialog.ts';
+
+type Options = Parameters<typeof runDiagnostics>[0];
+type Report = Awaited<ReturnType<typeof runDiagnostics>>;
+type SpecialCheck = Awaited<ReturnType<typeof listSpecialChecks>>['checks'][number];
+type Diagnostic = Report['checks'][number]['diagnostics'][number];
+type Severity = Diagnostic['severity'];
+const severityOrder:Record<Severity,number>={error:0,warning:1,info:2};
+
+const checkLabels: Record<string,readonly [string,string]> = {
+	manifest:['清单与登记','Manifest and registration'],properties:['属性语法','Property syntax'],links:['链接与嵌入','Links and embeds'],
+	anchors:['标题与块引用','Headings and block references'],canvas:['Canvas','Canvas'],bases:['Bases','Bases'],
+	bindings:['受管绑定','Managed bindings'],portability:['可移植性','Portability'],
+};
+const checkName=(id:string,fallback:string)=>checkLabels[id]?tr(...checkLabels[id]):fallback;
+
+function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'> {
+	const {vault,metadataCache}=plugin.app;
+	let byName:Map<string,string[]>|undefined;
+	const nameKey=(name:string)=>name.normalize('NFC').toLowerCase();
+	return {
+		collectLinks:source=>{
+			const cache=metadataCache.getCache(source);
+			if(!cache)return undefined;
+			const collect=(refs: typeof cache.links,kind:'link'|'embed')=>(refs ?? []).map(ref=>({
+				target:ref.link,kind,line:ref.position.start.line+1,syntax:/^!?\[\[/u.test(ref.original)?'wiki' as const:'markdown' as const,
+			}));
+			return [...collect(cache.links,'link'),...collect(cache.embeds,'embed'),...(cache.frontmatterLinks ?? []).map(ref=>({target:ref.link,kind:'link' as const}))];
+		},
+		resolveLink:request=>{
+			const source=vault.getAbstractFileByPath(request.source);
+			if(!(source instanceof TFile) || (source.extension==='md' && !metadataCache.getFileCache(source)))return {status:'unknown',reason:tr('Obsidian 元数据缓存尚未就绪。','Obsidian metadata cache is not ready.')};
+			const target=!request.target?source:request.canvasPath?vault.getAbstractFileByPath(request.target):metadataCache.getFirstLinkpathDest(request.target,request.source);
+			if(!(target instanceof TFile))return {status:'missing'};
+			if(!request.fragment)return {status:'resolved',path:target.path};
+			const cache=metadataCache.getFileCache(target);
+			if(target.extension!=='md' || !cache)return {status:'resolved',path:target.path,anchor:'unknown'};
+			return {status:'resolved',path:target.path,anchor:resolveSubpath(cache,request.fragment)?'resolved':'missing'};
+		},
+		linkCandidates:request=>{
+			if(!request.target || request.target.includes('/'))return [];
+			if(!byName){
+				byName=new Map();
+				for(const file of vault.getFiles())for(const label of file.extension==='md'?[file.basename,file.name]:[file.name]){
+					const key=nameKey(label), matches=byName.get(key) ?? [];
+					matches.push(file.path);
+					byName.set(key,matches);
+				}
+			}
+			return byName.get(nameKey(request.target)) ?? [];
+		},
+	};
+}
+
+function statusInfo(status:string):{label:string;color:string;icon:string} {
+	switch(status){
+		case 'passed': return {label:tr('通过','Passed'),color:'passed',icon:'circle-check'};
+		case 'error': return {label:tr('错误','Error'),color:'error',icon:'circle-x'};
+		case 'failed': return {label:tr('运行失败','Failed'),color:'error',icon:'circle-x'};
+		case 'warning': return {label:tr('警告','Warning'),color:'warning',icon:'triangle-alert'};
+		case 'findings': return {label:tr('有发现','Findings'),color:'warning',icon:'triangle-alert'};
+		case 'partial': return {label:tr('部分完成','Partial'),color:'partial',icon:'circle-dashed'};
+		case 'info': return {label:tr('提示','Info'),color:'info',icon:'info'};
+		case 'skipped': return {label:tr('已跳过','Skipped'),color:'neutral',icon:'circle-minus'};
+		default: return {label:tr('尚未运行','Not run'),color:'neutral',icon:'circle'};
+	}
+}
+
+function badge(parent:HTMLElement,status:string) {
+	const {label,color,icon}=statusInfo(status);
+	const item=parent.createSpan({cls:`kb-v3-status kb-v3-status-${color}`});
+	const mark=item.createSpan({attr:{'aria-hidden':'true'}});
+	setIcon(mark,icon);
+	item.createSpan({text:label});
+	return item;
+}
+
+function summaryStatus(parent:HTMLElement,status:string,diagnostics:readonly Diagnostic[]) {
+	const highest=diagnostics.some(item=>item.severity==='error')?'error':diagnostics.some(item=>item.severity==='warning')?'warning':undefined;
+	badge(parent,status);
+	if(highest && status!=='failed')badge(parent,highest);
+}
+
+function coverage(parent:HTMLElement,value:Report['checks'][number]['coverage']) {
+	const row=parent.createDiv({cls:'kb-v3-coverage'});
+	const parts: [number,string][]=[[value.checked,tr('已检','Checked')],[value.skipped,tr('跳过','Skipped')],[value.unknown,tr('未验证','Unverified')]];
+	for(const [count,label] of parts){
+		const box=row.createDiv();
+		box.createEl('strong',{text:String(count)});
+		box.createSpan({text:label});
+	}
+	return row;
+}
+
+async function openDiagnostic(plugin:KnowledgeBaseManager,library:Library,item:Diagnostic) {
+	if(!item.file)return;
+	const relative=library.location+'/'+item.file;
+	await plugin.disk.path(relative);
+	const file=plugin.app.vault.getAbstractFileByPath(relative);
+	if(!(file instanceof TFile))throw new Error(tr('找不到此文件','File not found')+' · '+relative);
+	await plugin.app.workspace.getLeaf(false).openFile(file,item.line?{eState:{line:item.line-1}}:undefined);
+}
+
+function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library) {
+	container.empty();
+	const results=container.createDiv({cls:'kb-v3-results'});
+	const header=results.createDiv({cls:'kb-v3-report-heading'});
+	header.createEl('h3',{text:tr('检验结果','Check results')});
+	summaryStatus(header,report.status,report.checks.flatMap(check=>check.diagnostics));
+	const total=report.checks.reduce((all,{coverage})=>({checked:all.checked+coverage.checked,skipped:all.skipped+coverage.skipped,unknown:all.unknown+coverage.unknown}),{checked:0,skipped:0,unknown:0});
+	coverage(results,total);
+	results.createEl('p',{cls:'kb-v3-muted',text:[report.startedAt,report.logPath].filter(Boolean).join(' · ')});
+	if(report.logError)results.createEl('p',{cls:'kb-git-error',text:tr('日志保存失败','Could not save log')+' · '+report.logError});
+	let severity:Severity|''='';
+	const list=results.createDiv({cls:'kb-v3-report-list'});
+	new Setting(results).setName(tr('严重程度','Severity')).addDropdown(input=>{
+		input.selectEl.setAttribute('aria-label',tr('严重程度','Severity'));
+		input.addOptions({'':tr('全部','All'),error:tr('错误','Errors'),warning:tr('警告','Warnings'),info:tr('提示','Info')})
+			.onChange(value=>{severity=value as Severity|'';render();});
+	}).addButton(button=>button.setButtonText(tr('复制报告','Copy report')).onClick(async()=>{
+		try {await navigator.clipboard.writeText(JSON.stringify(report,null,2));new Notice(tr('报告已复制','Report copied'));}
+		catch(error){new Notice(String(error));}
+	}));
+	results.append(list);
+	function render(){
+		list.empty();
+		for(const check of report.checks){
+			const matches=check.diagnostics.filter(item=>!severity||item.severity===severity)
+				.sort((a,b)=>severityOrder[a.severity]-severityOrder[b.severity]);
+			if(severity && !matches.length)continue;
+			const group=list.createEl('details',{cls:'kb-v3-detail'});
+			group.open=!!matches.length || check.status==='partial' || check.status==='failed';
+			const summary=group.createEl('summary');
+			summary.createSpan({text:checkName(check.id,check.name)});
+			summaryStatus(summary,check.status,check.diagnostics);
+			coverage(group,check.coverage);
+			if(check.reason)group.createEl('p',{text:check.reason});
+			for(const item of matches){
+				const finding=group.createDiv({cls:'kb-v3-finding'});
+				badge(finding,item.severity);
+				const fileLocation=item.file?(item.line?`${item.file}:${item.line}`:item.file):'';
+				finding.createSpan({cls:'kb-v3-diagnostic-code',text:[item.code,fileLocation].filter(Boolean).join(' · ')});
+				finding.createEl('p',{text:item.message});
+				if(item.evidence)finding.createEl('p',{cls:'kb-v3-muted',text:typeof item.evidence==='string'? item.evidence:JSON.stringify(item.evidence)});
+				if(item.file)finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button'}}).addEventListener('click',()=>{
+					void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
+				});
+			}
+		}
+		if(!list.childElementCount)list.createEl('p',{cls:'kb-v3-muted',text:tr('没有符合筛选条件的诊断。','No diagnostics match the filter.')});
+	}
+	render();
+}
+
+function trustKey(plugin:KnowledgeBaseManager) {return plugin.manifest.id+':check-script-trust';}
+
+function trustedDigests(plugin:KnowledgeBaseManager):string[] {
+	const value:unknown=plugin.app.loadLocalStorage(trustKey(plugin));
+	return Array.isArray(value)?value.filter((digest:unknown):digest is string=>typeof digest==='string' && /^[a-f0-9]{64}$/u.test(digest)):[];
+}
+
+async function reviewScript(plugin:KnowledgeBaseManager,lib:Library,check:SpecialCheck,refresh:()=>Promise<void>) {
+	const file=await plugin.disk.path(lib.location+'/'+check.path);
+	const stat=await statIfPresent(file);
+	if(!stat?.isFile() || stat.size>1024*1024)throw new Error(tr('需要可读取的脚本文件（最多 1 MiB）。','Expected a readable script file of at most 1 MiB.'));
+	const bytes=await readFile(file);
+	const expected=digest(bytes);
+	if(expected!==check.digest)throw new Error(tr('脚本已变更，请重新检查。','The script changed. Review it again.'));
+	const dialog=new Dialog(plugin.app,tr('审查专项脚本','Review check script'));
+	dialog.modalEl.addClass('kb-v3-dialog');
+	dialog.facts([[tr('脚本','Script'),lib.location+'/'+check.path],['SHA-256',expected]]);
+	dialog.contentEl.createEl('p',{text:tr('信任仅适用于上面摘要对应的脚本。脚本以本机账号权限运行，可以读写文件和访问网络。','Trust applies to this script digest. The script runs with your account permissions and can access files and the network.')});
+	dialog.contentEl.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:new TextDecoder('utf-8',{fatal:true}).decode(bytes)});
+	dialog.action(tr('信任此版本','Trust this version'),async()=>{
+		const current=(await listSpecialChecks(await plugin.disk.path(lib.location))).checks.find(candidate=>candidate.id===check.id && candidate.path===check.path);
+		if(current?.digest!==expected)throw new Error(tr('脚本已变更，请重新检查。','The script changed. Review it again.'));
+		plugin.app.saveLocalStorage(trustKey(plugin),[...new Set([...trustedDigests(plugin),expected])]);
+		await refresh();dialog.close();
+	}).setCta();
+	dialog.open();
+}
+
+function showHistory(plugin:KnowledgeBaseManager,root:string,onReport:(report:Report)=>void) {
+	const dialog=new Dialog(plugin.app,tr('检验历史','Check history'));
+	dialog.modalEl.addClass('kb-v3-dialog');
+	return listDiagnosticHistory(root).then(history=>{
+		if(!history.length)dialog.contentEl.createEl('p',{text:tr('尚无检验日志。','No check logs yet.')});
+		for(const item of history){
+			const row=new Setting(dialog.contentEl).setName(item.startedAt).setDesc(item.logPath ?? item.runId);
+			badge(row.nameEl,item.status);
+			row.addButton(button=>button.setButtonText(tr('查看报告','View report')).onClick(()=>{onReport(item);dialog.close();}));
+		}
+		dialog.open();
+	});
+}
+
+export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
+	const dialog=new Dialog(plugin.app,tr('导出离线检验工具','Export offline check tool'));
+	let destination='kb-check.cjs';
+	dialog.text(tr('保存到（Vault 相对路径）','Save to (vault-relative)'),destination,value=>{destination=value;});
+	dialog.contentEl.createEl('pre').createEl('code',{text:'node kb-check.cjs --library "<library path>" --checks all'});
+	dialog.action(tr('导出','Export'),async()=>{
+		const relative=destination.trim();
+		if(!relative.endsWith('.cjs'))throw new Error(tr('使用 .cjs 扩展名。','Use the .cjs extension.'));
+		const output=await plugin.disk.path(relative);
+		const source=plugin.app.vault.configDir+'/plugins/'+plugin.manifest.id+'/kb-check.cjs';
+		const bytes=await plugin.app.vault.adapter.readBinary(source);
+		await writeFile(output,new Uint8Array(bytes),{flag:'wx'});
+		new Notice(tr('离线检验工具已导出','Offline check tool exported')+' · '+relative);
+		dialog.close();
+	}).setCta();
+	dialog.open();
+}
+
+export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
+	const root=await plugin.disk.path(lib.location);
+	const dialog=new Dialog(plugin.app,tr('检验知识库','Check library'));
+	dialog.modalEl.addClass('kb-v3-dialog','kb-v3-health');
+	dialog.facts([[tr('范围','Scope'),lib.location],[tr('模板','Template'),lib.identity?`${lib.identity.template.id} · ${lib.identity.template.version}`:tr('未知','Unknown')]]);
+	const output=dialog.contentEl.createDiv({cls:'kb-v3-check-output'});
+	const choices=dialog.contentEl.createDiv();
+	const actions=dialog.contentEl.createDiv({cls:'kb-v3-check-actions'});
+	const selected=new Set<string>();
+	const official=officialCheckDigests();
+	let running=false;
+	const controls:ButtonComponent[]=[];
+	const runSelected=dialog.action(tr('运行所选','Run selected'),()=>run([...selected])).setCta();
+	const runAll=dialog.action(tr('运行全部适用项','Run all applicable checks'),()=>run('all'));
+	const history=dialog.action(tr('查看历史','View history'),()=>showHistory(plugin,root,display));
+	const exportButton=dialog.action(tr('导出离线检验工具','Export offline check tool'),async()=>{exportDiagnosticRunner(plugin);});
+	function display(report:Report){reportView(output,report,plugin,lib);choices.hidden=true;update();}
+	const choose=dialog.action(tr('重新选检查项','Choose checks again'),async()=>{output.empty();choices.hidden=false;await renderChoices();});
+	for(const button of [runSelected,runAll,history,exportButton,choose]){
+		const row=button.buttonEl.closest('.setting-item');
+		if(row)actions.append(row);
+	}
+	function update(){
+		runSelected.setDisabled(running||!selected.size);
+		for(const button of [...controls,runAll,history,exportButton,choose])button.setDisabled(running);
+		choices.querySelectorAll('input').forEach(input=>{input.disabled=running;});
+		choose.buttonEl.hidden=!choices.hidden;
+		runSelected.buttonEl.hidden=choices.hidden;
+		runAll.buttonEl.hidden=choices.hidden;
+	}
+	async function renderChoices(){
+		choices.empty();controls.length=0;
+		const current=await listSpecialChecks(root);
+		for(const [label,items] of [[tr('通用检验','General checks'),[...generalChecks,portabilityCheck]],[tr('模板专项','Template checks'),current.checks]] as const){
+			choices.createEl('h3',{text:label});
+			if(!items.length)choices.createEl('p',{cls:'kb-v3-muted',text:current.reason || tr('没有已声明的专项检验。','No template checks declared.')});
+			for(const check of items){
+				const row=choices.createEl('label',{cls:'kb-v3-check-choice'});
+				const input=row.createEl('input',{type:'checkbox'});
+				input.checked=selected.has(check.id);
+				input.addEventListener('change',()=>{if(input.checked)selected.add(check.id);else selected.delete(check.id);update();});
+				const name='path' in check?check.name:checkName(check.id,check.name);
+				row.createSpan({text:name});
+				if('path' in check){
+					const spec=check;
+					const trusted=spec.digest && (official.includes(spec.digest) || trustedDigests(plugin).includes(spec.digest));
+					row.createSpan({cls:'kb-v3-muted',text:[spec.description ?? spec.path,spec.reason ?? (!trusted?tr('需信任此版本','Trust required'):tr('已信任','Trusted'))].filter(Boolean).join(' · ')});
+					if(spec.digest && !trusted){
+						const review=new ButtonComponent(choices).setButtonText(tr('审查脚本','Review script')).onClick(async()=>{
+							try {await reviewScript(plugin,lib,spec,renderChoices);}
+							catch(error){new Notice(String(error));}
+						});
+						review.buttonEl.addClass('kb-v3-script-review');controls.push(review);
+					}
+				} else if(check.id===portabilityCheck.id)row.createSpan({cls:'kb-v3-muted',text:tr('检查离开此 Vault 后可能失效的引用。仅手动选择时运行。','Look for references that may break outside this vault. Select to run.')});
+			}
+		}
+		update();
+	}
+	async function run(checks:readonly string[]|'all'){
+		if(running)return;
+		running=true;update();
+		output.empty();
+		output.createEl('p',{text:tr('正在检验…','Running checks…'),attr:{role:'status'}});
+		try{
+			const registry=await readVaultRegistry(plugin.disk).catch(()=>undefined);
+			const report=await runDiagnostics({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,
+				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,
+				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin)});
+			display(report);
+		} catch(error) {
+			output.empty();
+			throw error;
+		} finally {running=false;update();}
+	}
+	await renderChoices();
+	dialog.open();
+}

@@ -1,3 +1,4 @@
+import { TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { initialIdentityDefaults, initialMessage } from '../git/initial.ts';
 import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
@@ -10,6 +11,8 @@ import { assertGitEnabled } from './device.ts';
 import { Dialog } from './dialog.ts';
 import { reviewTemplateFilter } from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
+import { choiceForSource, pickTemplate, showTemplateDetails } from './v3-template-catalog.ts';
+import type { TemplateChoice } from './v3-template-catalog.ts';
 
 function identitySource(field:InitialIdentity['name']){
 	const sources={
@@ -28,9 +31,11 @@ function signatureFacts(identity:InitialIdentity){
 }
 
 function pathList(dialog:Dialog,title:string,paths:string[]){
-	dialog.contentEl.createEl('h3',{text:title});
-	if(paths.length)dialog.lines(paths);
-	else dialog.contentEl.createEl('p',{text:tr('无','None')});
+	if(!paths.length)return;
+	const detail=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+	detail.createEl('summary',{text:`${title} (${paths.length})`});
+	const list=detail.createEl('ul');
+	for(const item of paths)list.createEl('li',{text:item});
 }
 
 function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
@@ -46,16 +51,39 @@ function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
 	pathList(dialog,tr('复制到库内并由 Git 忽略','Copied into the library and ignored by Git'),git.ignored);
 }
 
-export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>){
+export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,source?:string){
 	assertGitEnabled(plugin);
+	if(source!==undefined){
+		const chosen=await choiceForSource(plugin,source);
+		if(chosen.invalid)throw new Error(chosen.invalid);
+		await createForm(plugin,refresh,chosen);
+		return;
+	}
+	await pickTemplate(plugin,template=>createForm(plugin,refresh,template));
+}
+
+async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,initial:TemplateChoice){
 	const {config,disk}=plugin;
 	const defaults=await initialIdentityDefaults();
 	const values={name:defaults.name.value,email:defaults.email.value};
 	let origin='';
-	const input={parent:config.parents[0]??'',name:'',displayName:'',description:'',source:''};
+	let template=initial;
+	const input={parent:config.parents[0]??'',name:'',displayName:'',description:'',source:template.source};
 	const form=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
+	form.modalEl.addClass('kb-v3-dialog');
+	const summary=form.contentEl.createEl('details',{cls:'kb-v3-detail'});
+	const chosen=summary.createEl('summary',{text:template.name});
+	const facts=summary.createDiv();
+	showTemplateDetails(facts,template);
+	form.action(tr('更换模板','Change template'),()=>pickTemplate(plugin,value=>{
+		template=value;
+		input.source=value.source;
+		chosen.setText(value.name);
+		facts.empty();
+		showTemplateDetails(facts,template);
+		return Promise.resolve();
+	},template));
 	form.choice(tr('父目录','Parent directory'),Object.fromEntries(config.parents.map(p=>[p,p])),v=>{input.parent=v;});
-	form.choice(tr('模板','Template'),{'':tr('融合 LLM Wiki','Integrated LLM Wiki'),[kepanoSource]:tr('Kepano（含示例）','Kepano (with examples)'),...Object.fromEntries(config.templates.map(p=>[p,p]))},v=>{input.source=v;});
 	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
 	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
 	form.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
@@ -88,6 +116,14 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		const success=new Dialog(plugin.app,tr('知识库已创建','Library created'));
 		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),'main · '+result.head.slice(0,7)],
 			[tr('提交说明','Commit message'),initialMessage],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
+		if(template.entry)success.action(tr('打开首页','Open home note'),async()=>{
+		const relative=result.location+'/'+template.entry;
+			await disk.path(relative);
+			const file=plugin.app.vault.getAbstractFileByPath(relative);
+			if(!(file instanceof TFile))throw new Error(tr('Obsidian 正在索引首页，请稍后重试。','Obsidian is indexing the home note. Try again shortly.'));
+			await plugin.app.workspace.getLeaf(false).openFile(file);
+			success.close();
+		}).setCta();
 		success.action(tr('完成','Done'),async()=>{success.close();});
 		success.open();
 		await refresh();
@@ -99,7 +135,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		const preview=await previewCreate(disk,plugin.config,{...input,displayName:input.displayName||input.name,git:{defaults,values:{...values},origin}},skeleton);
 		const {git}=preview;
 		const confirm=new Dialog(plugin.app,tr('确认创建','Confirm creation'));
-		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),preview.template.id]]);
+		confirm.modalEl.addClass('kb-v3-dialog');
+		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version]]);
+		showTemplateDetails(confirm.contentEl,template);
 		if(preview.warnings.length)confirm.lines(preview.warnings);
 		showInitialPlan(confirm,git);
 		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
@@ -108,8 +146,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		const registry=await reviewRegistryProtection(plugin,confirm);
 		const filter=await reviewTemplateFilter(plugin.app.vault,confirm,preview.input.source);
 		const protect=async()=>{await filter();await registry();};
-		confirm.action(tr('创建','Create'),()=>run(confirm,()=>plugin.exclusiveGit(preview.location,()=>createLibrary(disk,plugin.config,preview,skeleton,protect))));
+		confirm.action(tr('创建','Create'),()=>run(confirm,()=>plugin.exclusiveGit(preview.location,()=>createLibrary(disk,plugin.config,preview,skeleton,protect)))).setCta();
 		confirm.open();
-	});
+	}).setCta();
 	form.open();
 }

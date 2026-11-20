@@ -11,6 +11,7 @@ import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
 import { editRepositoryIdentity } from './ui/repository-identity.ts';
 import { Dialog } from './ui/dialog.ts';
 import { addTextField } from './ui/text-field.ts';
+import { makeTemplateWizard } from './ui/v3-template-author.ts';
 
 const categories = {
 	folders: ['知识库目录与模板', 'Library folders and templates'],
@@ -295,12 +296,21 @@ class SettingsPages {
 	private folders() {
 		const {plugin,el} = this;
 		const draft = {parents:[...plugin.config.parents],templates:[...plugin.config.templates]};
+		let templateInput:HTMLTextAreaElement|null=null;
 		for (const [field,label,desc] of [
 			['parents',['知识库父目录','Library parent folders'],['每行一个 Vault 相对路径，首行是创建知识库的默认位置。','One vault-relative path per line. New libraries default to the first folder.']],
 			['templates',['目录模板','Folder templates'],['每行一个模板目录的 Vault 相对路径。','One vault-relative template folder per line.']],
-		] as const) addTextField(new Setting(el).setName(plugin.t(label[0],label[1])).setDesc(plugin.t(desc[0],desc[1])),draft[field].join('\n'),s => {
-				draft[field] = s.split('\n').map(line => line.trim()).filter(Boolean);
-			},{example:field==='parents'?'knowledge-base':'templates/wiki'},true);
+		] as const){
+			const row=new Setting(el).setName(plugin.t(label[0],label[1])).setDesc(plugin.t(desc[0],desc[1]));
+			addTextField(row,draft[field].join('\n'),s=>{draft[field]=s.split('\n').map(line=>line.trim()).filter(Boolean);},
+				{example:field==='parents'?'knowledge-base':'templates/wiki'},true);
+			if(field==='templates')templateInput=row.controlEl.querySelector('textarea');
+		}
+		new Setting(el).setName(plugin.t('制作模板','Make a template'))
+			.addButton(button=>button.setButtonText(plugin.t('打开向导','Open wizard')).onClick(()=>makeTemplateWizard(plugin,source=>{
+				if(!draft.templates.includes(source))draft.templates.push(source);
+				if(templateInput)templateInput.value=draft.templates.join('\n');
+			})));
 		this.save(async () => {
 			validateFolders(plugin.disk,draft.parents,draft.templates);
 			for (const name of [...draft.parents,...draft.templates]) await plugin.disk.path(name);

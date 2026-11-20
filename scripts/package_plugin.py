@@ -7,16 +7,25 @@ ROOT = Path(__file__).resolve().parents[1]
 manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
 metadata = json.loads((ROOT / "dist/build-inputs.json").read_text(encoding="utf-8"))
 allowed = {"obsidian", "@codemirror/view", "@codemirror/state", "crypto", "buffer", "process", "node:fs", "node:fs/promises",
-           "node:child_process", "node:https", "node:http", "node:os", "node:path", "node:crypto", "node:timers/promises"}
+           "node:child_process", "node:https", "node:http", "node:os", "node:path", "node:crypto", "node:timers/promises", "node:timers"}
 unexpected = {item["path"] for item in metadata["outputs"]["main.js"]["imports"]} - allowed
 if unexpected:
     raise ValueError(f"Unverified runtime dependencies: {unexpected}")
 if any(name.startswith("references/") for name in metadata["inputs"]):
     raise ValueError("Reference submodule included in bundle")
-notices = [(ROOT / "assets/llm-wiki/LICENSES.md").read_text(encoding="utf-8")]
+catalog = ROOT / "assets/templates"
+notices = []
+for path in sorted(catalog.glob("*/*/kb-template.json")):
+    spec = json.loads(path.read_text(encoding="utf-8"))
+    notices.append("## " + spec["name"] + "\n\n" + "\n".join(
+        f'- {src["author"]} · {src["url"]} · {src["commit"]} · {src["license"]}' for src in spec["sources"]))
+    for doc in sorted(path.parent.glob("LICENSE*")):
+        notices.append(doc.read_text(encoding="utf-8"))
+cli = json.loads((ROOT / "dist/cli-build-inputs.json").read_text(encoding="utf-8"))
+
 notices.append((ROOT / "assets/licenses/obsidian-git.txt").read_text(encoding="utf-8"))
 packages = set()
-for name in metadata["inputs"]:
+for name in set(metadata["inputs"]) | set(cli["inputs"]):
     if not name.startswith("node_modules/"):
         continue
     directory = (ROOT / name).parent
@@ -48,6 +57,7 @@ for directory in sorted(packages):
                    "\n\n".join(p.read_text(encoding="utf-8-sig") for p in licenses))
 
 files = {name: (ROOT / name).read_bytes() for name in ["main.js", "manifest.json", "LICENSE"]}
+files["kb-check.cjs"] = (ROOT / "dist/kb-check.cjs").read_bytes()
 if (ROOT / "styles.css").is_file():
     files["styles.css"] = (ROOT / "styles.css").read_bytes()
 files["THIRD_PARTY_NOTICES.md"] = "\n\n".join(notices).encode()

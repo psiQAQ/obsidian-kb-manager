@@ -30,14 +30,13 @@ import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
 
-declare const KB_BUILTIN: Record<string,string>;
-declare const KB_KEPANO: Record<string,string>;
+import {packText} from './kb/template-pack.ts';
 
 export default class KnowledgeBaseManager extends Plugin {
 	disk!: VaultDisk;
 	config!: Config;
-	readonly skeleton=KB_BUILTIN;
-	readonly kepanoSkeleton=KB_KEPANO;
+	readonly skeleton=packText('llm-wiki');
+	readonly kepanoSkeleton=packText('kepano');
 	templateAssets(lib:Library){return isKepano(lib.identity?.template)?this.kepanoSkeleton:this.skeleton;}
 	readonly t = tr;
 	prefs = readPreferences(undefined);
@@ -222,6 +221,14 @@ export default class KnowledgeBaseManager extends Plugin {
 			await right.setViewState({type:managerType});
 		}
 		await workspace.revealLeaf(right);
+		await right.loadIfDeferred();
+		if(!(right.view instanceof ManagerView) && right.getViewState().type===managerType){
+			// A plugin reload can leave the old constructor attached to this library sidebar.
+			const state=right.getViewState();
+			await right.setViewState({type:'empty'});
+			await right.setViewState(state);
+			await right.loadIfDeferred();
+		}
 		if(!(right.view instanceof ManagerView))throw new Error('Manager unavailable');
 		for(const item of old)if(item!==right)item.detach();
 		return right.view;

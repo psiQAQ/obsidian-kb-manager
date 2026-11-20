@@ -1,8 +1,9 @@
+import { templateCatalog } from './scripts/template-catalog.mjs';
 import esbuild from 'esbuild';
 import esbuildSvelte from 'esbuild-svelte';
 import process from 'process';
-import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const upstreamLicense = readFileSync(new URL('./assets/licenses/obsidian-git.txt', import.meta.url), 'utf8');
@@ -16,65 +17,8 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === 'production';
 
-const skeletonPaths = [
-  ".gitignore",
-  "AGENTS.md",
-  "Clippings/.gitkeep",
-  "LICENSES.md",
-  "Notes/.gitkeep",
-  "README.md",
-  "kb.toml",
-  "knowledge.base",
-  "raw/.gitkeep",
-  "reports/.gitkeep",
-  "Templates/Bases/分类专用模板.base",
-  "Templates/人工笔记模板.md",
-  "Templates/分类入口模板.md",
-  "Templates/归档模板.md",
-  "Templates/操作日志模板.md",
-  "Templates/新来源模板.md",
-  "Templates/知识页面模板.md",
-  "Templates/资料摘要模板.md",
-  "wiki/index.md",
-  "wiki/log.md",
-  "wiki/logs/.gitkeep",
-  "wiki/overview.md"
-];
-
-function inspectSkeleton(relative = '') {
-	const dir = new URL('./assets/llm-wiki/' + relative, import.meta.url);
-	for (const entry of readdirSync(dir, { withFileTypes: true })) {
-		const name = relative + entry.name;
-		if (entry.isDirectory() && skeletonPaths.some(file => file.startsWith(name + '/'))) {
-			inspectSkeleton(name + '/');
-		} else if (!entry.isFile() || !skeletonPaths.includes(name)) {
-			throw new Error('Unexpected built-in template resource: ' + name);
-		}
-	}
-}
-inspectSkeleton();
-// Obsidian saves Markdown with LF regardless of the build machine's Git checkout settings.
-function bundledText(file, name) {
-	const text = readFileSync(file, 'utf8');
-	return name.endsWith('.md') ? text.replace(/\r\n/g, '\n') : text;
-}
-const skeleton = skeletonPaths.map(name => [name, bundledText(new URL('./assets/llm-wiki/' + name, import.meta.url), name)]);
-
-function readKepano(relative = '') {
-	const root = fileURLToPath(new URL('./assets/kepano/', import.meta.url));
-	const files = [];
-	for (const entry of readdirSync(join(root,relative), {withFileTypes: true})) {
-		const name = relative + entry.name;
-		if (entry.isDirectory() && !entry.name.startsWith('.')) {
-			files.push(...readKepano(name + '/'));
-		} else if (entry.isFile() && (/\.(?:md|base)$/iu.test(entry.name) || entry.name === '.gitkeep')) {
-			files.push([name, bundledText(join(root,name), name)]);
-		} else {
-			throw new Error('Unexpected Kepano template resource: ' + name);
-		}
-	}
-	return files;
-}
+const {packs,digests}=templateCatalog(fileURLToPath(new URL('./assets/templates/',import.meta.url)));
+const defines={KB_TEMPLATE_PACKS:JSON.stringify(packs),KB_CHECK_DIGESTS:JSON.stringify(digests)};
 
 const context = await esbuild.context({
 	banner: {
@@ -101,10 +45,7 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 		}},
 	],
 	metafile: prod,
-	define: {
-		KB_BUILTIN: JSON.stringify(Object.fromEntries(skeleton)),
-		KB_KEPANO: JSON.stringify(Object.fromEntries(readKepano())),
-	},
+	define: defines,
 	external: [
 		'obsidian',
 		'electron',
@@ -132,6 +73,8 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 
 if (prod) {
 	const result = await context.rebuild();
+	const cli=await esbuild.build({entryPoints:['src/diagnostics/cli.ts'],bundle:true,platform:'node',target:'node20',format:'cjs',outfile:'dist/kb-check.cjs',define:{KB_CHECK_DIGESTS:JSON.stringify(digests)},metafile:true,minify:true});
+	writeFileSync('dist/cli-build-inputs.json',JSON.stringify(cli.metafile));
 	mkdirSync('dist', { recursive: true });
 	writeFileSync('dist/build-inputs.json', JSON.stringify(result.metafile));
 	process.exit(0);

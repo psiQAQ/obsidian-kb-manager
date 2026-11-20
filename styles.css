@@ -92,3 +92,119 @@
 
 /* Obsidian Git also decorates conflict markers in nested repositories. */
 .cm-line:has(.kb-conflict-controls) .git-conflict-actions-widget { display: none; }
+
+.kb-v3-dialog { width: min(43rem, calc(100% - 2rem)); }
+.modal-container:has(> .kb-v3-dialog):has(~ .modal-container > .kb-v3-dialog) { visibility: hidden; }
+.kb-v3-dialog h3 { margin: var(--size-4-4) 0 var(--size-4-2); }
+.kb-v3-template-list {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--size-4-2);
+	margin-block: var(--size-4-3);
+}
+.kb-v3-template-list > p { grid-column: 1 / -1; }
+.kb-v3-dialog .kb-v3-template-card {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: flex-start;
+	gap: var(--size-4-1);
+	height: auto;
+	min-block-size: calc(2 * var(--input-height));
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	box-shadow: none;
+	text-align: start;
+	white-space: normal;
+}
+.kb-v3-dialog .kb-v3-template-card:hover { background: var(--background-modifier-hover); }
+.kb-v3-dialog .kb-v3-template-card[aria-pressed="true"] {
+	border-color: var(--interactive-accent);
+	box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+.kb-v3-template-name { font-weight: var(--font-semibold); }
+.kb-v3-muted { color: var(--text-muted); font-size: var(--font-ui-small); }
+.kb-v3-template-details {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--size-4-1) var(--size-4-3);
+	margin-block: var(--size-4-3);
+	font-size: var(--font-ui-small);
+}
+.kb-v3-template-details dt { color: var(--text-muted); }
+.kb-v3-template-details dd { margin: 0; }
+.kb-v3-detail {
+	margin-block: var(--size-4-2);
+	padding: var(--size-4-2) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+}
+.kb-v3-detail summary { cursor: pointer; font-weight: var(--font-medium); }
+.kb-v3-detail summary > .kb-v3-status { margin-inline-start: var(--size-4-2); }
+.kb-v3-status {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	padding: 2px var(--size-4-2);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.4;
+}
+.kb-v3-status svg { width: 14px; height: 14px; display: block; }
+.kb-v3-status-passed { color: var(--text-success); }
+.kb-v3-status-error { color: var(--text-error); }
+.kb-v3-status-warning { color: var(--text-warning); }
+.kb-v3-status-info { color: var(--color-blue); }
+.kb-v3-status-partial { color: var(--color-purple); }
+.kb-v3-coverage {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-block: var(--size-4-2);
+}
+.kb-v3-coverage > div {
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-1);
+	background: var(--background-secondary);
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+.kb-v3-coverage > div > span { color: var(--text-muted); }
+.kb-v3-report-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
+.kb-v3-report-heading h3 { margin: 0; }
+.kb-v3-finding {
+	padding-block: var(--size-4-2);
+	border-block-start: 1px solid var(--background-modifier-border);
+}
+.kb-v3-finding p { margin-block: var(--size-4-1); }
+.kb-v3-diagnostic-code { margin-inline-start: var(--size-4-2); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+.kb-v3-check-choice {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	column-gap: var(--size-4-2);
+	align-items: baseline;
+	padding: var(--size-4-1) 0;
+}
+.kb-v3-check-choice input { margin: 0; }
+.kb-v3-check-choice > .kb-v3-muted { grid-column: 2; }
+.kb-v3-script-review { margin-inline-start: var(--size-4-5); }
+.kb-v3-check-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-block-start: var(--size-4-4);
+}
+.kb-v3-check-actions .setting-item { border: 0; padding: 0; }
+.kb-v3-check-actions .setting-item:has(button[hidden]),
+.kb-v3-check-actions .setting-item-info { display: none; }
+.kb-v3-dialog .kb-v3-code { max-block-size: 30vh; }
+
+@container (max-width: 30rem) {
+	.kb-v3-template-list { grid-template-columns: minmax(0, 1fr); }
+}

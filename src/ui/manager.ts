@@ -8,13 +8,15 @@ import { discover } from '../kb/catalog.ts';
 import { adopt, legacyBinding, adoptionWarnings } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
 import { createWizard } from './create.ts';
-import { edit,health,move,resumeMove } from './maintain.ts';
+import { edit,maintainBindings,move,resumeMove,upgradeManifest } from './maintain.ts';
 import { sourcePanel } from './source.ts';
 import { networkPanel } from './network.ts';
 import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
 import { Dialog } from './dialog.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
+import { builtinPacks } from '../kb/template-pack.ts';
+import { checkLibrary } from './v3-health.ts';
 
 export const managerType='knowledge-base-manager-view';
 export class ManagerView extends ItemView {
@@ -82,7 +84,8 @@ export class ManagerView extends ItemView {
 				}));
 			return;
 		}
-		const detail=[lib.location,lib.identity?.template.id ?? tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
+		const template=builtinPacks().find(pack=>pack.id===lib.identity?.template.id);
+		const detail=[lib.location,template?.name ?? lib.identity?.template.id ?? tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(this.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
@@ -97,7 +100,7 @@ export class ManagerView extends ItemView {
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
 			this.contentEl.createDiv({cls:'kb-library-git',text:reason});
 		}
-		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('体检',"Check library")).onClick(()=>{try{health(this.plugin,lib);}catch(error){new Notice(String(error));}}));
+		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('检验',"Check library")).onClick(async()=>{try{await checkLibrary(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(lib.problem){
 			row.addButton(b=>b.setButtonText(tr('移除登记','Remove')).onClick(async()=>{
 				try{await removeRegistryEntry(this.plugin,lib.location);}catch(error){new Notice(String(error));}
@@ -140,7 +143,9 @@ export class ManagerView extends ItemView {
 			action(tr('本库 Git 设置','Library Git settings'),'settings',()=>librarySettings(this.plugin,lib));
 			action(tr('编辑','Edit'),'pencil',()=>edit(this.plugin,lib));
 			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib));
-			action(tr('体检','Check library'),'activity',()=>health(this.plugin,lib));
+			action(tr('检验','Check library'),'activity',()=>checkLibrary(this.plugin,lib));
+			action(tr('维护受管文件','Maintain managed files'),'file-cog',()=>maintainBindings(this.plugin,lib));
+			if(lib.identity?.schemaVersion===1 && !lib.identity.archived)action(tr('预览清单升级','Preview manifest upgrade'),'file-up',()=>upgradeManifest(this.plugin,lib));
 			action(tr('预览登记及路径绑定','Preview registration and bindings'),'map-pin',()=>showImportPreview(this.plugin,lib.location));
 			action(tr('移除登记','Remove registration'),'list-x',()=>removeRegistryEntry(this.plugin,lib.location));
 			const bounds=button.extraSettingsEl.getBoundingClientRect();

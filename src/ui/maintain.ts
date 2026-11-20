@@ -1,19 +1,58 @@
 import { tr } from '../i18n.ts';
-import { Notice, Setting, TFile } from 'obsidian';
-import type { ButtonComponent, ToggleComponent } from 'obsidian';
+import { Setting, TFile } from 'obsidian';
+import { mkdir, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type KnowledgeBaseManager from '../main.ts';
-import { digest } from '../fs/vault.ts';
-import { discover, recheck } from '../kb/catalog.ts';
+import { digest, key, statIfPresent } from '../fs/vault.ts';
+import { identityFile, inspect, parseIdentity, recheck, writeIdentity } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
-import { applyRepair } from '../kb/maintenance.ts';
-import type { Repair, VisibleFiles } from '../kb/maintenance.ts';
+import { readManifestFile, replaceLibraryManifest } from '../kb/manifest-disk.ts';
+import { applyRepair, examineBindings } from '../kb/maintenance.ts';
+import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { changeIdentity } from './identity.ts';
-import { createAuditSession } from '../kb/audit.ts';
-import { auditChecks } from '../kb/audit-types.ts';
-import type { AuditCheck, AuditResult } from '../kb/audit-types.ts';
 import { Dialog } from './dialog.ts';
+import { applyLibraryIgnores, previewLibraryIgnores } from '../registry/desktop.ts';
+
+async function logLocation(plugin:KnowledgeBaseManager,location:string) {
+	const root=await plugin.disk.path(location);
+	if((await readdir(root)).some(name=>name!=='.log' && key(name)==='.log'))throw new Error(tr('已有同名日志位置。','A conflicting log path already exists.'));
+	const path=join(root,'.log'),stat=await statIfPresent(path);
+	if(stat && !stat.isDirectory())throw new Error(tr('日志位置须为普通目录。','The log location must be a regular directory.'));
+	return {path,exists:!!stat};
+}
+
+export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library) {
+	if(lib.identity?.schemaVersion!==1 || lib.identity.archived || lib.duplicate || lib.problem)return;
+	const relative=lib.location+'/'+identityFile;
+	const {raw,signature}=await readManifestFile(await plugin.disk.path(relative));
+	const current=parseIdentity(raw);
+	if(signature!==lib.signature || current.schemaVersion!==1)throw new Error(tr('清单已变化，请刷新。','The manifest changed. Refresh the library list.'));
+	const updated=writeIdentity(raw,{...current,schemaVersion:2});
+	if(parseIdentity(updated).schemaVersion!==2)throw new Error(tr('无法预览清单升级。','Could not preview the manifest upgrade.'));
+	const ignores=await previewLibraryIgnores(plugin.disk,lib.location);
+	const log=await logLocation(plugin,lib.location);
+	const dialog=new Dialog(plugin.app,tr('升级知识库清单','Upgrade library manifest'));
+	dialog.facts([[tr('文件','File'),relative],[tr('清单格式','Manifest schema'),'1 → 2'],[tr('知识库 ID','Library ID'),current.id]]);
+	dialog.contentEl.createEl('p',{text:log.exists?tr('使用现有的 .log/ 目录保存检验日志。','Use the existing .log/ directory for check logs.'):tr('创建 .log/ 目录以保存检验日志。','Create .log/ for check logs.')});
+	if(ignores.before!==ignores.after){
+		dialog.contentEl.createEl('p',{text:tr('在本库 .gitignore 末尾追加规则','Append rules to this library’s .gitignore')});
+		dialog.contentEl.createEl('pre').createEl('code',{text:ignores.after.slice(ignores.before?.length ?? 0).trim()});
+	}
+	dialog.action(tr('应用清单升级','Apply manifest upgrade'),async()=>{
+		await plugin.exclusive(lib.location,async()=>{
+			await recheck(plugin.disk,plugin.config,lib);
+			const target=await logLocation(plugin,lib.location);
+			if(target.path!==log.path || target.exists!==log.exists)throw new Error(tr('日志位置已变化，请重新预览。','The log location changed. Preview again.'));
+			await applyLibraryIgnores(plugin.disk,ignores);
+			if(!target.exists)await mkdir(target.path);
+			await replaceLibraryManifest(plugin.disk,lib.location,signature,updated);
+		});
+		dialog.close();await plugin.refresh();
+	}).setCta();
+	dialog.open();
+}
 
 export function visible(plugin:KnowledgeBaseManager):VisibleFiles {
 	const vault=plugin.app.vault;
@@ -56,138 +95,30 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 	dialog.open();
 }
 
-const auditLabels:Record<AuditCheck,()=>string>={
-	identity:()=>tr('身份与目录','Identity and folders'),
-	properties:()=>tr('属性','Properties'),
-	links:()=>tr('链接与嵌入','Links and embeds'),
-	index:()=>tr('索引覆盖','Index coverage'),
-	ingestion:()=>tr('来源与摄入','Sources and ingestion'),
-	bindings:()=>tr('Base 与受管绑定','Bases and managed bindings'),
-};
-const auditPurpose:Record<AuditCheck,()=>string>={
-	identity:()=>tr('核对库身份、入口和映射位置','Check library identity, its entry and mapped paths'),
-	properties:()=>tr('检查 YAML 及知识页或操作记录的属性','Check YAML, knowledge page and operation properties'),
-	links:()=>tr('检查本库链接、嵌入、标题和块引用','Check library links, embeds, headings and block references'),
-	index:()=>tr('按目录映射核对知识页是否收录','Use the path mapping to check index coverage'),
-	ingestion:()=>tr('核对来源引用、原文和摄入记录','Check source references, raw material and ingestion records'),
-	bindings:()=>tr('检查 Base 配置及清单声明的受管文件','Check Base configuration and manifest-managed files'),
-};
-
-export function health(plugin:KnowledgeBaseManager,lib:Library){
-	const dialog=new Dialog(plugin.app,tr('知识库体检',"Check library"));
-	dialog.contentEl.createEl('p',{text:lib.location});
-	const selected=new Set<AuditCheck>();
-	const toggles=new Map<AuditCheck,ToggleComponent>();
-	const runButtons:ButtonComponent[]=[];
-	const results=new Map<AuditCheck,AuditResult>();
-	let current=lib,running=false;
-	const selectAll=new Setting(dialog.contentEl).setName(tr('全选','Select all'));
-	let allToggle:ToggleComponent;
-	selectAll.addToggle(toggle=>{
-		allToggle=toggle;
-		toggle.toggleEl.setAttribute('aria-label',tr('全选','Select all'));
-		toggle.onChange(value=>{
-			selected.clear();
-			if(value)for(const check of auditChecks)selected.add(check);
-			for(const component of toggles.values())component.setValue(value);
-			updateControls();
-		});
-	});
-	const descriptions=new Map<AuditCheck,Setting>();
-	function describe(check:AuditCheck,status:string){
-		descriptions.get(check)?.setDesc(auditPurpose[check]()+' · '+status);
-	}
-	for(const check of auditChecks){
-		const row=new Setting(dialog.contentEl).setName(auditLabels[check]());
-		descriptions.set(check,row);
-		describe(check,tr('尚未运行','Not run'));
-		row.addToggle(toggle=>{
-			toggles.set(check,toggle);
-			toggle.toggleEl.setAttribute('aria-label',auditLabels[check]());
-			toggle.onChange(value=>{
-				if(value)selected.add(check);else selected.delete(check);
-				updateControls();
+export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library) {
+	const library=await recheck(plugin.disk,plugin.config,lib);
+	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library));
+	const dialog=new Dialog(plugin.app,tr('维护受管文件','Maintain managed files'));
+	dialog.facts([[tr('知识库','Library'),library.location]]);
+	if(manual.length)dialog.lines(manual);
+	if(!manual.length && !repairs.length)dialog.contentEl.createEl('p',{text:tr('没有需要维护的受管文件。','No managed files require maintenance.')});
+	for(const item of repairs){
+		new Setting(dialog.contentEl).setName(item.file).setDesc(item.fields.join('\n')).addButton(button=>{
+			button.setButtonText(tr('预览修复','Preview repair')).onClick(()=>{
+				const preview=new Dialog(plugin.app,tr('预览受管文件修复','Preview managed file repair'));
+				preview.lines([library.location+'/'+item.file,...item.fields]);
+				preview.contentEl.createEl('pre').createEl('code',{text:item.after});
+				if(!library.identity?.archived)preview.action(tr('应用此修复','Apply this repair'),async()=>{
+					await plugin.exclusive(library.location,()=>applyRepair(plugin.disk,plugin.config,library,item,visible(plugin),plugin.templateAssets(library)));
+					preview.close();dialog.close();
+					await plugin.refresh();
+					const fresh=await inspect(plugin.disk,library.location);
+					if(fresh)await maintainBindings(plugin,fresh);
+				}).setCta();
+				preview.open();
 			});
 		});
-		row.addButton(button=>{
-			runButtons.push(button);
-			button.setButtonText(tr('运行此项','Run this check')).onClick(()=>runChecks([check]));
-		});
 	}
-	const actions=new Setting(dialog.contentEl);
-	let selectedButton:ButtonComponent;
-	actions.addButton(button=>{
-		selectedButton=button;
-		button.setButtonText(tr('运行所选检查','Run selected checks')).setCta().onClick(()=>runChecks([...selected]));
-	}).addButton(button=>{
-		runButtons.push(button);
-		button.setButtonText(tr('运行全部适用项','Run all applicable checks')).onClick(()=>runChecks(auditChecks));
-	});
-	const output=dialog.contentEl.createDiv();
-	function updateControls(){
-		allToggle.setValue(selected.size===auditChecks.length).setDisabled(running);
-		for(const toggle of toggles.values())toggle.setDisabled(running);
-		for(const button of runButtons)button.setDisabled(running);
-		selectedButton.setDisabled(running || !selected.size);
-	}
-	function renderResults(){
-		output.empty();
-		for(const check of auditChecks){
-			const result=results.get(check);
-			if(!result)continue;
-			const {findings,repairs,reason,details}=result;
-			const findingStatus=findings.some(f=>f.level==='error') ? tr('有错误','Errors found') : tr('需复核','Needs review');
-			const status={clean:tr('通过','Passed'),findings:findingStatus,failed:tr('未能完成','Could not complete'),
-				'not-applicable':tr('不适用','Not applicable')}[result.status];
-			describe(check,status);
-			if(!findings.length && !repairs.length && !reason && !details?.length)continue;
-			const detail=output.createEl('details');
-			detail.createEl('summary',{text:auditLabels[check]()+' · '+status});
-			if(reason)detail.createEl('p',{text:reason});
-			if(details)for(const line of details)detail.createEl('p',{text:line});
-			if(findings.length){
-				const list=detail.createEl('ul');
-				for(const f of findings)list.createEl('li',{text:[f.level==='error'?tr('错误','Error'):tr('需复核','Review'),f.file,f.message].filter(Boolean).join(' · ')});
-			}
-			for(const item of repairs){
-				const row=new Setting(detail).setName(item.file).setDesc(item.fields.join('\n'));
-				row.addButton(b=>b.setButtonText(tr('预览修复','Preview repair')).onClick(()=>previewRepair(item)));
-			}
-		}
-	}
-	async function runChecks(checks:readonly AuditCheck[]){
-		if(running)return;
-		running=true;
-		updateControls();
-		for(const check of checks)describe(check,tr('进行中','Running'));
-		try {
-			if(!current.problem && !current.duplicate && !current.missing)current=await recheck(plugin.disk,plugin.config,current);
-			const session=createAuditSession(plugin.disk,current,()=>plugin.templateAssets(current));
-			for(const result of await session.run(checks))results.set(result.check,result);
-		}catch(error){
-			for(const check of checks)results.set(check,{check,status:'failed',findings:[],repairs:[],reason:String(error)});
-			new Notice(String(error),8000);
-		}finally{
-			running=false;
-			updateControls();
-			renderResults();
-		}
-	}
-	function previewRepair(item:Repair){
-		const library=current;
-		const preview=new Dialog(plugin.app,tr('预览受管文件修复','Preview managed file repair'));
-		preview.lines([library.location+'/'+item.file,...item.fields]);
-		preview.contentEl.createEl('pre').createEl('code',{text:item.after});
-		if(!library.identity?.archived)preview.action(tr('应用此修复','Apply this repair'),async()=>{
-			await plugin.exclusive(library.location,()=>applyRepair(plugin.disk,plugin.config,library,item,visible(plugin),plugin.templateAssets(library)));
-			preview.close();
-			const fresh=(await discover(plugin.disk,plugin.config)).find(l=>l.location===library.location);
-			if(fresh){current=fresh;await runChecks(['bindings']);}
-			await plugin.refresh();
-		});
-		preview.open();
-	}
-	updateControls();
 	dialog.open();
 }
 
