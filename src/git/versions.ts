@@ -26,8 +26,17 @@ export async function previewVersion(dir:string,ownLocks:ReadonlySet<string>=new
 		statIfPresent(index).then(async s=>s?digest(await fs.readFile(index)):''),
 	]);
 	const files=new Map<string,Change>();
-	for(const record of fields(status.stdout)){
-		const x=record[0],y=record[1],file=record.slice(3);
+	const records=fields(status.stdout);
+	// Porcelain can report a stat-only M after an editor saves a CRLF file as LF.
+	// Ask Git for the actual index-to-worktree diff, keeping staged changes separate.
+	const modified=records.some(record=>record[1]==='M')
+		? new Set(fields((await gitResult(dir,['diff','--numstat','-z','--no-renames','--no-ext-diff','--no-textconv','--'])).stdout)
+			.map(line=>line.slice(line.indexOf('\t',line.indexOf('\t')+1)+1)))
+		: undefined;
+	for(const record of records){
+		const x=record[0],file=record.slice(3);
+		const y=record[1]==='M' && !modified?.has(file)?' ':record[1];
+		if(x===' ' && y===' ')continue;
 		if(path.win32.isAbsolute(file) || /[\\:\0]/u.test(file) || file.split('/').some(p=>!p || p==='.' || p==='..' || p.toLowerCase()==='.git'))
 			throw new Error(tr('Git 返回了不安全的文件名','Git returned an unsafe path'));
 		if(x==='?' && y==='?'){

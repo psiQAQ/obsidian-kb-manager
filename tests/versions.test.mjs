@@ -56,3 +56,27 @@ test('native Git interoperates with previews, partially staged bytes, delete and
 	await assert.rejects(previewVersion(dir),/index.lock/);
 	assert.equal((await history(dir)).entries.length,3);
 });
+
+test('CRLF editor saves do not create worktree changes or conceal partial staging',async t=>{
+ const dir=await fs.mkdtemp(path.resolve('.tmp','editor-eol-'));
+ t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+ const run=(...args)=>execFileSync('git',['-C',dir,...args]);
+ await initializeRepository(dir);
+ const config=path.join(dir,'.git','qa-global-config');
+ // The guard allows the user's global autocrlf setting while isolating this fixture.
+ const previous=process.env.GIT_CONFIG_GLOBAL;
+ process.env.GIT_CONFIG_GLOBAL=config;
+ t.after(()=>{if(previous===undefined)delete process.env.GIT_CONFIG_GLOBAL;else process.env.GIT_CONFIG_GLOBAL=previous;});
+ run('config','--global','core.autocrlf','true');
+ const file=path.join(dir,'note.md');
+ await fs.writeFile(file,'one\r\n');run('add','note.md');run('-c','user.name=QA','-c','user.email=qa@example.invalid','commit','-qm','first');
+ await fs.writeFile(file,'one\n');
+ assert.match(run('--no-optional-locks','status','--porcelain').toString(),/ M note\.md/);
+ assert.deepEqual((await previewVersion(dir)).changes,[]);
+ await fs.writeFile(file,'two\r\n');run('add','note.md');
+ await fs.writeFile(file,'two\n');
+ const [staged]=(await previewVersion(dir)).changes;
+ assert.notEqual(staged.head,staged.stage);assert.equal(staged.work,staged.stage);
+ await fs.writeFile(file,'three\n');
+ const [both]=(await previewVersion(dir)).changes;assert.notEqual(both.work,both.stage);
+});

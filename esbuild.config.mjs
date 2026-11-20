@@ -53,7 +53,12 @@ function inspectSkeleton(relative = '') {
 	}
 }
 inspectSkeleton();
-const skeleton = skeletonPaths.map(name => [name, readFileSync(new URL('./assets/llm-wiki/' + name, import.meta.url), 'utf8')]);
+// Obsidian saves Markdown with LF regardless of the build machine's Git checkout settings.
+function bundledText(file, name) {
+	const text = readFileSync(file, 'utf8');
+	return name.endsWith('.md') ? text.replace(/\r\n/g, '\n') : text;
+}
+const skeleton = skeletonPaths.map(name => [name, bundledText(new URL('./assets/llm-wiki/' + name, import.meta.url), name)]);
 
 function readKepano(relative = '') {
 	const root = fileURLToPath(new URL('./assets/kepano/', import.meta.url));
@@ -63,7 +68,7 @@ function readKepano(relative = '') {
 		if (entry.isDirectory() && !entry.name.startsWith('.')) {
 			files.push(...readKepano(name + '/'));
 		} else if (entry.isFile() && (/\.(?:md|base)$/iu.test(entry.name) || entry.name === '.gitkeep')) {
-			files.push([name, readFileSync(join(root,name),'utf8')]);
+			files.push([name, bundledText(join(root,name), name)]);
 		} else {
 			throw new Error('Unexpected Kepano template resource: ' + name);
 		}
