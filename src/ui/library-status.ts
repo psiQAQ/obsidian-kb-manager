@@ -12,11 +12,11 @@ export function attachLibraryStatus(plugin:KnowledgeBaseManager){
 		const generation=++request;
 		window.clearTimeout(timer);
 		const note=plugin.app.workspace.getActiveFile()?.path;
-		if(gitDisabled(plugin) || !note || !plugin.config.parents.some(p=>note.startsWith(p+'/'))){active='';item.hide();return;}
+		if(gitDisabled(plugin) || !note){active='';item.hide();return;}
 		timer=window.setTimeout(()=>{void update(note,generation).catch(()=>{if(generation===request)item.hide();});},250);
 	};
 	async function update(note:string,generation:number){
-		const lib=(await discover(plugin.disk,plugin.config)).find(l=>note.startsWith(l.location+'/'));
+		const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.problem && !l.duplicate && note.startsWith(l.location+'/'));
 		if(generation!==request)return;
 		active=lib?.location??'';
 		const prefs=plugin.preferences(lib?.identity?.id);

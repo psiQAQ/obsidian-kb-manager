@@ -24,7 +24,7 @@ export function diagnostics(plugin: KnowledgeBaseManager) {
 	return {
 		plugin:plugin.manifest.id, version:plugin.manifest.version, obsidian:apiVersion,
 		platform:process.platform, language:plugin.prefs.language, backend:'native',
-		pausedOnDevice:gitDisabled(plugin), registeredParents:plugin.config.parents.length,
+		pausedOnDevice:gitDisabled(plugin), favoriteParents:plugin.config.parents.length,
 		registeredTemplates:plugin.config.templates.length, knownLibraries:Object.keys(plugin.known).length,
 		authorizedLibraries:Object.keys(plugin.grants).length,
 	};

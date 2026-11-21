@@ -5,12 +5,14 @@ import { gitDefaults, readGit } from '../preferences.ts';
 import type { GitPreferences } from '../preferences.ts';
 import { mappingFromPaths } from './mapping.ts';
 import { TomlEdits } from './toml-edit.ts';
+import { exclusionFolders } from './template-exclusions.ts';
 
 export const identityFile = 'kb.toml';
 export interface ManagedFile { path: string; fingerprint: string; root?: string; offsets?:number[]; role?: 'overview-bindings' | 'kepano-bindings' | 'template-root' }
 export interface Identity {
 	schemaVersion: 1|2; id: string; displayName: string; description: string; archived: boolean;
 	template: {id: string; version: string}; managed: ManagedFile[]; entry?: string;
+	excludedFolders?:string[];
 }
 
 function table(value:unknown):Record<string,unknown>|undefined {
@@ -57,7 +59,8 @@ function manager(input:unknown):Identity {
 		}
 		return {path,fingerprint,root,role};
 	});
-	return {schemaVersion:value.schemaVersion,id:id.toLowerCase(),displayName,description,archived,template:{id:template.id,version:template.version},managed:bindings,entry};
+	const excludedFolders=value.excludedFolders===undefined?undefined:exclusionFolders(value.excludedFolders,'manager.excludedFolders');
+	return {schemaVersion:value.schemaVersion,id:id.toLowerCase(),displayName,description,archived,template:{id:template.id,version:template.version},managed:bindings,entry,excludedFolders};
 }
 
 function document(raw:string) {
@@ -110,6 +113,8 @@ export function writeIdentity(raw:string, identity:Identity) {
 		for(const field of ['schemaVersion','id','displayName','description','archived','entry'] as const) {
 			if(next[field]!==current[field])changes.field(['manager'],field,next[field]);
 		}
+		if(JSON.stringify(next.excludedFolders)!==JSON.stringify(current.excludedFolders))
+			changes.field(['manager'],'excludedFolders',next.excludedFolders);
 		for(const field of ['id','version'] as const) {
 			if(next.template[field]!==current.template[field])changes.field(['manager','template'],field,next.template[field]);
 		}

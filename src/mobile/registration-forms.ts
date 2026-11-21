@@ -57,7 +57,7 @@ export function manifestForm(plugin:MobilePlugin,replace?:string){
 
 export function scanForm(plugin:MobilePlugin){
 	const dlg=new Dialog(plugin.app,tr('扫描目录并登记知识库','Scan a folder and register knowledge bases'));
-	const getFolder=registryPathField(dlg,plugin.app,'folder');
+	const getFolder=registryPathField(dlg,plugin.app,'folder',{favorites:plugin.ctx.parents});
 	async function scan(folder:string){
 		const libraries=await scanMobile(plugin.ctx,folder),found=libraries.filter(lib=>!lib.problem);
 		const review=new Dialog(plugin.app,tr('扫描结果','Scan results'));
@@ -87,12 +87,7 @@ export function scanForm(plugin:MobilePlugin){
 		});
 		review.open();
 	}
-	dlg.action(tr('扫描所选目录','Scan selected folder'),async()=>{
-		const folder=getFolder();
-		if(!folder)throw new Error(tr('请选择目录','Select a folder'));
-		await scan(folder);
-	});
-	dlg.action(tr('扫描整个 Vault','Scan entire vault'),()=>scan(''));
+	dlg.action(tr('扫描所选目录','Scan selected folder'),()=>scan(getFolder()));
 	dlg.open();
 }
 

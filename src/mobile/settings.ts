@@ -13,7 +13,7 @@ export class MobileSettings extends PluginSettingTab {
 		const cors = tr('远端必须支持移动 WebView 的跨域请求（CORS）并提供无需重定向的地址。','The remote must allow CORS from the mobile WebView and offer a direct URL without redirects.');
 		return [{type:'group',cls:'kb-settings',items:[{
 			name:tr('目录与语言','Directories and language'),
-			aliases:[tr('知识库父目录','Library parent directories'),tr('自定义模板目录','Custom template directories'),tr('语言','Language')],
+			aliases:[tr('收藏的父目录','Favorite parent folders'),tr('自定义模板目录','Custom template directories'),tr('语言','Language')],
 			render:setting=>{setting.addButton(c=>c.setButtonText(tr('打开','Open')).onClick(()=>this.directories()));},
 		},{
 			name:tr('Vault Git 忽略规则','Vault Git ignore rule'),
@@ -39,7 +39,7 @@ export class MobileSettings extends PluginSettingTab {
 		let parents=ctx.parents.join('\n'),templates=ctx.templates.join('\n'),language:string=p.saved.language;
 		const dlg=new Dialog(p.app,tr('目录与语言','Directories and language'));
 		for(const [label,value,example,change] of [
-			[tr('知识库父目录（每行一个）','Library parent directories (one per line)'),parents,'knowledge-base',(v:string)=>{parents=v;}],
+			[tr('收藏的父目录（每行一个，可留空）','Favorite parent folders (optional, one per line)'),parents,'knowledge-base',(v:string)=>{parents=v;}],
 			[tr('自定义模板目录（每行一个）','Custom template directories (one per line)'),templates,'templates/wiki',(v:string)=>{templates=v;}]
 		] as const)dlg.multiline(label,value,change,{example});
 		new Setting(dlg.contentEl).setName(tr('语言','Language')).addDropdown(c=>c.addOptions({system:tr('系统默认','System default'),zh:'中文',en:'English'}).setValue(language).onChange(v=>{language=v;}));

@@ -1,4 +1,5 @@
 import git from 'isomorphic-git';
+import type {InitialOptions} from '../git/initial-options.ts';
 import {tr} from '../i18n.ts';
 import {identityFile} from '../kb/identity-core.ts';
 import type {Template} from '../kb/template-core.ts';
@@ -6,10 +7,8 @@ import {decode} from './disk.ts';
 import {ignoredParents,localAuthor,mobileStatus,repo} from './git.ts';
 import type {Author,Store} from './git.ts';
 
-export const initialBranch='main';
-export const initialMessage='Initial commit';
 type Files=Template['files'];
-interface InitialPlan {files:Files;author:Author;origin?:string}
+interface InitialPlan extends InitialOptions {files:Files;author:Author;origin?:string}
 
 export async function previewInitialFiles(s:Store,files:Files){
 	const rules=new Map(files.filter(file=>file.name.split('/').at(-1)==='.gitignore')
@@ -41,23 +40,23 @@ function initialConfig({author,origin}:InitialPlan){
 
 export async function initializeMobileGit(s:Store,plan:InitialPlan){
 	const r=repo(s);
-	await git.init({...r,defaultBranch:initialBranch});
+	await git.init({...r,defaultBranch:plan.branch});
 	const state=await mobileStatus(s);
 	if(!sameFiles(state.changes.map(change=>change.file),plan.files))throw verificationError();
 	// The repository is in a unique scratch directory until the commit is verified.
 	for(const [path,value] of Object.entries(initialConfig(plan)))await git.setConfig({...r,path,value});
 	if(plan.files.length)await git.add({...r,filepath:plan.files.map(file=>file.name)});
 	if(!sameFiles(await git.listFiles(r),plan.files))throw verificationError();
-	await git.commit({...r,author:plan.author,committer:plan.author,message:initialMessage});
+	await git.commit({...r,author:plan.author,committer:plan.author,message:plan.message});
 	return verifyInitialCommit(s,plan);
 }
 
 export async function verifyInitialCommit(s:Store,plan:InitialPlan){
 	const r=repo(s),status=await mobileStatus(s);
-	if(status.branch!==initialBranch || !status.head || status.changes.length || !await git.isIgnored({...r,filepath:identityFile}) ||
+	if(status.branch!==plan.branch || !status.head || status.changes.length || !await git.isIgnored({...r,filepath:identityFile}) ||
 		!sameFiles(await git.listFiles(r),plan.files))throw verificationError();
 	const {commit}=await git.readCommit({...r,oid:status.head});
-	if(commit.parent.length || commit.message.trimEnd()!==initialMessage || [commit.author,commit.committer,await localAuthor(s)]
+	if(commit.parent.length || commit.message!==plan.message+'\n' || [commit.author,commit.committer,await localAuthor(s)]
 		.some(person=>person.name!==plan.author.name || person.email!==plan.author.email))throw verificationError();
 	const blobs=new Map<string,string>();
 	await git.walk({...r,trees:[git.TREE({ref:status.head})],map:async(path,[entry])=>{
@@ -70,9 +69,9 @@ export async function verifyInitialCommit(s:Store,plan:InitialPlan){
 	}
 	const remotes=await git.listRemotes(r);
 	if(plan.origin?remotes.length!==1 || remotes[0]?.remote!=='origin' || remotes[0].url!==plan.origin:remotes.length)throw verificationError();
-	for(const path of ['branch.main.remote','branch.main.merge'])
+	for(const path of ['branch.'+plan.branch+'.remote','branch.'+plan.branch+'.merge'])
 		if((await git.getConfigAll({...r,path})).length)throw verificationError();
 	for(const [path,value] of Object.entries(initialConfig(plan)))
 		if(await git.getConfig({...r,path})!==value)throw verificationError();
-	return {branch:status.branch,head:status.head,author:plan.author,origin:plan.origin};
+	return {branch:status.branch,message:plan.message,head:status.head,author:plan.author,origin:plan.origin};
 }

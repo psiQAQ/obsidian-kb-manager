@@ -5,11 +5,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { gitResult } from '../git/network-native.ts';
 import { guardGit } from '../git/guard.ts';
 import {instanceManifestSeed} from './template-declaration.ts';
+import {confirmExcludedFolders} from './template-exclusions.ts';
 import {renderPack} from './template-pack.ts';
 import { rebind } from './bindings.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { segments } from '../fs/paths.ts';
-import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { VaultDisk, digest, key, statIfPresent } from '../fs/vault.ts';
 import { headOid, repository } from '../git/repository.ts';
 import { commitInitialRepository, initialConfig, previewInitialRepository, reviewInitialRepository, verifyInitialRepository } from '../git/initial.ts';
 import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial.ts';
@@ -18,7 +19,8 @@ import type { Config, Library } from './catalog.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
-import { registerVaultLibrary } from '../registry/discovery.ts';
+import { registerVaultLibrary, validateLibraryLocation } from '../registry/discovery.ts';
+import { assertUnreservedLibraryPath, libraryDestination } from '../registry/paths.ts';
 
 export interface CreateInput {
 	parent: string; name: string; displayName: string; description: string; source: string;
@@ -33,7 +35,7 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 	const parts = segments(location);
 	const warnings = [];
 	for (let i=0; i<parts.length; i++) {
-		const parent = i ? await disk.path(parts.slice(0,i).join('/')) : disk.root;
+		const parent = await disk.folder(parts.slice(0,i).join('/'),true);
 		if (await statIfPresent(path.join(parent,identityFile))) {
 			throw new Error(fromEnglish('Nested knowledge base: ','知识库不能嵌套：') + parts.slice(0,i).join('/'));
 		}
@@ -63,11 +65,11 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 }
 
 async function describeCreation(disk: VaultDisk, config: Config, input: CreateInput, skeleton: Record<string,string>) {
-	validateFolders(disk,config.parents,config.templates);
-	if (!config.parents.includes(input.parent) || segments(input.name).length !== 1 || !input.displayName.trim()) throw new Error(fromEnglish('Invalid destination or display name','目标目录或显示名无效'));
-	const location = input.parent + '/' + input.name;
-	const dir = await disk.path(location);
+	if (!input.displayName.trim()) throw new Error(fromEnglish('Enter a display name','请输入显示名'));
+	const location = libraryDestination(input.parent,input.name);
+	const dir = await validateLibraryLocation(disk,config,location);
 	if (await statIfPresent(dir)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
+	assertUnreservedLibraryPath((await disk.registry.read()).paths,location);
 	const warnings = await ancestorWarnings(disk,location);
 	const vars = {displayName:input.displayName, description:input.description, destination:location};
 	let template: Template;
@@ -90,15 +92,16 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	const bytes=new TextEncoder().encode(withLibraryIgnores(ignore?decoder.decode(ignore.bytes):''));
 	if(ignore)ignore.bytes=bytes;
 	else template.files.push({name:'.gitignore',bytes});
-	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,warnings,
+	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,
 		template.files.map(file=>[file.name,digest(file.bytes)])]));
 	return {input,location,template,signature,warnings};
 }
 
-async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>){
+async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>,excludedFolders?:string[]){
 	const {template,input,location}=creation;
 	const manifest=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
 	manifest.schemaVersion=2;
+	manifest.excludedFolders=excludedFolders;
 	await fs.mkdir(path.join(dir,'.log'));
 	let original='';
 	for(const folder of template.folders)await fs.mkdir(path.join(dir,folder),{recursive:true});
@@ -148,20 +151,24 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	}finally{await removePreviewDirectory(temporary,owned);}
 }
 
-export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>,beforeRegistration?:()=>Promise<void>) {
+type BeforeRegistration=(manifest:ReturnType<typeof newIdentity>)=>Promise<void>;
+
+export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>,beforeRegistration?:BeforeRegistration,excludedFolders:readonly string[]=[]) {
 	await disk.registry.assertWritable();
 	const fresh=await describeCreation(disk,config,preview.input,skeleton);
 	if (fresh.signature !== preview.signature) throw new Error(fromEnglish('Template changed. Preview again.','模板已变化，请重新预览。'));
+	const confirmedFolders=confirmExcludedFolders(fresh.template.suggestedExcludedFolders,excludedFolders);
 	const gitConfig=await initialConfig(fresh.input.git);
 	if(JSON.stringify(gitConfig)!==JSON.stringify(preview.gitConfig))
-		throw new Error(tr('Git 身份或 origin 已变化，请重新预览。','Git identity or origin changed. Preview again.'));
-	const parent = await disk.path(fresh.input.parent);
-	await fs.mkdir(parent,{recursive:true});
+		throw new Error(tr('Git 配置已变化，请重新预览。','Git configuration changed. Preview again.'));
+	const parent = await disk.folder(fresh.input.parent,true);
+	if (fresh.input.parent) await fs.mkdir(parent,{recursive:true});
+	await disk.folder(fresh.input.parent);
 	const temporary = await fs.mkdtemp(path.join(parent,'.kb-create-'));
 	const {template,location}=fresh,paths=creationPaths(template);
 	let receipt:CreationReceipt|undefined;
 	try {
-		const owned=await fs.lstat(temporary,{bigint:true}),written=await writeTemplate(temporary,fresh,skeleton);
+		const owned=await fs.lstat(temporary,{bigint:true}),written=await writeTemplate(temporary,fresh,skeleton,confirmedFolders);
 		const git=await previewInitialRepository(temporary,paths,gitConfig);
 		if(JSON.stringify(git)!==JSON.stringify(preview.git))
 			throw new Error(tr('首提交内容已变化，请重新预览。','Initial commit contents changed. Preview again.'));
@@ -169,7 +176,8 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 			throw new Error(tr('父目录状态已变化，请重新预览。','The parent directory state changed. Preview again.'));
 		await disk.registry.assertWritable();
 		for (let attempt = 0; ; attempt++) {
-			const destination = await disk.path(location);
+			const destination = await validateLibraryLocation(disk,config,location);
+			assertUnreservedLibraryPath((await disk.registry.read()).paths,location);
 			if (await statIfPresent(destination)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
 			try {
 				await renameNewDirectory(temporary,destination);
@@ -233,7 +241,7 @@ export async function reviewInterruptedCreation(disk:VaultDisk,receipt:CreationR
 	return {head,git:await reviewInitialRepository(dir,creationPaths(preview.template),preview.gitConfig)};
 }
 
-async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:()=>Promise<void>){
+async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:BeforeRegistration){
 	const {path:dir,manifest,preview}=receipt,{location}=preview;
 	await verifyCreationContents(disk,receipt);
 	await ancestorWarnings(disk,location);
@@ -247,12 +255,13 @@ async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationRecei
 		head=await commitInitialRepository(dir,creationPaths(preview.template),review.git);
 	}
 	receipt.head=head;
-	await beforeRegistration?.();
+	await beforeRegistration?.(manifest);
 	await registerVaultLibrary(disk,config,location);
-	return {manifest,location,path:dir,head,identity:review.git.identity,origin:review.git.origin};
+	const {branch,message,identity,origin}=review.git;
+	return {manifest,location,path:dir,head,branch,message,identity,origin};
 }
 
-export async function resumeCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:()=>Promise<void>){
+export async function resumeCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:BeforeRegistration){
 	try{return await finishCreation(disk,config,receipt,review,beforeRegistration);}
 	catch(error){throw new CreationInterrupted(error,receipt);}
 }

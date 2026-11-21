@@ -1,12 +1,14 @@
 import {stringify} from 'smol-toml';
 import { segments } from '../fs/segments.ts';
 import { tr } from '../i18n.ts';
+import { exclusionFolders } from './template-exclusions.ts';
 
 export interface CheckDeclaration {id:string; name:string; path:string; description?:string; linkEvidence?:boolean}
 export interface TemplateSource {url:string; author:string; commit:string; license:string; path?:string}
 export interface Declaration {
 	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
 	entry?:string; pageTemplates?:string[]; dependencies?:string[]; sources?:TemplateSource[];
+	suggestedExcludedFolders?:string[];
 	paths?:Record<string,string>; variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
 }
 
@@ -23,13 +25,14 @@ function bad(field:string):never {throw new Error(tr('模板声明字段无效�
 export function declaration(raw:string):Declaration {
 	const data:unknown=JSON.parse(raw);
 	if(!object(data))bad('kb-template.json');
-	for(const name of Object.keys(data))if(!['id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks'].includes(name))bad(name);
+	for(const name of Object.keys(data))if(!['id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks','suggestedExcludedFolders'].includes(name))bad(name);
 	for(const name of ['id','version','entry','name','description','purpose']) {
 		if(name in data && (typeof data[name]!=='string' || (!data[name] && name!=='description')))bad(name);
 	}
 	if(typeof data.entry==='string')segments(data.entry);
 	for(const name of ['purposes','pageTemplates','dependencies','hidden'])if(name in data && !strings(data[name]))bad(name);
 	for(const folder of (data.pageTemplates??[]) as string[])segments(folder);
+	if('suggestedExcludedFolders' in data)exclusionFolders(data.suggestedExcludedFolders,'suggestedExcludedFolders');
 	if([data.purpose,...(data.purposes??[]) as string[]].some(value=>value!==undefined && (typeof value!=='string' || !slug.test(value))))bad('purpose');
 	if(data.managed!==undefined && (!strings(data.managed) || data.managed.length!==1 || data.managed[0]!=='knowledge.base:overview-bindings'))bad('managed');
 	if(data.paths!==undefined){
@@ -82,4 +85,5 @@ export function verifyDeclaration(spec:Declaration,files:readonly string[],folde
 	for(const file of [...Object.keys(spec.text??{}),...(spec.checks??[]).map(check=>check.path),...(spec.entry?[spec.entry]:[]),...(spec.managed?.length?['knowledge.base']:[])])
 		if(!files.includes(file))throw new Error(tr('缺少声明的文件：','Missing declared file: ')+file);
 	for(const dir of spec.pageTemplates??[])if(!folders.includes(dir) && !files.some(name=>name.startsWith(dir+'/')))bad('pageTemplates.'+dir);
+	for(const dir of spec.suggestedExcludedFolders??[])if(!folders.includes(dir) && !files.some(name=>name.startsWith(dir+'/')))bad('suggestedExcludedFolders.'+dir);
 }

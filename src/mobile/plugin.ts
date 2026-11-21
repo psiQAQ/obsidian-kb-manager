@@ -9,7 +9,7 @@ import {MobileView,viewType} from './view.ts';
 import {createForm} from './forms.ts';
 import {registerMobileTemplates} from './insert-template.ts';
 import {manifestForm,scanForm} from './registration-forms.ts';
-import {settingsPaths} from './disk.ts';
+import {validateFolderSettings} from '../registry/paths.ts';
 import type {BindingPreview} from './bindings.ts';
 import {readMobileStorage} from './storage.ts';
 import type {Device,Saved} from './storage.ts';
@@ -60,7 +60,7 @@ export default class MobilePlugin extends Plugin {
 		this.app.secretStorage.setSecret(this.identityKey+'-email',email.trim());
 	}
 	async saveConfig(parents:string[],templates:string[],language:string){
-		settingsPaths(parents,templates,this.ctx.configDir);
+		validateFolderSettings(parents,templates,this.ctx.configDir);
 		const saved={...this.saved,language:readPreferences({language}).language};
 		this.persistDevice({...this.device,parents,templates});
 		Object.assign(this.ctx,{parents,templates});

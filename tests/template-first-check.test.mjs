@@ -81,7 +81,7 @@ test('first general checks find no errors in newly created libraries for all 18 
 			const configDir = '.test-settings';
 			await fs.mkdir(path.join(vaultRoot,configDir),{recursive:true});
 			const disk = vaultDisk(vaultRoot,configDir);
-			const input = {parent:defaults.parents[0],name:'新建库 ' + id,displayName:descriptor.name,description:'通用首检',source:builtinSource(id)};
+			const input = {parent:'',name:'新建库 ' + id,displayName:descriptor.name,description:'通用首检',source:builtinSource(id)};
 			const skeleton = packText(id === 'kepano' ? 'kepano' : 'llm-wiki');
 			const preview = await previewCreate(disk,defaults,input,skeleton);
 			const {path:libraryRoot,location,head} = await createLibrary(disk,defaults,preview,skeleton);

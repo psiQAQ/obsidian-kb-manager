@@ -9,7 +9,10 @@ import { renderBase } from '../src/kb/template-core.ts';
 import { applyIgnoreRule, previewRegistryIgnore, readVaultRegistry, writeVaultRegistry } from '../src/registry/desktop.ts';
 import { registerVaultLibrary, scanVaultFolder } from '../src/registry/discovery.ts';
 import { confirmImport, previewImport } from '../src/registry/import.ts';
-import { amendRegistry, parseRegistry, registryDataPath, registryIgnoreFor } from '../src/registry/paths.ts';
+import { amendRegistry, libraryDestination, parseRegistry, registryDataPath, registryIgnoreFor, validateFolderSettings } from '../src/registry/paths.ts';
+import { cloneTarget } from '../src/kb/clone.ts';
+import { previewCreate } from '../src/kb/create.ts';
+import { executeMove, planMove } from '../src/kb/move.ts';
 
 import { withLibraryIgnores } from '../src/kb/identity-core.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
@@ -96,6 +99,7 @@ test('desktop discovery and registration use plugin data and preserve an old reg
 
 test('explicit recursive scans skip templates, configuration, links and nested libraries',async t=>{
 	const {root,disk,config,create} = await setup(t);
+	await create('Root Library');
 	await create('Selected/Group/Actual');
 	await create('Selected/Group/Actual/Nested');
 	await create('Templates/Unregistered');
@@ -105,12 +109,54 @@ test('explicit recursive scans skip templates, configuration, links and nested l
 	await fs.writeFile(path.join(root,configDir,'Fake','kb.toml'),'version = 1\n');
 	await fs.symlink(path.join(root,'Selected','Group','Actual'),path.join(root,'Linked'),'junction');
 	const all = await scanVaultFolder(disk,config,'');
-	assert.deepEqual(all.libraries.filter(lib=>!lib.problem).map(lib=>lib.location),['Selected/Group/Actual']);
+	assert.deepEqual(all.libraries.filter(lib=>!lib.problem).map(lib=>lib.location),['Root Library','Selected/Group/Actual']);
 	assert.ok(all.libraries.find(lib=>lib.location==='Selected/Blank')?.problem);
 	assert.ok(all.skipped.some(item=>item.startsWith('Linked')));
 	assert.deepEqual((await scanVaultFolder(disk,config,'Selected')).libraries.filter(lib=>!lib.problem).map(lib=>lib.location),['Selected/Group/Actual']);
 	await assert.rejects(scanVaultFolder(disk,config,'Selected/Group/Actual/Nested'));
 	assert.equal((await readVaultRegistry(disk)).raw,null);
+});
+
+test('location checks allow empty or nested favorites and reserve registered libraries even without a manifest',async t=>{
+	const {root,disk,config}=await setup(t);
+	assert.deepEqual(defaults.parents,[]);
+	assert.doesNotThrow(()=>validateFolderSettings(['Group','Group/Subfolder'],config.templates,disk.configDir));
+	assert.throws(()=>validateFolderSettings(['Group','GROUP'],config.templates,disk.configDir));
+	assert.equal(libraryDestination('','Root Library'),'Root Library');
+	for(const parent of [undefined,null,'/','../Group','D:/External','.git','git~1','Group\\Subfolder'])
+		assert.throws(()=>libraryDestination(parent,'New'));
+	assert.throws(()=>libraryDestination('','Group/New'));
+	const req={name:'New',displayName:'New',description:'',source:'',url:'https://example.invalid/team/library.git'};
+	await fs.mkdir(path.join(root,'Occupied'));
+	await writeVaultRegistry(disk,null,['Occupied','Stale/Library']);
+	await assert.rejects(previewCreate(disk,config,{...req,parent:'Occupied'},{}),/登记|registered/u);
+	await assert.rejects(previewCreate(disk,config,{...req,parent:'',name:'Stale'},{}),/登记|registered/u);
+	await assert.rejects(cloneTarget(disk,config,{...req,parent:'Occupied'}),/登记|registered/u);
+	await assert.rejects(cloneTarget(disk,config,{...req,parent:'Missing'}),/已存在的目录|existing folder/u);
+	await assert.rejects(fs.stat(path.join(root,'Missing')),{code:'ENOENT'});
+});
+
+test('move rechecks registry reservations before publishing at the Vault root',async t=>{
+	const {root,disk,config,create,assets,visible}=await setup(t);
+	const source='Category/Original', destination='New Location';
+	const {identity}=await create(source);
+	await registerVaultLibrary(disk,config,source);
+	const [library]=await discover(disk,config);
+	const plan=await planMove(disk,config,library,'',destination,assets(library));
+	const before=await readVaultRegistry(disk);
+	await writeVaultRegistry(disk,before.raw,[...before.paths,destination+'/Stale']);
+	let saved;
+	const persist=async record=>{saved=record;};
+	await assert.rejects(executeMove(disk,config,plan,visible,persist),/登记|registered/u);
+	assert.equal(saved,undefined);
+	await assert.rejects(fs.stat(path.join(root,destination)),{code:'ENOENT'});
+	const conflict=await readVaultRegistry(disk);
+	await writeVaultRegistry(disk,conflict.raw,before.paths);
+	await executeMove(disk,config,plan,visible,persist);
+	assert.equal(saved.phase,'complete');
+	assert.deepEqual((await readVaultRegistry(disk)).paths,[destination]);
+	assert.equal((await discover(disk,config))[0]?.identity?.id,identity.id);
+	assert.deepEqual(config.parents,[]);
 });
 
 test('rebind preview checks the fingerprint and confirmation preserves preferences and unrelated bytes',async t=>{

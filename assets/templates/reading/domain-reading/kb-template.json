@@ -5,6 +5,9 @@
   "description": "从领域入口安排阅读，将术语写成可间隔复习的问答。",
   "purpose": "reading",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

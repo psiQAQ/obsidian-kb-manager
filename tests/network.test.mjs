@@ -382,7 +382,7 @@ test('clone inspects a remote library before publishing and preserves a competin
 	const original=newIdentity('Research','',{id:'custom',version:'1'});
 	const choice={kind:'original',raw:writeIdentity('',original)};
 	await transfer(dir,'push',target);
-	const disk=vaultDisk(root,'.vault-settings'), input={parent:defaults.parents[0],name:'Imported',url:target.url};
+	const disk=vaultDisk(root,'.vault-settings'), input={parent:'',name:'Imported',url:target.url};
 	const clone=await downloadLibrary(disk,defaults,input);
 	assert.ok(clone.files.includes('note.md'));
 	const destination=path.join(root,input.parent,input.name);

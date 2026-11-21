@@ -11,6 +11,8 @@ import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { changeIdentity } from './identity.ts';
 import { Dialog } from './dialog.ts';
+import { destinationParentField } from './registry-path-field.ts';
+import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library) {
 	const preview=await previewManifestUpgrade(plugin.disk,lib);
@@ -112,36 +114,33 @@ export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library) 
 }
 
 export async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
-	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v),plugin.kepanoSkeleton),true);
+	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v),plugin.kepanoSkeleton,vaultExclusions(plugin.app,plugin.disk.registry)),true);
 	await plugin.refresh();
 }
 
 export function move(plugin:KnowledgeBaseManager,lib:Library){
-	const old=lib.location.split('/'), original=old.pop()!;
-	const originalParent=old.join('/');
-	let parent=plugin.config.parents.includes(originalParent)?originalParent:plugin.config.parents[0]??'', name=original, additional='';
+	let name=lib.location.split('/').at(-1)!;
 	const dialog=new Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"));
-	const choices=[parent,...plugin.config.parents.filter(p=>p!==parent)].filter(Boolean);
-	dialog.choice(tr('目标父目录',"Destination parent folder"),Object.fromEntries(choices.map(p=>[p,p])),v=>{parent=v;});
-	dialog.text(tr('或登记已存在的新父目录',"Or register an existing parent folder"),'',v=>{additional=v.trim();},{example:'knowledge-base'});
+	dialog.facts([[tr('源目录','Source folder'),lib.location]]);
+	const getParent=destinationParentField(dialog,plugin.app,plugin.config,plugin.disk.registry);
 	dialog.text(tr('目标目录名',"Destination folder name"),name,v=>{name=v;});
 	dialog.action(tr('预览',"Preview"),async()=>{
-		const target=additional || parent;
-		const proposedConfig=()=>({...plugin.config,parents:[...new Set([...plugin.config.parents,target])]});
+		const target=getParent(), targetName=name;
 		const skeleton=plugin.templateAssets(lib);
-		const plan=await planMove(plugin.disk,proposedConfig(),lib,target,name,skeleton);
+		const store=vaultExclusions(plugin.app,plugin.disk.registry);
+		const plan=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
 		const links=new Set<string>();
 		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
 			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
 		}
 		const confirm=new Dialog(plugin.app,tr('确认目录移动',"Confirm directory move"));
-		confirm.lines([...(plugin.config.parents.includes(target)?[]:[tr('登记已有父目录：',"Register existing parent: ")+target]),plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
+		confirm.lines([plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
 			tr('以下已解析的链接可能失效。外部剪藏、脚本与动态查询需人工核对。',"These links may break. Review external clippings, scripts and dynamic queries."),...links]);
+		if(plan.exclusions)showExclusionPlan(confirm,plan.exclusions);
 		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
-			const fresh=await planMove(plugin.disk,proposedConfig(),lib,target,name,skeleton);
+			const fresh=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error(tr('预览已变化',"Preview has changed"));
 			await plugin.disk.registry.assertWritable();
-			plugin.config=proposedConfig();
 			await plugin.recordMove(plan);
 			confirm.close();dialog.close();
 			try{await resumeMove(plugin,plan);}finally{await plugin.refresh();}

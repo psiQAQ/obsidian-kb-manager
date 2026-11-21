@@ -1,13 +1,16 @@
 import {renderPack} from '../kb/template-pack.ts';
 import {instanceManifestSeed,verifyDeclaration} from '../kb/template-declaration.ts';
+import {confirmExcludedFolders} from '../kb/template-exclusions.ts';
 import {instanceText} from '../kb/instance-text.ts';
 import {tr} from '../i18n.ts';
-import {segments} from '../fs/segments.ts';
+import {initialCommitOptions} from '../git/initial-options.ts';
+import type {InitialOptions} from '../git/initial-options.ts';
+import {assertUnreservedLibraryPath,libraryDestination,validateRegistryPath,vaultPath} from '../registry/paths.ts';
 import {identityFile,readManifest,withLibraryIgnores,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
 import type {Template,Variables} from '../kb/template-core.ts';
-import {buffer,bytes,checkSpelling,children,decode,ensureFolder,hash,key,relative,settingsPaths} from './disk.ts';
+import {buffer,bytes,checkSpelling,children,decode,ensureFolder,hash,key,relative} from './disk.ts';
 import {applyMobileRegistryIgnore,libraryPath,nested,previewMobileRegistryIgnore,readMobileRegistry,updateMobileRegistry} from './registration.ts';
 import type {Catalog} from './registration.ts';
 import {initializeMobileGit,previewInitialFiles,verifyInitialCommit} from './create-git.ts';
@@ -18,22 +21,27 @@ import {endpoint} from './http.ts';
 export {discoverMobile,verifyLibrary} from './registration.ts';
 export type {Catalog,Library} from './registration.ts';
 export interface Templates {wiki:Record<string,string>;kepano:Record<string,string>}
-export interface Creation {parent:string;name:string;displayName:string;description:string;source:string;author:Author;origin?:string}
+export interface Creation extends Partial<InitialOptions> {parent:string;name:string;displayName:string;description:string;source:string;author:Author;origin?:string}
 
 export function newIdentity(displayName:string,description='',template={id:'unknown',version:'unknown'},entry?:string,id:string=crypto.randomUUID()):Identity{
 	return {schemaVersion:1,id,displayName,description,archived:false,template,entry,managed:[]};
 }
 
 async function creationLocation(ctx:Catalog,parent:string,name:string){
-	settingsPaths(ctx.parents,ctx.templates,ctx.configDir);
-	if(!ctx.parents.includes(parent) || segments(name).length!==1 || await nested(ctx,parent))throw new Error(tr('请选择有效的目标目录','Choose a valid destination'));
-	const path=libraryPath(ctx,parent+'/'+name);
+	const path=libraryPath(ctx,libraryDestination(parent,name));
 	await checkSpelling(ctx.disk,path);
+	if(await nested(ctx,parent))throw new Error(tr('知识库不能嵌套','Knowledge bases cannot be nested'));
 	return path;
 }
-export async function destination(ctx:Catalog,parent:string,name:string){
+export async function destination(ctx:Catalog,parent:string,name:string,allowMissingParent=false){
 	const path=await creationLocation(ctx,parent,name);
+	if(parent){
+		const stat=await ctx.disk.stat(parent);
+		if((!stat && !allowMissingParent) || (stat && stat.type!=='folder'))
+			throw new Error(tr('请选择已存在的目录','Choose an existing folder')+' · '+parent);
+	}
 	if(await ctx.disk.stat(path))throw new Error(tr('目标已存在','Destination already exists')+': '+path);
+	assertUnreservedLibraryPath(await readMobileRegistry(ctx),path);
 	return path;
 }
 async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise<Template>{
@@ -68,14 +76,17 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 	}
 	await scan(root);
 	verifyDeclaration(spec,files.map(file=>file.name),folders);
-	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,rootSlots,paths:spec.paths,excluded,entry:spec.entry,overview:!!spec.managed?.length};
+	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,rootSlots,paths:spec.paths,excluded,
+		entry:spec.entry,overview:!!spec.managed?.length,suggestedExcludedFolders:spec.suggestedExcludedFolders};
 }
 export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,id:string=crypto.randomUUID()){
-	const location=await destination(ctx,input.parent,input.name);
+	const location=await destination(ctx,input.parent,input.name,true);
 	if(!input.displayName.trim())throw new Error(tr('请填写显示名','Enter a display name'));
 	const address=input.origin?.trim(),origin=address?endpoint(address):undefined;
 	const author=effectiveAuthor(input.author,{name:'',email:''});
-	input={...input,author,origin};
+	const options=initialCommitOptions(input);
+	relative('.git/refs/heads/'+options.branch,ctx.configDir,true);
+	input={...input,author,origin,...options};
 	const vars={...input,destination:location};
 	const template=input.source===kepanoSource?kepanoTemplate(assets.kepano,location):input.source.startsWith('builtin:')?renderPack(input.source.slice(8),vars):input.source?
 		await directoryTemplate(ctx,input.source,vars):builtinTemplate(assets.wiki,vars);
@@ -89,15 +100,21 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,
 	const staged=new Set(files.map(file=>file.name));
 	if(template.files.some(file=>(file.name==='kb-template.json' || file.name.startsWith('checks/')) && !staged.has(file.name)))throw new Error(tr('模板清单与专项脚本必须可提交','Template declarations and checks must be tracked'));
 	const registryIgnore=await previewMobileRegistryIgnore(ctx);
-	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.entry,template.overview,files.map(file=>file.name),
+	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,files.map(file=>file.name),
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
-	return {location,input,id,template,signature,registryIgnore,initial:{files,author,origin}};
+	return {location,input,id,template,signature,registryIgnore,initial:{files,author,origin,...options}};
 }
 
-export async function scratch(ctx:Catalog,parent:string){
-	if(!ctx.parents.includes(parent) || await nested(ctx,parent))throw new Error(tr('无效的父目录','Invalid parent'));
-	await checkSpelling(ctx.disk,parent);await ensureFolder(ctx.disk,parent);
-	const dir=parent+'/.kb-tmp-'+crypto.randomUUID();
+export async function scratch(ctx:Catalog,parent:string,allowMissingParent=false){
+	if(parent){
+		validateRegistryPath(parent,ctx.configDir);
+		await checkSpelling(ctx.disk,parent,true);
+	}
+	if(await nested(ctx,parent))throw new Error(tr('知识库不能嵌套','Knowledge bases cannot be nested'));
+	if(parent && allowMissingParent)await ensureFolder(ctx.disk,parent);
+	if(parent && (await ctx.disk.stat(parent))?.type!=='folder')
+		throw new Error(tr('请选择已存在的目录','Choose an existing folder')+' · '+parent);
+	const dir=vaultPath(parent,'.kb-tmp-'+crypto.randomUUID());
 	if(await ctx.disk.stat(dir))throw new Error(tr('临时目录冲突','Temporary folder collision'));
 	await ctx.disk.mkdir(dir);
 	return dir;
@@ -138,12 +155,15 @@ export async function publish(ctx:Catalog,src:string,parent:string,name:string,v
 		throw error;
 	}
 }
-export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeof createPreview>>,assets:Templates,beforeRegistration?:()=>Promise<void>){
+export class MobileRegistrationInterrupted extends Error {}
+
+export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeof createPreview>>,assets:Templates,beforeRegistration?:(identity:Identity)=>Promise<void>,excludedFolders:readonly string[]=[]){
 	await ctx.registry.assertWritable();
 	const {input,initial,template}=confirmed;
 	const location=await creationLocation(ctx,input.parent,input.name),store={root:location,disk:ctx.disk,configDir:ctx.configDir};
 	const identity=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry,confirmed.id);
 	identity.schemaVersion=2;
+	identity.excludedFolders=confirmExcludedFolders(template.suggestedExcludedFolders,excludedFolders);
 	for(const file of template.files){
 		const offsets=template.rootSlots?.[file.name];
 		if(offsets?.length)identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:'template-root',offsets});
@@ -161,10 +181,10 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 	const protect=()=>applyMobileRegistryIgnore(ctx,confirmed.registryIgnore,true);
 	const register=async()=>{
 		try{
-			await beforeRegistration?.();
+			await beforeRegistration?.(identity);
 			await updateMobileRegistry(ctx,{add:[location]});
 			if(!(await readMobileRegistry(ctx)).includes(location))throw new Error(tr('登记写入无法验证','Could not verify the registry update'));
-		}catch(error){throw new Error(String(error)+tr('。初始提交已创建，请重试登记：','. The initial commit is ready. Retry registration for: ')+location);}
+		}catch(error){throw new MobileRegistrationInterrupted(String(error)+tr('。初始提交已创建，请重试登记：','. The initial commit is ready. Retry registration for: ')+location);}
 	};
 	const occupant=await ctx.disk.stat(location);
 	if(occupant){
@@ -172,13 +192,14 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 		await checkSpelling(ctx.disk,manifestPath);
 		if((await ctx.disk.stat(manifestPath))?.type!=='file' || await ctx.disk.read(manifestPath)!==manifest)
 			throw new Error(tr('目标已存在','Destination already exists')+': '+location);
+		assertUnreservedLibraryPath(await readMobileRegistry(ctx),location,[location]);
 		const receipt=await verified();
 		await protect();await register();
 		return {identity,location,...receipt};
 	}
 	const fresh=await createPreview(ctx,input,assets,confirmed.id);
 	if(fresh.signature!==confirmed.signature)throw new Error(tr('模板已变化，请重新预览','Template changed. Review it again.'));
-	const temp=await scratch(ctx,input.parent);
+	const temp=await scratch(ctx,input.parent,true);
 	try{
 		await ensureFolder(ctx.disk,temp+'/.log');
 		for(const sub of template.folders)await ensureFolder(ctx.disk,temp+'/'+relative(sub,ctx.configDir));

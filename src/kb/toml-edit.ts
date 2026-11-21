@@ -2,7 +2,7 @@ import { parse, stringify } from 'smol-toml';
 import { tr } from '../i18n.ts';
 
 type Address = (string|number)[];
-type Scalar = string|number|boolean;
+type Value = string|number|boolean|string[];
 interface Assignment { address:Address; start:number; end:number; lineStart:number; lineEnd:number; comment:number }
 interface Edit { start:number; end:number; content:string }
 
@@ -86,7 +86,7 @@ function tableIndex(raw:string) {
 	return {values,ends};
 }
 
-const encode = (field:Scalar) => stringify({v:field}).slice(4).trimEnd();
+const encode = (field:Value) => stringify({v:field}).slice(4).trimEnd();
 const formatKey = (field:string) => /^[A-Za-z0-9_-]+$/u.test(field)?field:encode(field);
 
 /** Use validated TOML addresses to replace only the source spans owned by the manager. */
@@ -103,7 +103,7 @@ export class TomlEdits {
 		this.index=tableIndex(raw);
 	}
 
-	field(table:Address, field:string, value:Scalar|undefined) {
+	field(table:Address, field:string, value:Value|undefined) {
 		const path=[...table,field];
 		const current=this.index.values.find(item=>key(item.address)===key(path));
 		if (current) {

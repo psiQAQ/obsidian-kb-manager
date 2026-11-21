@@ -5,6 +5,9 @@
   "description": "把研究问题、资料、研究日志和阶段结论联系起来。",
   "purpose": "research",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

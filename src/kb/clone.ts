@@ -6,22 +6,22 @@ import { tr } from '../i18n.ts';
 import { address } from '../git/network-http.ts';
 import { tree,resolveRef,authOptions } from '../git/network.ts';
 import type { Credentials } from '../git/network.ts';
-import { VaultDisk, key, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { VaultDisk, key, statIfPresent } from '../fs/vault.ts';
 import {declaration,instanceManifestSeed} from './template-declaration.ts';
-import { segments } from '../fs/paths.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
 import { ancestorWarnings } from './create.ts';
 import { discover, identityFile, newIdentity, parseIdentity, readManifest, withLibraryIgnores, writeIdentity } from './catalog.ts';
 import type { Config } from './catalog.ts';
-import { registerVaultLibrary } from '../registry/discovery.ts';
+import { registerVaultLibrary, validateLibraryLocation } from '../registry/discovery.ts';
+import { assertUnreservedLibraryPath, libraryDestination } from '../registry/paths.ts';
 
 export interface CloneInput {parent:string; name:string; url:string}
 export type CloneManifestChoice = {kind:'original';raw:string} | {kind:'new'};
 export async function cloneTarget(disk:VaultDisk,config:Config,input:CloneInput){
-	validateFolders(disk,config.parents,config.templates);
-	if(!config.parents.includes(input.parent) || segments(input.name).length!==1)throw new Error(tr('请选择已登记的父目录和新目录名','Choose a registered parent and a new folder name'));
-	const relative=input.parent+'/'+input.name;
-	if(await statIfPresent(await disk.path(relative)))throw new Error(tr('目录已存在','Directory already exists'));
+	const relative=libraryDestination(input.parent,input.name);
+	await disk.folder(input.parent);
+	if(await statIfPresent(await validateLibraryLocation(disk,config,relative)))throw new Error(tr('目录已存在','Directory already exists'));
+	assertUnreservedLibraryPath((await disk.registry.read()).paths,relative);
 	const route=await address(undefined,input.url);
 	return {relative,url:route.url,display:route.display,routeDigest:route.signature,warnings:await ancestorWarnings(disk,relative)};
 }
@@ -29,8 +29,7 @@ export async function cloneTarget(disk:VaultDisk,config:Config,input:CloneInput)
 export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneInput,auth?:Credentials){
 	await disk.registry.assertWritable();
 	const target=await cloneTarget(disk,config,input);
-	const parent=await disk.path(input.parent);
-	await fs.mkdir(parent,{recursive:true});
+	const parent=await disk.folder(input.parent);
 	const temporary=await fs.mkdtemp(join(parent,'.kb-clone-'));
 	const initial=await fs.lstat(temporary,{bigint:true});
 	let published=false;
@@ -91,7 +90,9 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 			if(identity.schemaVersion===2)await fs.mkdir(join(temporary,'.log'),{recursive:true});
 			await disk.registry.assertWritable();
 			await beforePublish?.();
-			await renameNewDirectory(temporary,await disk.path(target.relative));
+			const destination=await validateLibraryLocation(disk,current,target.relative);
+			assertUnreservedLibraryPath((await disk.registry.read()).paths,target.relative);
+			await renameNewDirectory(temporary,destination);
 			published=true;
 			try {await registerVaultLibrary(disk,current,target.relative);}
 			catch(error){throw new Error(String(error)+tr('；已导入目录，可通过扫描登记：','. The folder was imported and can be registered from a scan: ')+target.relative);}

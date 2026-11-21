@@ -5,6 +5,9 @@
   "description": "用一页指引和每日一条记录熟悉笔记与双链。",
   "purpose": "starter",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

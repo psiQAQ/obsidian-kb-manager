@@ -5,6 +5,10 @@
   "description": "在项目正文推进任务，用周复盘保留完成、重复和已归档的结果。",
   "purpose": "projects",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates",
+    "Integrations"
+  ],
   "pageTemplates": [
     "Templates"
   ],

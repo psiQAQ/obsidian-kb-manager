@@ -183,15 +183,9 @@ export function manageRegistry(plugin:KnowledgeBaseManager) {
 	dialog.action(t('选择目录并扫描','Choose a folder to scan'),()=>{
 		dialog.close();
 		const scan = new Dialog(plugin.app,t('选择需要扫描的目录','Choose the folder to scan'));
-		const getFolder = registryPathField(scan,plugin.app,'folder');
+		const getFolder = registryPathField(scan,plugin.app,'folder',{favorites:plugin.config.parents});
 		scan.action(t('扫描所选目录','Scan selected folder'),async()=>{
-			const folder = getFolder();
-			if (!folder) throw new Error(t('请选择目录','Select a folder'));
-			await showScanPreview(plugin,folder);
-			scan.close();
-		});
-		scan.action(t('扫描整个 Vault','Scan entire vault'),async()=>{
-			await showScanPreview(plugin,'');
+			await showScanPreview(plugin,getFolder());
 			scan.close();
 		});
 		scan.open();

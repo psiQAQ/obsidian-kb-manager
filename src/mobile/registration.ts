@@ -3,7 +3,7 @@ import {identityFile,readManifest,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import type {Mapping} from '../kb/mapping.ts';
 import type {GitPreferences} from '../preferences.ts';
-import {amendRegistry,registryIgnoreFor,validateRegistryPath,withIgnoreRule} from '../registry/paths.ts';
+import {amendRegistry,compareRegistryPaths,registryIgnoreFor,validateLibraryPath,validateRegistryPath,vaultParent,withIgnoreRule} from '../registry/paths.ts';
 import type {PluginDataRegistry} from '../registry/plugin-data.ts';
 import {checkSpelling,children,key,replaceText} from './disk.ts';
 import type {Disk} from './disk.ts';
@@ -15,19 +15,18 @@ export interface Library {
 }
 
 export async function nested(ctx:Catalog,path:string){
+	if(await ctx.disk.stat(identityFile))return true;
+	if(!path)return false;
 	let dir='';
-	for(const part of ['',...path.split('/')]){
-		if(part)dir=dir?dir+'/'+part:part;
-		if(await ctx.disk.stat(dir?dir+'/'+identityFile:identityFile))return true;
+	for(const part of path.split('/')){
+		dir=dir?dir+'/'+part:part;
+		if(await ctx.disk.stat(dir+'/'+identityFile))return true;
 	}
 	return false;
 }
 
 export function libraryPath(ctx:Catalog,path:string){
-	validateRegistryPath(path,ctx.configDir);
-	if(ctx.templates.some(dir=>(key(path)+'/').startsWith(key(dir)+'/') || (key(dir)+'/').startsWith(key(path)+'/')))
-		throw new Error(tr('知识库位置与模板目录重叠','The library path overlaps a template directory'));
-	return path;
+	return validateLibraryPath(path,ctx.configDir,ctx.templates);
 }
 
 export async function readMobileRegistry(ctx:Catalog){
@@ -65,11 +64,11 @@ async function inspect(ctx:Catalog,location:string):Promise<Library>{
 	const lib:Library={location};
 	try{
 		libraryPath(ctx,location);
-		await checkSpelling(ctx.disk,location);
+		await checkSpelling(ctx.disk,location,true);
 		const status=await ctx.disk.stat(location);
 		if(!status)return {...lib,missing:true};
 		if(status.type!=='folder')throw new Error(tr('路径已被文件占用','A file occupies the library path'));
-		const parent=location.slice(0,Math.max(0,location.lastIndexOf('/')));
+		const parent=vaultParent(location);
 		if(await nested(ctx,parent))throw new Error(tr('知识库不能嵌套','Knowledge bases cannot be nested'));
 		const path=location+'/'+identityFile;
 		await checkSpelling(ctx.disk,path);
@@ -104,18 +103,26 @@ export async function selectMobileManifest(ctx:Catalog,file:string){
 }
 
 export async function scanMobile(ctx:Catalog,folder:string){
+	const excluded=(dir:string)=>ctx.templates.some(template=>(key(dir)+'/').startsWith(key(template)+'/'));
 	if(folder){
 		validateRegistryPath(folder,ctx.configDir);
-		await checkSpelling(ctx.disk,folder);
+		await checkSpelling(ctx.disk,folder,true);
 		if((await ctx.disk.stat(folder))?.type!=='folder')throw new Error(tr('扫描目录不存在','The selected folder does not exist'));
+		if(excluded(folder))throw new Error(tr('不能扫描模板目录','Template folders cannot be scanned')+' · '+folder);
+		if(await nested(ctx,vaultParent(folder)))throw new Error(tr('知识库不能嵌套','Knowledge bases cannot be nested'));
+	}else if(await ctx.disk.stat(identityFile)){
+		throw new Error(tr('Vault 根目录的 kb.toml 不能登记为子库','A kb.toml at the Vault root cannot register as a child library'));
 	}
 	const results:Library[]=[];
 	async function scan(dir:string){
-		if(dir && ctx.templates.some(template=>(key(dir)+'/').startsWith(key(template)+'/')))return;
+		if(dir && excluded(dir))return;
 		const entries=await children(ctx.disk,dir);
 		const prefix=dir?dir+'/':'';
 		if(dir && entries.files.includes(prefix+identityFile)){results.push(await inspect(ctx,dir));return;}
-		for(const sub of entries.folders.sort())if(!sub.slice(prefix.length).startsWith('.'))await scan(sub);
+		for(const sub of entries.folders.sort(compareRegistryPaths)){
+			const name=sub.slice(prefix.length);
+			if(!name.startsWith('.') && key(name)!=='node_modules' && key(sub)!==key(ctx.configDir))await scan(sub);
+		}
 	}
 	await scan(folder);
 	return results;

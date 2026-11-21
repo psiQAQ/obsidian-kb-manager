@@ -14,6 +14,21 @@ export function sameOrBelow(candidate:string, root:string) {
 	return candidate === root || candidate.startsWith(root + '/');
 }
 
+export function vaultPath(parent:string, name:string) {
+	return parent ? parent + '/' + name : name;
+}
+
+export function vaultParent(location:string) {
+	return location.slice(0,Math.max(0,location.lastIndexOf('/')));
+}
+
+export function libraryDestination(parent:string, name:string) {
+	if (typeof parent !== 'string') throw new Error(tr('请选择父目录','Select a parent folder'));
+	if (segments(name).length !== 1) throw new Error(tr('请输入单个新目录名','Enter one new folder name'));
+	if (parent) segments(parent);
+	return vaultPath(parent,name);
+}
+
 export function compareRegistryPaths(a:string,b:string) {
 	const right = b[Symbol.iterator]();
 	for (const symbol of a) {
@@ -32,6 +47,40 @@ export function validateRegistryPath(relative:string, configDir:string) {
 		throw new Error(tr('登记位置与 Vault 配置重叠','Library path overlaps the Vault configuration') + ' · ' + relative);
 	}
 	return relative;
+}
+
+export function validateLibraryPath(relative:string, configDir:string, templates:readonly string[]) {
+	validateRegistryPath(relative,configDir);
+	const location = registryKey(relative);
+	for (const template of templates.map(registryKey)) {
+		if (sameOrBelow(location,template) || sameOrBelow(template,location))
+			throw new Error(tr('位置与模板目录重叠','The folder overlaps a template folder') + ' · ' + relative);
+	}
+	return relative;
+}
+
+export function assertUnreservedLibraryPath(registered:readonly string[], path:string, allowed:readonly string[] = []) {
+	const target=registryKey(path);
+	for (const entry of registered) {
+		if (allowed.includes(entry)) continue;
+		const reserved=registryKey(entry);
+		if (sameOrBelow(target,reserved) || sameOrBelow(reserved,target))
+			throw new Error(tr('目标与已登记知识库重叠','The destination overlaps a registered library') + ' · ' + entry);
+	}
+}
+
+export function validateFolderSettings(favorites:readonly string[], templates:readonly string[], configDir:string) {
+	const seen = new Set<string>();
+	for (const folder of favorites) {
+		const name = registryKey(validateRegistryPath(folder,configDir));
+		if (seen.has(name)) throw new Error(tr('收藏目录重复','Duplicate favorite folder') + ' · ' + folder);
+		seen.add(name);
+	}
+	const configured = templates.map(template=>registryKey(validateRegistryPath(template,configDir)));
+	for (const [i,template] of configured.entries()) {
+		if (configured.slice(i+1).some(other=>sameOrBelow(template,other) || sameOrBelow(other,template)))
+			throw new Error(tr('模板目录重叠','Template folders overlap') + ' · ' + templates[i]);
+	}
 }
 
 function checkedPaths(value:unknown, configDir:string): string[] {

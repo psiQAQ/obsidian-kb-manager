@@ -3,7 +3,7 @@ import type { SettingDefinitionItem, SettingDefinitionRender, SettingGroupItem }
 import { deviceGitPath, saveDeviceGitPath } from './ui/git-path.ts';
 import { hostname } from 'node:os';
 import type KnowledgeBaseManager from './main.ts';
-import { validateFolders } from './fs/vault.ts';
+import { validateFolderSettings } from './registry/paths.ts';
 import { discover, identityFile, recheck } from './kb/catalog.ts';
 import type { Library } from './kb/catalog.ts';
 import type { GitPreferences, Language } from './preferences.ts';
@@ -278,7 +278,7 @@ function folderSettings(plugin: KnowledgeBaseManager, refresh: () => void): Sett
 		templateInput:null as HTMLTextAreaElement|null,
 	}));
 	const folders = [
-		['parents',['知识库父目录','Library parent folders'],['每行一个 Vault 相对路径，首行是创建知识库的默认位置。','One vault-relative path per line. New libraries default to the first folder.']],
+		['parents',['收藏的父目录','Favorite parent folders'],['每行一个 Vault 相对路径，可留空。收藏目录会显示在位置选择器中。','Optional. Enter one vault-relative path per line. Favorites appear in the location picker.']],
 		['templates',['目录模板','Folder templates'],['每行一个模板目录的 Vault 相对路径。','One vault-relative template folder per line.']],
 	] as const;
 	const items:SettingDefinitionRender[] = folders.map(([field,label,desc]) => ({
@@ -304,8 +304,8 @@ function folderSettings(plugin: KnowledgeBaseManager, refresh: () => void): Sett
 		render(setting,group) {
 			renderSave(plugin,setting,refresh,async () => {
 				const {parents,templates} = form(group);
-				validateFolders(plugin.disk,parents,templates);
-				for (const name of [...parents,...templates]) await plugin.disk.path(name);
+				validateFolderSettings(parents,templates,plugin.disk.configDir);
+				for (const name of [...parents,...templates]) await plugin.disk.folder(name,true);
 				Object.assign(plugin.config,{parents,templates});
 			});
 		},

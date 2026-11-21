@@ -1,8 +1,7 @@
 import { fromEnglish } from '../i18n.ts';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { VaultDisk, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { VaultDisk, statIfPresent } from '../fs/vault.ts';
 import type { Mapping } from './mapping.ts';
 import type { GitPreferences } from '../preferences.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
@@ -18,7 +17,7 @@ export interface Library {
 	git: 'local' | 'missing' | 'special'; signature?: string; missing?: boolean; preferences?: Partial<GitPreferences>;
 }
 export interface Config { parents: string[]; templates: string[] }
-export const defaults: Config = { parents:['knowledge-base'], templates:[] };
+export const defaults: Config = { parents:[], templates:[] };
 export function newIdentity(name: string, description: string, template: Identity['template'], entry?: string): Identity {
 	return { schemaVersion:1, id:randomUUID(), displayName:name, description, archived:false, template, managed:[], entry };
 }
@@ -41,29 +40,6 @@ export async function inspect(disk: VaultDisk, location: string): Promise<Librar
 	return lib;
 }
 
-export async function scan(disk: VaultDisk, config: Config): Promise<Library[]> {
-	validateFolders(disk, config.parents, config.templates);
-	const result: Library[] = [];
-	for (const parent of config.parents) {
-		const dir = await disk.path(parent);
-		if (!await statIfPresent(dir)) continue;
-		// A newly configured parent may itself be inside an existing instance.
-		const parts=parent.split('/');
-		let nested=false;
-		for(let i=0;i<=parts.length;i++){
-			const ancestor=i?await disk.path(parts.slice(0,i).join('/')):disk.root;
-			if(await statIfPresent(path.join(ancestor,identityFile))){nested=true;break;}
-		}
-		if(nested)continue;
-		for (const child of await fs.readdir(dir,{withFileTypes:true})) {
-			if (!child.isDirectory() || child.name.startsWith('.')) continue;
-			const lib = await inspect(disk, parent + '/' + child.name);
-			if (lib) result.push(lib);
-		}
-	}
-	return markDuplicates(result);
-}
-
 function markDuplicates(result:Library[]) {
 	const ids = new Map<string,number>();
 	for (const {identity} of result) if (identity) ids.set(identity.id,(ids.get(identity.id) ?? 0)+1);
@@ -72,7 +48,6 @@ function markDuplicates(result:Library[]) {
 }
 
 export async function discover(disk: VaultDisk, config: Config): Promise<Library[]> {
-	validateFolders(disk,config.parents,config.templates);
 	const {paths}=await readVaultRegistry(disk);
 	const result=await Promise.all(paths.map(async(location):Promise<Library>=>
 		await registryCandidate(disk,config,location) ?? {location,git:'missing',missing:true}));

@@ -5,6 +5,9 @@
   "description": "由工作卡、会话交接和决策页接续同库的人机工作。",
   "purpose": "ai-workflows",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

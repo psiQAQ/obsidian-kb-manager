@@ -5,6 +5,10 @@
   "description": "统一记录书影音进度、评分、体验感想和合集。",
   "purpose": "collections",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates",
+    "Integrations"
+  ],
   "pageTemplates": [
     "Templates"
   ],

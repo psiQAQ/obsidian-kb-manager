@@ -10,7 +10,54 @@ import {initializeRepository} from '../src/git/repository.ts';
 import {renderBase} from '../src/kb/template.ts';
 import {examine,applyRepair} from '../src/kb/maintenance.ts';
 import {planMove,executeMove} from '../src/kb/move.ts';
+import {templateFolderRule} from '../src/kb/template-exclusions.ts';
 import {vaultDisk} from './fixtures/vault-disk.mjs';
+
+test('resume a root-level library move after its Obsidian exclusion write fails',async t=>{
+	await fs.mkdir('.tmp',{recursive:true});
+	const root=await fs.mkdtemp(path.resolve('.tmp','move-exclusions-'));
+	t.after(()=>fs.rm(root,{recursive:true,force:true}));
+	const disk=vaultDisk(root,'.settings'), config={parents:[],templates:[]};
+	const source='甲[1]', parent='项目', target='乙+1', destination=parent+'/'+target;
+	const identity=newIdentity('甲','',{id:'personal',version:'1'});
+	identity.excludedFolders=['页面模板','辅助'];
+	await fs.mkdir(path.join(root,source));
+	await fs.mkdir(path.join(root,parent));
+	await fs.writeFile(path.join(root,source,identityFile),writeIdentity('',identity));
+	await registerVaultLibrary(disk,config,source);
+	const oldRule=templateFolderRule(source,'页面模板'), newRule=templateFolderRule(destination,'页面模板');
+	const manual=templateFolderRule(source,'辅助');
+	let rules=['keep/',oldRule,manual], owner={owner:{root:source,rules:[oldRule]}}, fail=true;
+	const store={
+		async readRules(){return [...rules];},
+		async writeRules(before,after){
+			assert.deepEqual(before,rules);
+			if(fail)throw Error('test: failed settings write');
+			rules=[...after];
+		},
+		async readOwnership(id){assert.equal(id,identity.id);return owner;},
+		async writeOwnership(id,before,after){
+			assert.equal(id,identity.id);
+			assert.deepEqual(before,owner);
+			owner=structuredClone(after);
+		},
+	};
+	const [library]=await discover(disk,config);
+	let record=await planMove(disk,config,library,parent,target,{},store);
+	const run=()=>executeMove(disk,config,record,{},async value=>{record=structuredClone(value);},{},store);
+	assert.deepEqual(record.exclusions.remove,[oldRule]);
+	assert.deepEqual(record.exclusions.add,[newRule]);
+	await assert.rejects(run(),/failed settings write/);
+	assert.equal(record.phase,'moved');
+	assert((await fs.stat(path.join(root,destination))).isDirectory());
+	assert.deepEqual(rules,['keep/',oldRule,manual]);
+	fail=false;
+	await run();
+	assert.equal(record.phase,'complete');
+	assert.deepEqual(rules,['keep/',manual,newRule]);
+	assert.deepEqual(owner,{owner:{root:destination,rules:[newRule]}});
+	assert.deepEqual((await discover(disk,config)).map(lib=>lib.location),[destination]);
+});
 
 test('move resumes after rename, refuses a new edit, preserves staged bytes and custom filters',async t=>{
 	await fs.mkdir('.tmp',{recursive:true});

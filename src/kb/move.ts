@@ -3,9 +3,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { gitResult } from '../git/network-native.ts';
-import { VaultDisk, digest, key, statIfPresent, validateFolders } from '../fs/vault.ts';
+import { VaultDisk, digest, key, statIfPresent } from '../fs/vault.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
-import { existingDirectory, segments } from '../fs/paths.ts';
+import { existingDirectory } from '../fs/paths.ts';
 import { guardGit } from '../git/guard.ts';
 import { repository } from '../git/repository.ts';
 import { ancestorWarnings } from './create.ts';
@@ -17,11 +17,15 @@ import { isKepano, kepanoBinding, kepanoBindingAssets } from './template.ts';
 import {rebindSlots} from './instance-text.ts';
 import { validateKepanoRoot } from './kepano.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
-import { registerVaultLibrary } from '../registry/discovery.ts';
+import { assertNoAncestorLibrary, registerVaultLibrary } from '../registry/discovery.ts';
+import { assertUnreservedLibraryPath, libraryDestination, validateLibraryPath, vaultParent, vaultPath } from '../registry/paths.ts';
+
+import { applyExclusionPlan, assertExclusionPlan, assertMoveExclusionScope, planMovedExclusions } from './template-exclusions.ts';
+import type { ExclusionPlan, ExclusionStore } from './template-exclusions.ts';
 
 export interface MoveRecord {
 	token:string; id:string; source:string; destination:string; git:string; manifest:string;
-	changes:Repair[]; warnings:string[]; phase:'prepared'|'moved'|'complete';
+	changes:Repair[]; warnings:string[]; exclusions?:ExclusionPlan; phase:'prepared'|'moved'|'complete';
 }
 
 async function gitStamp(dir:string) {
@@ -32,19 +36,20 @@ async function gitStamp(dir:string) {
 	return JSON.stringify([branch,head,await statIfPresent(index)?digest(await fs.readFile(index)):'']);
 }
 
-export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:string,name:string,skeleton:Record<string,string>):Promise<MoveRecord>{
-	validateFolders(disk,config.parents,config.templates);
+export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:string,name:string,skeleton:Record<string,string>,store?:ExclusionStore):Promise<MoveRecord>{
 	await recheck(disk,config,lib);
-	if(!lib.identity || lib.identity.archived || !config.parents.includes(parent) || segments(name).length!==1)throw new Error(tr('无效的移动目标或库状态','Invalid move destination or library state'));
-	const destination=parent+'/'+name, source=lib.location;
+	if(!lib.identity || lib.identity.archived)throw new Error(tr('无效的库状态','Invalid library state'));
+	const destination=validateLibraryPath(libraryDestination(parent,name),disk.configDir,config.templates), source=lib.location;
 	if(isKepano(lib.identity.template))validateKepanoRoot(destination);
 	if(source===destination)throw new Error(tr('源和目标相同','Source and destination are identical'));
-	const parentPath=await disk.path(parent);
+	assertUnreservedLibraryPath((await disk.registry.read()).paths,destination,[source]);
+	const parentPath=await disk.folder(parent);
 	const dir=await disk.path(source);
 	const parentStat=await statIfPresent(parentPath);
 	if(!parentStat?.isDirectory() || parentStat.dev!==(await fs.stat(dir)).dev)throw new Error(tr('目标父目录须已存在并位于同一文件系统','The destination parent must exist on the same filesystem'));
-	const collision=(await fs.readdir(parentPath)).find(n=>key(n)===key(name));
-	if(collision && parent+'/'+collision!==source)throw new Error(tr('目标已存在：','Destination already exists: ')+collision);
+	const collision=(await fs.readdir(parentPath)).find(n=>key(n)===key(name) && vaultPath(parent,n)!==source);
+	if(collision)throw new Error(tr('目标已存在：','Destination already exists: ')+collision);
+	if(key(destination)!==key(source))await disk.path(destination);
 	const warnings=await ancestorWarnings(disk,destination);
 	const report=await examine(disk,lib,skeleton,destination);
 	const manifestFile=path.join(dir,identityFile);
@@ -59,17 +64,18 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 		binding.fingerprint=digest(change.after);
 	}
 	if(changes.length)changes.push({file:identityFile,before:signature,after:writeIdentity(previous,next),fields:[tr('记录新绑定位置','Record the new binding locations')]});
-	return {token:randomUUID(),id:lib.identity.id,source,destination,git:await gitStamp(dir),manifest:signature,
+	const exclusions=store && await planMovedExclusions(store,next.id,source,destination,next.excludedFolders ?? []);
+	return {token:randomUUID(),exclusions,id:lib.identity.id,source,destination,git:await gitStamp(dir),manifest:signature,
 		changes,warnings:[...warnings,...report.manual],phase:'prepared'};
 }
 
-export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={}){
+export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={},store?:ExclusionStore){
 	await disk.registry.assertWritable();
-	const parent=(file:string)=>path.posix.dirname(file);
-	if(!config.parents.includes(parent(record.destination)))throw new Error(tr('目标父目录登记已变化','The registered destination parent changed'));
-	disk.validate(record.source);disk.validate(record.destination);
-	const sourceParent=parent(record.source)==='.'?await fs.realpath(disk.root):await disk.path(parent(record.source));
-	const targetParent=await disk.path(parent(record.destination));
+	disk.validate(record.source);
+	validateLibraryPath(record.destination,disk.configDir,config.templates);
+	const sourceParent=await disk.folder(vaultParent(record.source));
+	const targetParent=await disk.folder(vaultParent(record.destination));
+	await assertNoAncestorLibrary(disk,record.destination);
 	const source=path.join(sourceParent,path.posix.basename(record.source));
 	const destination=path.join(targetParent,path.posix.basename(record.destination));
 	const intermediate=path.join(sourceParent,'.kb-rename-'+record.token);
@@ -79,11 +85,23 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	for(const file of [source,intermediate,destination])if(await exact(file))locations.push(file);
 	if(locations.length!==1)throw new Error(tr('源或目标位置有冲突，请保留现场','Conflicting source or destination. Preserve both locations for review.'));
 	const current=locations[0]!;
-	if(!(await fs.lstat(current)).isDirectory())throw new Error(tr('无效的库目录','Invalid library directory'));
+	const currentStat=await fs.lstat(current);
+	if(!currentStat.isDirectory() || currentStat.dev!==(await fs.stat(targetParent)).dev)
+		throw new Error(tr('无效的库目录或文件系统','Invalid library folder or filesystem'));
 	const manifestPath=path.join(current,identityFile);
 	const {raw:manifest,signature}=await readManifestFile(manifestPath);
 	const identity=parseIdentity(manifest);
 	if(identity.id!==record.id || (await gitStamp(current))!==record.git)throw new Error(tr('ID、HEAD 或索引变化，请人工复核','Library ID, HEAD or the index changed. Review the library before continuing.'));
+	const assertUnreserved=async()=>{
+		const allowed=current===destination && record.phase==='moved'?[record.source,record.destination]:[record.source];
+		assertUnreservedLibraryPath((await disk.registry.read()).paths,record.destination,allowed);
+	};
+	await assertUnreserved();
+	if(record.exclusions){
+		if(!store)throw new Error(tr('缺少 Vault 排除规则存储','The vault exclusion settings are unavailable'));
+		assertMoveExclusionScope(record.exclusions,identity.id,record.source,record.destination,identity.excludedFolders ?? []);
+		await assertExclusionPlan(store,record.exclusions,current===destination);
+	}
 	const manifestEdit=record.changes.find(c=>c.file===identityFile);
 	if(signature!==record.manifest && !(current===destination && manifestEdit && digest(manifestEdit.after)===signature))throw new Error(tr('清单已变化','The library manifest changed'));
 	const duplicate=(await discover(disk,config)).some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
@@ -107,6 +125,10 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	}
 	await disk.registry.assertWritable();
 	if(current!==destination){
+		await assertUnreserved();
+		const collision=(await fs.readdir(targetParent)).find(name=>
+			key(name)===key(path.basename(destination)) && path.join(targetParent,name)!==source);
+		if(collision)throw new Error(tr('目标已被占用','The destination is occupied')+' · '+collision);
 		let at=current;
 		if(at===source && key(record.source)===key(record.destination)){
 			await renameNewDirectory(source,intermediate);at=intermediate;
@@ -124,6 +146,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		if(item.file===identityFile)await replaceLibraryManifest(disk,record.destination,item.before,item.after);
 		else await files.replace(relative,item.before,item.after);
 	}
+	if(record.exclusions && store)await applyExclusionPlan(store,record.exclusions);
 	await registerVaultLibrary(disk,config,record.destination,record.source);
 	await save({...record,phase:'complete'});
 }

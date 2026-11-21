@@ -1,14 +1,14 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { overlaps, statIfPresent } from '../fs/vault.ts';
+import { statIfPresent } from '../fs/vault.ts';
 import type { VaultDisk } from '../fs/vault.ts';
 import { identityFile, inspect } from '../kb/catalog.ts';
 import type { Config, Library } from '../kb/catalog.ts';
 import { tr } from '../i18n.ts';
 import { updateVaultRegistry } from './desktop.ts';
-import { amendRegistry, compareRegistryPaths, registryKey, sameOrBelow, validateRegistryPath } from './paths.ts';
+import { amendRegistry, compareRegistryPaths, registryKey, sameOrBelow, validateLibraryPath, validateRegistryPath } from './paths.ts';
 
-async function assertNoAncestorLibrary(disk:VaultDisk, location:string) {
+export async function assertNoAncestorLibrary(disk:VaultDisk, location:string) {
 	const parts = location.split('/');
 	let parent = await fs.realpath(disk.root);
 	for (const part of parts.slice(0,-1)) {
@@ -19,8 +19,7 @@ async function assertNoAncestorLibrary(disk:VaultDisk, location:string) {
 }
 
 export async function validateLibraryLocation(disk:VaultDisk, config:Config, location:string) {
-	validateRegistryPath(location,disk.configDir);
-	if (config.templates.some(template=>overlaps(template,location))) throw new Error(tr('位置与模板目录重叠','The folder overlaps a template folder') + ' · ' + location);
+	validateLibraryPath(location,disk.configDir,config.templates);
 	const folder = await disk.path(location);
 	const stat = await statIfPresent(folder);
 	if (stat && !stat.isDirectory()) throw new Error(tr('知识库位置必须是目录','The library path must be a folder') + ' · ' + location);
@@ -53,8 +52,7 @@ export async function scanVaultFolder(disk:VaultDisk, config:Config, location:st
 	const excluded = [...config.templates,disk.configDir].filter(Boolean).map(registryKey);
 	const disallowed = (relative:string)=>excluded.some(root=>sameOrBelow(registryKey(relative),root));
 	if (location && disallowed(location)) throw new Error(tr('不能扫描模板或 Vault 配置目录','Template and Vault configuration folders cannot be scanned') + ' · ' + location);
-	const selected = location ? await disk.path(location) : await fs.realpath(disk.root);
-	if (!(await statIfPresent(selected))?.isDirectory()) throw new Error(tr('扫描位置必须是已存在的目录','Choose an existing folder to scan') + ' · ' + location);
+	const selected = await disk.folder(location);
 	if (location) await assertNoAncestorLibrary(disk,location);
 	async function visit(folder:string, relative:string):Promise<void> {
 		if (await statIfPresent(path.join(folder,identityFile))) {

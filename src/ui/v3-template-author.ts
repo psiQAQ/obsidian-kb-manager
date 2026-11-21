@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Notice, Setting } from 'obsidian';
 import { renameNewDirectory } from '../fs/publish.ts';
-import { statIfPresent, validateFolders } from '../fs/vault.ts';
+import { statIfPresent } from '../fs/vault.ts';
+import { validateFolderSettings } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { builtinPacks } from '../kb/template-pack.ts';
 import { declaration, folderTemplate } from '../kb/template.ts';
@@ -21,13 +22,14 @@ const exampleCheck=`export default async function check({notes}) {
 `;
 
 async function targetFor(plugin:KnowledgeBaseManager,source:string) {
-	validateFolders(plugin.disk,plugin.config.parents,[...plugin.config.templates,source]);
+	validateFolderSettings([],[...plugin.config.templates,source],plugin.disk.configDir);
 	const target=await plugin.disk.path(source);
 	if(await statIfPresent(target))throw new Error(tr('选择尚不存在的模板目录。','Choose a new template folder.')+' · '+source);
 	if(!(await statIfPresent(dirname(target)))?.isDirectory())throw new Error(tr('请先建立模板的父目录。','Create the template parent folder first.'));
-	for(const part of source.split('/').slice(0,-1).map((_,index,parts)=>parts.slice(0,index+1).join('/'))){
+	for(const part of ['',...source.split('/').slice(0,-1).map((_,index,parts)=>parts.slice(0,index+1).join('/'))]){
+		const folder=await plugin.disk.folder(part);
 		for(const marker of ['kb.toml','kb-manager.json']){
-			if(await statIfPresent(await plugin.disk.path(part+'/'+marker)))throw new Error(tr('选择知识库之外的模板目录。','Choose a template folder outside existing libraries.')+' · '+part);
+			if(await statIfPresent(join(folder,marker)))throw new Error(tr('选择知识库之外的模板目录。','Choose a template folder outside existing libraries.')+' · '+(part||'/'));
 		}
 	}
 	return target;
@@ -52,7 +54,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 		if(!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(id) || builtinPacks().some(pack=>pack.id===id))throw new Error(tr('输入未被内置模板使用的小写模板 ID。','Enter a lowercase ID distinct from built-in template IDs.'));
 		if(!name || !description)throw new Error(tr('填写模板显示名和简介。','Enter a display name and description.'));
 		const target=await targetFor(plugin,source);
-		const spec={id,version:'1',name,description,purpose,entry:'README.md',pageTemplates:['Templates'],text:{'README.md':['kb_name','description']},
+		const spec={id,version:'1',name,description,purpose,entry:'README.md',pageTemplates:['Templates'],suggestedExcludedFolders:['Templates'],text:{'README.md':['kb_name','description']},
 			...(example?{checks:[{id:'example-home-section',name:tr('首页章节','Home note section'),description:tr('检查首页是否含二级标题。','Check for a second-level heading in the home note.'),path:'checks/home-section.mjs'}]}:{})};
 		const raw=JSON.stringify(spec,null,2)+'\n';
 		declaration(raw);
@@ -79,7 +81,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 						await mkdir(dirname(file),{recursive:true});
 						await writeFile(file,content,{flag:'wx'});
 					}
-					await folderTemplate(staged,plugin.disk.configDir,{displayName:name,description,destination:plugin.config.parents[0]+'/example'});
+					await folderTemplate(staged,plugin.disk.configDir,{displayName:name,description,destination:'example'});
 					await targetFor(plugin,source);
 					await renameNewDirectory(staged,target);
 				} finally {await rm(staged,{recursive:true,force:true});}

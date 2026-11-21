@@ -42,11 +42,12 @@ export default class KnowledgeBaseManager extends Plugin {
 	prefs = readPreferences(undefined);
 	pendingLibraryPreferences:PreferenceStore['libraries']={};
 	grants: Record<string,AutomationGrant> = {};
+	private registeredLocations = new Set<string>();
 	preferences(id?:string){return effectivePreferences(this.prefs,id);}
 	observeLibraries(libraries:Library[]) {
 		const overrides:typeof this.prefs.libraries={};
-		const registered=new Set(libraries.map(lib=>lib.location));
-		for(const [id,location] of Object.entries(this.known))if(!registered.has(location))delete this.known[id];
+		this.registeredLocations=new Set(libraries.map(lib=>lib.location));
+		for(const [id,location] of Object.entries(this.known))if(!this.registeredLocations.has(location))delete this.known[id];
 		for(const lib of libraries)if(lib.identity && !lib.duplicate && !lib.problem){
 			this.known[lib.identity.id]=lib.location;
 			overrides[lib.identity.id]=lib.preferences ?? {};
@@ -167,7 +168,7 @@ export default class KnowledgeBaseManager extends Plugin {
 					await view.showLibrary(entry[0]);
 				}));
 			}
-			if(file instanceof TFolder && this.config.parents.some(p=>file.parent?.path===p)){
+			if(file instanceof TFolder && this.registeredLocations.has(file.path)){
 				menu.addItem(item=>item.setTitle(tr('打开知识库管理器',"Open knowledge base manager")).setIcon('library').onClick(()=>this.openManager()));
 			}
 		}));

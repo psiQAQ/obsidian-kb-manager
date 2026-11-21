@@ -20,7 +20,7 @@ export function readMobileStorage(shared:unknown,local:unknown){
 	if(current.grants===undefined)for(const grant of Object.values(grants))grant.paused='review';
 	const device:Device={
 		...current,
-		parents:paths(current.parents)??paths(old.parents)??['knowledge-base'],
+		parents:paths(current.parents)??paths(old.parents)??[],
 		templates:paths(current.templates)??paths(old.templates)??[],
 		grants,
 		pendingLibraryPreferences:readPendingLibraryPreferences(current.pendingLibraryPreferences,old),

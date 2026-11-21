@@ -1,4 +1,5 @@
 import {attributesPath,attributePolicies} from '../git/markdown-attributes.ts';
+import {branchName} from '../git/initial-options.ts';
 import git from 'isomorphic-git';
 import {parse} from 'smol-toml';
 import {tr} from '../i18n.ts';
@@ -29,11 +30,7 @@ export function containsPrivateManifest(raw:string){
 	return manifest.manager!==undefined || manifest.preferences!==undefined;
 }
 export const changed=()=>new Error(tr('目标已变化，请重新预览','Target changed. Review the preview again.'));
-export function branchName(name:string){
-	if(!/^[\p{L}\p{N}_][\p{L}\p{N}._/-]*$/u.test(name) || name==='HEAD' || name.includes('..') ||
-		name.split('/').some(p=>!p || p.startsWith('.') || p.endsWith('.') || p.endsWith('.lock')))throw new Error(tr('分支名无效','Invalid branch name'));
-	return name;
-}
+export {branchName} from '../git/initial-options.ts';
 function validateIndex(raw:ArrayBuffer,configDir:string){
 	const data=new Uint8Array(raw), view=new DataView(raw);
 	const executables:string[]=[];

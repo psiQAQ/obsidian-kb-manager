@@ -5,6 +5,9 @@
   "description": "按分类属性收集书影音、人物、地点、剪藏和日常笔记。",
   "purpose": "collections",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

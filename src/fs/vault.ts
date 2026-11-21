@@ -34,23 +34,26 @@ export class VaultDisk {
 		let current = await fs.realpath(this.root);
 		for (const part of relative.split('/')) {
 			const parent = await statIfPresent(current);
+			let names: string[] = [];
 			if (parent) {
 				if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error(fromEnglish('Unsafe parent: ','父目录不安全：') + current);
-				const alias = (await fs.readdir(current)).find(name => name !== part && key(name) === key(part));
+				names = await fs.readdir(current);
+				const alias = names.find(name => name !== part && key(name) === key(part));
 				if (alias) throw new Error(fromEnglish('Conflicting path spelling: ','路径名称冲突：') + alias);
 			}
 			current = path.join(current, part);
-			if ((await statIfPresent(current))?.isSymbolicLink()) throw new Error(fromEnglish('Linked path: ','路径含文件系统链接：') + relative);
+			const actual = await statIfPresent(current);
+			if (actual?.isSymbolicLink()) throw new Error(fromEnglish('Linked path: ','路径含文件系统链接：') + relative);
+			if (actual && !names.includes(part)) throw new Error(fromEnglish('Conflicting path spelling: ','路径名称冲突：') + part);
 		}
 		return current;
 	}
-}
 
-export function validateFolders(disk: VaultDisk, parents: string[], templates: string[]) {
-	if (!parents.length) throw new Error(fromEnglish('Choose at least one knowledge base parent','请至少选择一个知识库父目录'));
-	const paths = [...parents, ...templates];
-	for (const [i, name] of paths.entries()) {
-		disk.validate(name);
-		if (paths.slice(i + 1).some(other => overlaps(name, other))) throw new Error(fromEnglish('Overlapping folders: ','目录范围重叠：') + name);
+	async folder(relative: string, allowMissing = false): Promise<string> {
+		const folder = relative ? await this.path(relative) : await fs.realpath(this.root);
+		const stat = await statIfPresent(folder);
+		if ((!stat && !allowMissing) || (stat && !stat.isDirectory()))
+			throw new Error(fromEnglish('Choose an existing folder: ','请选择已存在的目录：') + (relative || '/'));
+		return folder;
 	}
 }

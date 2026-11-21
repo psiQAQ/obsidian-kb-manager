@@ -5,6 +5,9 @@
   "description": "按专题训练题型，记录错因和复做结果。",
   "purpose": "learning",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

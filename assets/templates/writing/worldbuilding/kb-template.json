@@ -5,6 +5,9 @@
   "description": "用人物、地点、阵营和事件等互链建立可查询设定。",
   "purpose": "writing",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

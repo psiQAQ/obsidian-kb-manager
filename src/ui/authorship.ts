@@ -84,17 +84,13 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 			};
 			try {
 				const file = this.file;
-				const parent = file && plugin.config.parents.find(p => file.startsWith(p + '/'));
-				if (!file || !parent || gitDisabled(plugin)) { set(emptyMarkers); return; }
-				const pieces = file.slice(parent.length+1).split('/');
-				if (pieces.length < 2) { set(emptyMarkers); return; }
-				const location = parent + '/' + pieces[0];
-				const known = Object.keys(plugin.known).find(id => plugin.known[id] === location);
+				if (!file || gitDisabled(plugin)) { set(emptyMarkers); return; }
+				const known = Object.entries(plugin.known).find(([,root])=>file.startsWith(root+'/'))?.[0];
 				if (!plugin.preferences(known).lineAuthor && (known || !Object.values(plugin.prefs.libraries).some(p => p.lineAuthor))) {
 					set(emptyMarkers); return;
 				}
-				const lib = (await discover(plugin.disk,plugin.config)).find(l => l.location === location);
-				if (!lib?.identity || lib.problem || lib.duplicate || lib.git !== 'local') { set(emptyMarkers); return; }
+				const lib = (await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.problem && !l.duplicate && file.startsWith(l.location+'/'));
+				if (!lib?.identity || lib.git !== 'local') { set(emptyMarkers); return; }
 				const prefs = plugin.preferences(lib.identity.id);
 				if (!prefs.lineAuthor || revision !== this.revision) { set(emptyMarkers); return; }
 				eligible = true;
@@ -103,8 +99,8 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 				const first = doc.lineAt(view.viewport.from).number;
 				const last = Math.min(lastContentLine,doc.lineAt(view.viewport.to).number);
 				if (last < first) { set(emptyMarkers); return; }
-				const dir = await plugin.disk.path(location);
-				const credits = await lineCredits(dir,pieces.slice(1).join('/'),first,last,doc.toString(),prefs);
+				const dir = await plugin.disk.path(lib.location);
+				const credits = await lineCredits(dir,file.slice(lib.location.length+1),first,last,doc.toString(),prefs);
 				if (revision !== this.revision) return;
 				await recheck(plugin.disk,plugin.config,lib);
 				const now = Date.now();

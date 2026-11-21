@@ -5,6 +5,9 @@
   "description": "用评估、试用、采用和暂缓记录工具选型及证据。",
   "purpose": "engineering",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

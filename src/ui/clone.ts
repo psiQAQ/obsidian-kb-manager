@@ -6,14 +6,15 @@ import { cloneTarget, downloadLibrary } from '../kb/clone.ts';
 import type { CloneManifestChoice } from '../kb/clone.ts';
 import { parseIdentity } from '../kb/identity-core.ts';
 import { Dialog } from './dialog.ts';
+import { destinationParentField } from './registry-path-field.ts';
 
 export function cloneWizard(plugin:KnowledgeBaseManager) {
 	const t=plugin.t;
 	if(gitDisabled(plugin)){new Notice(t('本设备已停用 Git','Git is disabled on this device'));return;}
-	const input={parent:plugin.config.parents[0]??'',name:'',url:''};
+	const input={name:'',url:''};
 	let username='',password='';
 	const form=new Dialog(plugin.app,t('克隆知识库','Clone library'));
-	form.choice(t('父目录','Parent folder'),Object.fromEntries(plugin.config.parents.map(p=>[p,p])),v=>{input.parent=v;});
+	const getParent=destinationParentField(form,plugin.app,plugin.config,plugin.disk.registry);
 	form.text(t('新目录名','New folder name'),'',v=>{input.name=v;},{example:'research-notes'});
 	form.text('HTTPS / SSH','',v=>{input.url=v.trim();});
 	form.text(t('用户名（可选）','Username (optional)'),'',v=>{username=v;});
@@ -21,7 +22,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 		field.inputEl.type='password';field.onChange(value=>{password=value;});
 	});
 	form.action(t('预览','Preview'),async()=>{
-		const request={...input};
+		const request={...input,parent:getParent()};
 		const auth=password?{username:username||'git',password}:undefined;
 		const target=await cloneTarget(plugin.disk,plugin.config,request);
 		const confirm=new Dialog(plugin.app,t('确认下载知识库','Confirm library download'));

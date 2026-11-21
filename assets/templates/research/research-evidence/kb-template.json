@@ -5,6 +5,9 @@
   "description": "用作者、来源、原子证据和主题页组织跨资料分析。",
   "purpose": "research",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

@@ -5,6 +5,9 @@
   "description": "把闪念和文献批注提炼成永久卡，由结构页编排阅读脉络。",
   "purpose": "reading",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates"
+  ],
   "pageTemplates": [
     "Templates"
   ],

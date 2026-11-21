@@ -5,11 +5,11 @@ import path from 'node:path';
 import { userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
-import { defaults, discover, scan, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
+import { defaults, discover, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
 import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../src/kb/create.ts';
 import { initialIdentityDefaults } from '../src/git/initial.ts';
 import { headOid, readCommit } from '../src/git/repository.ts';
-import { registerVaultLibrary } from '../src/registry/discovery.ts';
+import { registerVaultLibrary, scanVaultFolder } from '../src/registry/discovery.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
 import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import { readMapping } from '../src/kb/mapping.ts';
@@ -48,6 +48,9 @@ async function setup(t) {
 test('built-in creation renders scoped Base, preserves note variables, rejects concurrent duplicate',async t=>{
 	const {disk,config,input,skeleton}=await setup(t);
 	const p=await previewCreate(disk,config,input,skeleton);
+	assert.deepEqual(p.template.suggestedExcludedFolders,['Templates']);
+	assert.equal(p.git.branch,'main');
+	assert.equal(p.git.message,'Initial commit');
 	assert.equal(p.git.identity.name.source,'login');
 	assert.equal(p.git.identity.name.value,userInfo().username);
 	assert.equal(p.git.identity.email.source,'placeholder');
@@ -55,10 +58,11 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.ok(p.git.staged.includes('knowledge.base'));
 	assert.deepEqual(p.git.ignored,['kb.toml']);
 	assert.equal(await fs.stat(await disk.path(p.location)).catch(error=>error.code),'ENOENT');
-	const attempts=await Promise.allSettled([createLibrary(disk,config,p,skeleton),createLibrary(disk,config,p,skeleton)]);
+	const attempts=await Promise.allSettled(Array.from({length:2},()=>createLibrary(disk,config,p,skeleton,undefined,['Templates'])));
 	assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
 	const [lib]=await discover(disk,config);
 	assert.equal(lib.identity.displayName,input.displayName);
+	assert.deepEqual(lib.identity.excludedFolders,['Templates']);
 	const root=await disk.path(lib.location);
 	const base=parse(await fs.readFile(path.join(root,'knowledge.base'),'utf8'));
 	assert.ok(base.views[1].filters.and.includes('file.inFolder("knowledge-base/光学 研究/Notes")'));
@@ -135,13 +139,27 @@ test('system EMAIL is used only when valid, and an author environment change inv
 	assert.deepEqual(await discover(disk,config),[]);
 });
 
-test('an includeIf at the final path requires reconfirmation and registration retry keeps the same root commit',async t=>{
+test('desktop creation rejects invalid initial branch and message before publication',async t=>{
+	const {disk,config,input,skeleton}=await setup(t),defaults=await initialIdentityDefaults();
+	const git={defaults,values:{name:defaults.name.value,email:defaults.email.value},origin:''};
+	for(const branch of ['', '  ', '-invalid', 'nested//branch', 'work/refs.lock'])
+		await assert.rejects(previewCreate(disk,config,{...input,git:{...git,branch}},skeleton),/分支名|branch name/u);
+	for(const message of ['', '  ', 'first\nsecond'])
+		await assert.rejects(previewCreate(disk,config,{...input,git:{...git,message}},skeleton),/首提交说明|initial commit message/u);
+	assert.equal(await fs.stat(await disk.path(input.parent)).catch(error=>error.code),'ENOENT');
+});
+
+test('an includeIf requires reconfirmation and registration retry retains the custom branch and root commit',async t=>{
 	const {disk,config,input,skeleton,root,global}=await setup(t);
 	const dir=await disk.path(input.parent+'/'+input.name),condition=path.join(root,'conditional.gitconfig');
 	await fs.writeFile(condition,'[user]\n email = final@example.invalid\n');
 	const gitdir=path.join(dir,'.git').split(path.sep).join('/');
 	await fs.writeFile(global,'[user]\n name = Tester\n email = default@example.invalid\n[includeIf "gitdir:'+gitdir+'"]\n path = conditional.gitconfig\n');
+	const defaults=await initialIdentityDefaults(),branch='知识库/起始-1.0',message='初始化光学笔记';
+	input.git={defaults,values:{name:defaults.name.value,email:defaults.email.value},origin:'',branch,message};
 	const p=await previewCreate(disk,config,input,skeleton);
+	assert.equal(p.git.branch,branch);
+	assert.equal(p.git.message,message);
 	assert.equal(p.git.identity.email.value,'default@example.invalid');
 	const getReceipt=async(perform)=>{
 		try{await perform();}catch(error){
@@ -155,6 +173,8 @@ test('an includeIf at the final path requires reconfirmation and registration re
 	assert.deepEqual(await discover(disk,config),[]);
 	const revised=await reviewInterruptedCreation(disk,first);
 	assert.equal(revised.head,'');
+	assert.equal(revised.git.branch,branch);
+	assert.equal(revised.git.message,message);
 	assert.equal(revised.git.identity.email.value,'final@example.invalid');
 	assert.match(revised.git.identity.email.origin,/conditional\.gitconfig/u);
 	const second=await getReceipt(()=>resumeCreation(disk,config,first,revised,()=>Promise.reject(new Error('Registry is unavailable'))));
@@ -168,8 +188,15 @@ test('an includeIf at the final path requires reconfirmation and registration re
 	const review=await reviewInterruptedCreation(disk,second);
 	const result=await resumeCreation(disk,config,second,review);
 	assert.equal(result.head,committed);
-	assert.equal((await readCommit(dir,committed)).commit.author.email,'final@example.invalid');
-	assert.deepEqual((await readCommit(dir,committed)).commit.parent,[]);
+	assert.equal(result.branch,branch);
+	assert.equal(result.message,message);
+	const {commit}=await readCommit(dir,committed);
+	assert.equal(commit.author.email,'final@example.invalid');
+	assert.deepEqual(commit.parent,[]);
+	assert.equal(commit.message,message+'\n');
+	const native=(...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8'}).trim();
+	assert.equal(native('symbolic-ref','HEAD'),'refs/heads/'+branch);
+	assert.equal(native('rev-list','--count','HEAD'),'1');
 	assert.equal((await discover(disk,config))[0].identity.id,result.manifest.id);
 });
 test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate ID detected',async t=>{
@@ -186,7 +213,7 @@ test('adoption preserves branch, HEAD, staged bytes and working copy; duplicate 
 	await fs.writeFile(path.join(dir,'note.md'),'work');
 	const index=await fs.readFile(path.join(dir,'.git/index'));
 	assert.deepEqual(await discover(disk,config),[]);
-	const [candidate]=await scan(disk,config);
+	const {libraries:[candidate]}=await scanVaultFolder(disk,config,'knowledge-base');
 	await registerVaultLibrary(disk,config,candidate.location);
 	const [old]=await discover(disk,config);
 	assert.equal(old.mapping.wiki,'知识');

@@ -12,7 +12,7 @@ export async function hash(data:Uint8Array|string){
 	return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer(array))),b=>b.toString(16).padStart(2,'0')).join('');
 }
 export function component(name:string){
-	if(!name || name==='.' || name==='..' || name.includes('/') || /^git~\d+$/iu.test(name))throw new Error(tr('不安全的路径','Unsafe path')+': '+name);
+	if(!name || name==='.' || name==='..' || name.includes('/'))throw new Error(tr('不安全的路径','Unsafe path')+': '+name);
 	segments(name.startsWith('.')?'hidden'+name:name);
 	return name;
 }
@@ -23,11 +23,6 @@ export function relative(name:string,configDir:string,git=false){
 		if(key(p)===key(configDir) || (key(p)==='.git' && (!git || i!==0 || p!=='.git')))throw new Error(tr('保留目录','Reserved directory')+': '+p);
 	}
 	return name;
-}
-export function settingsPaths(parents:string[],templates:string[],configDir:string){
-	if(!parents.length)throw new Error(tr('请登记知识库父目录','Choose a library parent'));
-	const paths=[...parents,...templates].map(p=>{segments(p);relative(p,configDir);return key(p)+'/';});
-	if(paths.some((p,i)=>paths.some((q,j)=>i!==j && p.startsWith(q))))throw new Error(tr('设置目录重叠','Configured directories overlap'));
 }
 export async function children(disk:Disk,dir:string){
 	const data=await disk.list(dir), seen=new Set<string>();
@@ -41,14 +36,17 @@ export async function children(disk:Disk,dir:string){
 	}
 	return data;
 }
-export async function checkSpelling(disk:Disk,path:string){
+export async function checkSpelling(disk:Disk,path:string,folderOnly=false){
 	let parent='';
-	for(const name of path.split('/')){
+	const parts=path.split('/');
+	for(const [index,name] of parts.entries()){
 		const data=await children(disk,parent);
 		const expected=parent?parent+'/'+name:name;
 		const alias=[...data.files,...data.folders].find(p=>key(p)===key(expected));
 		if(alias && alias!==expected)throw new Error(tr('路径名称冲突','Path spelling collision')+': '+alias);
 		if(!alias)return;
+		if((folderOnly || index<parts.length-1) && !data.folders.includes(alias))
+			throw new Error(tr('路径须为目录','The path must be a folder')+': '+alias);
 		parent=expected;
 	}
 }

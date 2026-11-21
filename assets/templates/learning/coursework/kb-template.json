@@ -5,6 +5,10 @@
   "description": "用课程结构管理课堂、讲义、作业和截止日期。",
   "purpose": "learning",
   "entry": "README.md",
+  "suggestedExcludedFolders": [
+    "Templates",
+    "Integrations"
+  ],
   "pageTemplates": [
     "Templates"
   ],

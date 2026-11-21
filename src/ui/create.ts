@@ -1,7 +1,8 @@
 import { TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { initialIdentityDefaults, initialMessage } from '../git/initial.ts';
+import { initialIdentityDefaults } from '../git/initial.ts';
 import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
+import { defaultInitialBranch, defaultInitialMessage } from '../git/initial-options.ts';
 import { createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../kb/create.ts';
 import { kepanoSource } from '../kb/template.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
@@ -9,8 +10,10 @@ import { registryDataPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
 import { Dialog, V3Dialog } from './dialog.ts';
-import { reviewTemplateFilter } from './template-filter.ts';
+import { reviewCreationExclusions, showExclusionPlan } from './template-filter.ts';
+import type {ApprovedExclusions} from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
+import { destinationParentField } from './registry-path-field.ts';
 import { choiceForSource, pickTemplate, showTemplateDetails } from './v3-template-catalog.ts';
 import type { TemplateChoice } from './v3-template-catalog.ts';
 
@@ -39,8 +42,8 @@ function pathList(dialog:Dialog,title:string,paths:string[]){
 }
 
 function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
-	dialog.facts([[tr('分支','Branch'),'main'+(head?' · '+head.slice(0,7):'')],
-		[tr('提交说明','Commit message'),initialMessage],...signatureFacts(git.identity),
+	dialog.facts([[tr('分支','Branch'),git.branch+(head?' · '+head.slice(0,7):'')],
+		[tr('提交说明','Commit message'),git.message],...signatureFacts(git.identity),
 		[tr('姓名来源','Name source'),identitySource(git.identity.name)],
 		[tr('邮箱来源','Email source'),identitySource(git.identity.email)],['origin',git.origin||tr('未设置','Unset')]]);
 	if(git.origin)dialog.contentEl.createEl('p',{text:tr('仅保存远端地址。创建过程不会联网或设置上游分支。','Creation saves the remote address locally, without connecting or setting an upstream branch.')});
@@ -66,9 +69,10 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 	const {config,disk}=plugin;
 	const defaults=await initialIdentityDefaults();
 	const values={name:defaults.name.value,email:defaults.email.value};
+	const gitOptions={branch:defaultInitialBranch,message:defaultInitialMessage};
 	let origin='';
 	let template=initial;
-	const input={parent:config.parents[0]??'',name:'',displayName:'',description:'',source:template.source};
+	const input={name:'',displayName:'',description:'',source:template.source};
 	const form=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	const summary=form.contentEl.createEl('details',{cls:'kb-v3-detail'});
 	const chosen=summary.createEl('summary',{text:template.name});
@@ -82,14 +86,16 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		showTemplateDetails(facts,template);
 		return Promise.resolve();
 	},template));
-	form.choice(tr('父目录','Parent directory'),Object.fromEntries(config.parents.map(p=>[p,p])),v=>{input.parent=v;});
+	const getParent=destinationParentField(form,plugin.app,config,disk.registry,true);
 	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
 	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
 	form.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	form.text(tr('Git 姓名','Git name'),values.name,v=>{values.name=v;});
 	form.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;});
+	form.text(tr('初始分支','Initial branch'),gitOptions.branch,v=>{gitOptions.branch=v;});
+	form.text(tr('首提交说明（单行）','Initial commit message (one line)'),gitOptions.message,v=>{gitOptions.message=v;});
 	form.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
-	const run=async(dialog:Dialog,action:()=>ReturnType<typeof createLibrary>)=>{
+	const run=async(dialog:Dialog,exclusions:ApprovedExclusions,action:()=>ReturnType<typeof createLibrary>)=>{
 		let result:Awaited<ReturnType<typeof createLibrary>>;
 		try{result=await action();}
 		catch(error){
@@ -103,9 +109,9 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 				next.lines([receipt.path]);
 				showInitialPlan(next,review.git,review.head);
 				const registry=await reviewRegistryProtection(plugin,next);
-				const filter=await reviewTemplateFilter(plugin.app.vault,next,receipt.preview.input.source);
-				const protect=async()=>{await filter();await registry();};
-				next.action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(next,
+				showExclusionPlan(next,exclusions.plan);
+				const protect=async()=>{await registry();await exclusions.apply(receipt.manifest.id);};
+				next.action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(next,exclusions,
 					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect))));
 				recovery.close();next.open();
 			});
@@ -113,8 +119,8 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		}
 		dialog.close();form.close();
 		const success=new Dialog(plugin.app,tr('知识库已创建','Library created'));
-		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),'main · '+result.head.slice(0,7)],
-			[tr('提交说明','Commit message'),initialMessage],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
+		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),result.branch+' · '+result.head.slice(0,7)],
+			[tr('提交说明','Commit message'),result.message],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
 		if(template.entry)success.action(tr('打开首页','Open home note'),async()=>{
 		const relative=result.location+'/'+template.entry;
 			await disk.path(relative);
@@ -131,7 +137,8 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		assertGitEnabled(plugin);
 		await readVaultRegistry(disk);
 		const skeleton=input.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
-		const preview=await previewCreate(disk,plugin.config,{...input,displayName:input.displayName||input.name,git:{defaults,values:{...values},origin}},skeleton);
+		const preview=await previewCreate(disk,plugin.config,{...input,parent:getParent(),displayName:input.displayName||input.name,
+			git:{defaults,values:{...values},origin,...gitOptions}},skeleton);
 		const {git}=preview;
 		const confirm=new V3Dialog(plugin.app,tr('确认创建','Confirm creation'));
 		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version]]);
@@ -142,9 +149,16 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
 		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryDataPath(disk.configDir)]);
 		const registry=await reviewRegistryProtection(plugin,confirm);
-		const filter=await reviewTemplateFilter(plugin.app.vault,confirm,preview.input.source);
-		const protect=async()=>{await filter();await registry();};
-		confirm.action(tr('创建','Create'),()=>run(confirm,()=>plugin.exclusiveGit(preview.location,()=>createLibrary(disk,plugin.config,preview,skeleton,protect)))).setCta();
+		const selection=await reviewCreationExclusions(plugin.app,disk.registry,confirm,preview.location,preview.template.suggestedExcludedFolders??[]);
+		confirm.action(tr('创建','Create'),()=>{
+			const exclusions=selection.read();
+			return run(confirm,exclusions,()=>plugin.exclusiveGit(preview.location,async()=>{
+				await exclusions.check();
+				return createLibrary(disk,plugin.config,preview,skeleton,async manifest=>{
+					await registry();await exclusions.apply(manifest.id);
+				},exclusions.plan.folders);
+			}));
+		}).setCta();
 		confirm.open();
 	}).setCta();
 	form.open();
