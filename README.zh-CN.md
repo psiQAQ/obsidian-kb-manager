@@ -46,7 +46,7 @@
 
 ### 2. 安装方式
 
-> 当前版本 `3.1.0` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
+> 当前版本 `3.2.0` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
 
 #### 从 Obsidian 插件商店安装
 
@@ -112,14 +112,13 @@
 ### 5. 知识库体检与离线 CLI（`kb-check.cjs`）
 
 在知识库行的 **… → 检验** 中，插件会运行结构/链接检查以及该库模板声明的专项检查（`checks/*.mjs`）：
-- **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，选择 **审查脚本**，核对源码与摘要后点 **信任此版本**。脚本在本机以当前账号权限运行，修改后需重新核对。
-- **离线 CLI**：在 **… → 检验 → 导出离线检验工具** 中导出 `kb-check.cjs`，然后在导出文件所在目录用 Node.js 运行以下命令。工具输出单行 UTF-8 JSON，并在库内 `.log/` 留存检查历史。
-  ```bash
-  node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --list
-  node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --checks all
-  ```
+- **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，选择 **审查脚本**，核对源码与摘要后点 **授权此版本**。脚本在本机以当前账号权限运行，修改后需重新核对。
+- **离线 CLI**：新建库自带运行器与可编辑的通用规则。打开实例 README，按说明在库根目录执行下面的命令。原有知识库仍可在检验界面导出工具。
 
----
+```sh
+node ./checks/kb-check.cjs --library . --list
+node ./checks/kb-check.cjs --library . --checks all
+```
 
 **查看报告。** 选择 **查看报告 JSON**，选中所需文本后用系统的复制命令取用。设置中的 **调试信息 → 查看** 也提供只读 JSON。
 
@@ -140,7 +139,7 @@
 
 ---
 
-**网络、凭据与本机访问。** 本地建库和检验可离线使用。克隆、获取、拉取、推送会访问你配置的 Git 远端；推送会发送待推的提交及其历史。后台同步须按库授权。桌面从 Vault 外选择 Git 和 OpenSSH 可执行文件，以独立参数启动程序，并使用系统 Git 配置、凭据助手或 SSH 代理，也可为指定 HTTPS 目标选用 SecretStorage 中的令牌。模板专项会查找 Vault 外的 Node.js 可执行文件，并将所需笔记上下文交给已授信的脚本；该进程具有当前账号的文件和网络权限。[逐库 Git 与凭据](docs/library-git.md) · [迁移、恢复与设置存储](docs/library-lifecycle.md)
+**网络、凭据与本机访问。** 本地建库和检验可离线使用。克隆、获取、拉取、推送会访问你配置的 Git 远端；推送会发送待推的提交及其历史。后台同步须按库授权。桌面从 Vault 外选择 Git 和 OpenSSH 可执行文件，以独立参数启动程序，并使用系统 Git 配置、凭据助手或 SSH 代理，也可为指定 HTTPS 目标选用 SecretStorage 中的令牌。新库的通用规则和模板专项会查找 Vault 外的 Node.js 可执行文件，并将所需笔记上下文交给已授信的脚本；该进程具有当前账号的文件和网络权限。[逐库 Git 与凭据](docs/library-git.md) · [迁移、恢复与设置存储](docs/library-lifecycle.md)
 
 ## 二、开发者指南（Developers）
 
@@ -271,7 +270,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 #### CI 与版本发布
 - **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
-- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.1.0`）后，发布工作流会构建插件、生成构建证明并创建草稿 Release。上传的附件为 `main.js`、`manifest.json` 和 `styles.css`。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.2.0`）后，发布工作流会构建插件、生成构建证明并创建草稿 Release。上传的附件为 `main.js`、`manifest.json` 和 `styles.css`。
 
 ---
 

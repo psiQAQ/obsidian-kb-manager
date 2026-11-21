@@ -117,15 +117,17 @@ export default function check({ notes }) {
 
 ## 离线检验和日志
 
-从插件的检验界面导出 `kb-check.cjs`，或使用离线 ZIP 里的同名文件。在已安装 Node 的机器上运行以下命令，将两个路径替换为实际位置。
+建库时插件会分发 `checks/kb-check.cjs` 和 `checks/common/`，并在实例 README 中列出运行方式。请将模板专项放在 `checks/` 下的其他路径，保留现有 README 正文。从新实例根目录执行以下命令。
 
 ```sh
-node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --list
-node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --checks project-result --trust-digest "替换为已审阅脚本的64位SHA256"
-node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --checks all
+node ./checks/kb-check.cjs --library . --list
+node ./checks/kb-check.cjs --library . --checks project-result --trust-digest "替换为已审阅脚本的64位SHA256"
+node ./checks/kb-check.cjs --library . --checks all
 ```
 
-每次运行输出一个 UTF-8 JSON。agent 先读 `status`、`checks[].status` 和 `checks[].coverage`，再用 `diagnostics[]` 的位置与证据定位问题。离线缺少 Obsidian 实际链接解析结果时，会报告无法确定。本库 `.log/` 中保存以 UTC 时间和运行 UUID 命名的 JSON 历史，默认由 Git 忽略。修复后重新检查同一组规则，比较两次报告。运行失败、日志失败或部分覆盖时应保留相应原因。
+每次运行输出一个 UTF-8 JSON。agent 先读 `status`、`checks[].status` 和 `checks[].coverage`，再用 `checks[].diagnostics` 的位置与证据定位问题。离线缺少 Obsidian 实际链接解析结果时，会报告无法确定。本库 `.log/` 中保存以 UTC 时间和运行 UUID 命名的 JSON 历史，默认由 Git 忽略。修复后重新检查同一组规则，比较两次报告。运行失败、日志失败或部分覆盖时应保留相应原因。
+
+实例中的通用规则和模板专项接收不同的输入。编辑通用规则时，可从对应的 `checks/common/*.mjs` 查看该项可用的证据。例如 `properties.mjs` 接收 `notes` 和宿主初始化的 `result`，累加 `result.coverage`、填入 `result.diagnostics` 后返回 `result`。模板专项则直接返回诊断数组。两种脚本均可使用 `file` 和从 1 开始的 `line` 定位问题。桌面运行修改后的规则需要重新审查源码并授权，CLI 可重复传入 `--trust-digest` 分别认可多个文件。
 
 ## 把模板纳入内置目录
 

@@ -14,20 +14,28 @@
 
 选择 **查看报告 JSON** 可打开原始报告。选中所需文本或点击 **全选** 后，使用系统复制命令。
 
+## 审查库内规则与更新工具
+
+新实例的 `checks/common/` 保存可编辑的通用规则。以属性检验为例，桌面和离线工具都会执行本库的 `checks/common/properties.mjs`。官方摘要来自插件或独立工具自身。编辑文件后，桌面会在该项旁显示 **审查脚本**，可比较源码、核对 SHA-256 并授权这份内容。再次编辑会产生新的摘要。离线端使用 `--trust-digest` 传入已审阅的摘要。直接从命令行启动 `checks/kb-check.cjs` 时，须先信任入口文件本身。
+
+已带工具的实例可以在检验界面比较已安装版本与插件分发版本，再确认更新。预览会标出已修改的文件，供手动合并。日常运行与插件升级都会保留这些修改。
+
 ## 专项脚本与日志
 
-模板专项通过本机 Node.js 运行，脚本拥有当前系统账号的文件和网络权限。内置脚本按发行包中的摘要识别；个人脚本通过检查项旁的 **审查脚本** 查看源码和 SHA-256，再选择 **信任此版本**。脚本内容改变后需重新核对。请只运行你信任的脚本。
+模板专项通过本机 Node.js 运行，脚本拥有当前系统账号的文件和网络权限。内置脚本按发行包中的摘要识别；个人脚本通过检查项旁的 **审查脚本** 查看源码和 SHA-256，再选择 **授权此版本**。脚本内容改变后需重新核对。请只运行你信任的脚本。
 
 通用检验读取清单、笔记、附件引用及宿主提供的元数据，保留笔记内容、Git 暂存区和提交历史。新建实例会在默认由 Git 忽略的 `.log/` 保存每次检验的 JSON 报告；受管路径的修复在独立的预览中确认。模板专项须遵循只读约定。离线 agent 可调用 `kb-check.cjs` 并读取报告的 `status`、各项 `coverage` 和 `diagnostics`。[专项脚本协议](template-authoring.md)
 
 ## 离线运行与读取报告
 
-在知识库的 **… → 检验 → 导出离线检验工具** 中导出 `kb-check.cjs`。从本地构建的 ZIP 安装时，也可直接使用包内的同名文件。在工具所在目录打开终端，将下面的路径换成实际的 Vault 和知识库路径。`--list` 列出本库声明的专项，`--checks all` 运行全部适用项，可移植性可用 `--checks portability` 单独运行。
+3.2.0 起，新建库的首次提交包含 `checks/kb-check.cjs` 和 `checks/common/` 下的通用规则。进入实例根目录，在装有 Node.js 的机器上运行：
 
 ```sh
-node kb-check.cjs --library "/path/to/Vault/knowledge-base/光学研究" --vault-root "/path/to/Vault" --list
-node kb-check.cjs --library "/path/to/Vault/knowledge-base/光学研究" --vault-root "/path/to/Vault" --checks all
+node ./checks/kb-check.cjs --library . --list
+node ./checks/kb-check.cjs --library . --checks all
 ```
+
+需要指定宿主 Vault 时加上 `--vault-root "<Vault 路径>"`；可移植性可单独用 `--checks portability` 检查。桌面与 CLI 都执行库内的规则。修改规则后，在桌面检验界面审查脚本并授权该版本。规则以运行 Node 的用户权限执行。旧库继续使用原有检验方式，可从 **… → 检验 → 导出离线检验工具** 导出独立入口。
 
 CLI 将报告作为单行 JSON 写到标准输出。若两库都有 `[[实验记录]]`，桌面可以查询 Obsidian 在当前来源页选中的目标；单选可移植性可查看同名候选。离线只有短链时，保留报告中的未验证原因。agent 即使收到退出码 0 也应读取报告，例如将上条命令的输出保存为 `report.json` 后运行：
 
