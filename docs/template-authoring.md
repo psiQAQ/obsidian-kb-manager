@@ -1,6 +1,25 @@
 # 制作可实例化的知识库模板
 
-在桌面的 **设置 → Knowledge Base Manager** 选择 **制作模板**，填入 Vault 内尚不存在的目录、模板 ID、名称和用途。勾选专项示例，预检后建立目录、登记模板并试建。也可以先编辑目录，再在设置中登记。个人模板在 **新建知识库 → 我的模板** 以及所声明的用途下可见。没有清单的旧目录模板也可以登记和复制。
+在桌面的 **设置 → Knowledge Base Manager → 知识库目录与模板** 找到 **制作模板**，点 **打开向导**，填入 Vault 内尚不存在的目录、模板 ID、名称和用途。勾选专项示例，预检后建立目录、登记模板并试建。也可以先编辑目录，再在设置中登记。个人模板在 **新建知识库 → 我的模板** 以及所声明的用途下可见。没有清单的旧目录模板也可以登记和复制。
+
+## 从普通目录做模板
+
+在 Vault 中建立一个普通文件夹，例如 `样板/项目资料夹`，在设置中把它登记为目录模板。新建向导中选择它。普通模板逐字节复制，保留空目录、图片和 PDF。预览列出排除的隐藏文件、Git 历史和环境目录。模板与知识库父目录须互不重叠。
+
+要指定首页和需要渲染的文本，在模板根目录添加 `kb-template.json`。例如，以下声明只替换 `首页.md` 中的 `{{kb_name}}` 和 `{{description}}`。
+
+```json
+{
+  "id": "research-folder",
+  "version": "1",
+  "entry": "首页.md",
+  "text": { "首页.md": ["kb_name", "description"] }
+}
+```
+
+目录模板沿用内置 `knowledge.base` 的六处总览绑定时，可声明 `"managed": ["knowledge.base:overview-bindings"]`。移动时只修改已匹配的过滤条件，自定义表达式保留供人工检查。
+
+另一个可用变量为 `kb_root`，表示最终 Vault 相对目录。可用 `hidden` 数组声明允许复制的隐藏文件相对路径。未声明的 `{{date:YYYY-MM-DD}}` 等笔记模板变量原样保留。目录模板不指定入口时，**打开** 会列出本库可打开的 Markdown 笔记。
 
 ## 一套课题模板
 
@@ -99,7 +118,7 @@ export default function check({ notes }) {
 
 ```sh
 node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --list
-node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --checks project-result --trust-digest <已审阅脚本的SHA256>
+node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --checks project-result --trust-digest "替换为已审阅脚本的64位SHA256"
 node kb-check.cjs --library "Vault/研究/实验甲" --vault-root "Vault" --checks all
 ```
 
