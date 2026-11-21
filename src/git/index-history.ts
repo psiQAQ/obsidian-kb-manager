@@ -5,9 +5,10 @@ import {fields,readCommit} from './repository.ts';
 
 interface FileDelta {file:string;before?:string;after?:string}
 
-export async function commitFiles(dir:string,oid:string){
+export async function commitFiles(dir:string,oid:string,selectedParent?:string){
 	await guardGit(dir,new Set(),true);
-	const {commit}=await readCommit(dir,oid),parent=commit.parent[0];
+	const {commit}=await readCommit(dir,oid),parent=selectedParent??commit.parent[0];
+	if(selectedParent!==undefined && !commit.parent.includes(selectedParent))throw new Error(fromEnglish('Invalid comparison parent.','所选提交不是该提交的父提交。'));
 	const args=['diff-tree','--no-commit-id','--no-renames','--no-abbrev','--raw','-r','-z',...(parent?[parent,oid]:['--root',oid])];
 	const tokens=fields((await gitResult(dir,args)).stdout),files:FileDelta[]=[];
 	for(let i=0;i<tokens.length;i+=2){
@@ -21,8 +22,8 @@ export async function commitFiles(dir:string,oid:string){
 	return {parent,files};
 }
 
-export async function committedComparison(dir:string,oid:string,file:string){
-	const {parent,files}=await commitFiles(dir,oid),item=files.find(c=>c.file===file);
+export async function committedComparison(dir:string,oid:string,file:string,selectedParent?:string){
+	const {parent,files}=await commitFiles(dir,oid,selectedParent),item=files.find(c=>c.file===file);
 	if(!item)throw new Error(fromEnglish('File not found in commit changes.','在本次提交的变更中找不到文件。'));
 	const blob=async(id?:string)=>id?(await gitResult(dir,['cat-file','blob',id])).stdout:undefined;
 	return {parent,before:await blob(item.before),after:await blob(item.after)};

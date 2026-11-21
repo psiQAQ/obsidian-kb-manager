@@ -1,10 +1,12 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
-import { createTwoFilesPatch, diffLines } from 'diff';
+import { structuredPatch } from 'diff';
+import { renderDiff } from './diff-table.ts';
+import { revealSourceTab } from './source-tabs.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { discover, recheck } from '../kb/catalog.ts';
 import { previewVersion } from '../git/versions.ts';
-import { fileComparison, changeIndexHunk, textHunks } from '../git/index-actions.ts';
+import { fileComparison, changeIndexHunk } from '../git/index-actions.ts';
 import { committedComparison } from '../git/index-history.ts';
 import { historyType, registerSourceHistory } from './source-history.ts';
 import { Dialog } from './dialog.ts';
@@ -17,11 +19,12 @@ export async function refreshSourceTabs(plugin:KnowledgeBaseManager){
 		await leaf.view.setState(leaf.view.getState(),{history:false}).catch(error=>pluginNotice(plugin,'error',String(error)));
 	}
 }
-interface DiffTarget { id:string; file:string; staged:boolean; commit?:string }
+interface DiffTarget { id:string; file:string; staged:boolean; commit?:string; parent?:string }
 function isTarget(value:unknown): value is DiffTarget {
 	return !!value && typeof value==='object' && 'id' in value && typeof value.id==='string'
 		&& 'file' in value && typeof value.file==='string' && 'staged' in value && typeof value.staged==='boolean'
-		&& (!('commit' in value) || typeof value.commit==='string');
+		&& (!('commit' in value) || typeof value.commit==='string')
+		&& (!('parent' in value) || typeof value.parent==='string');
 }
 
 export function registerSourceDiff(plugin:KnowledgeBaseManager) {
@@ -30,9 +33,7 @@ export function registerSourceDiff(plugin:KnowledgeBaseManager) {
 }
 
 export async function showDiff(plugin:KnowledgeBaseManager,target:DiffTarget) {
-	const leaf=plugin.app.workspace.getLeaf('tab');
-	await leaf.setViewState({type:diffType,state:{...target},active:true});
-	await plugin.app.workspace.revealLeaf(leaf);
+	await revealSourceTab(plugin,diffType,{...target});
 }
 
 class SourceDiff extends ItemView {
@@ -45,6 +46,10 @@ class SourceDiff extends ItemView {
 	getState(){return {...this.target};}
 	async setState(value:unknown,result:ViewStateResult) {
 		await super.setState(value,result);
+		const sameTarget=isTarget(value) && this.target?.id===value.id && this.target.file===value.file
+			&& this.target.staged===value.staged && this.target.commit===value.commit && this.target.parent===value.parent;
+		const initialRows=sameTarget ? this.contentEl.querySelector('tbody')?.rows.length ?? 0 : 0;
+		const scrollTop=sameTarget ? this.contentEl.scrollTop : 0;
 		this.contentEl.empty();
 		const el=this.contentEl.createDiv({cls:'kb-diff-view'});
 		if (!isTarget(value)) return;
@@ -55,7 +60,7 @@ class SourceDiff extends ItemView {
 			const lib=(await discover(p.disk,p.config)).find(l=>l.identity?.id===value.id && !l.duplicate && !l.problem);
 			if (!lib) throw new Error(p.t('无法定位知识库','Could not locate the library'));
 			const dir=await p.disk.path(lib.location);
-			const snapshot=value.commit ? await committedComparison(dir,value.commit,value.file) : undefined;
+			const snapshot=value.commit ? await committedComparison(dir,value.commit,value.file,value.parent) : undefined;
 			const preview=snapshot ? undefined : await previewVersion(dir);
 			const workBytes=!value.staged && preview?.changes.find(c=>c.file===value.file)?.workBytes;
 			if(workBytes && workBytes>2*1024*1024){
@@ -81,8 +86,15 @@ class SourceDiff extends ItemView {
 				return;
 			}
 			const pref=p.preferences(value.id);
+			const patch=structuredPatch(left,right,a,b,undefined,undefined,{context:3,timeout:pref.diffTimeout});
+			if(!patch)throw new Error(p.t('差异计算超时','Diff computation timed out'));
+			if(!patch.hunks.length){
+				const message=!before ? p.t('新增空文件','Added empty file') : !after ? p.t('已删除空文件','Deleted empty file') : p.t('文本内容相同','Text contents are identical');
+				el.createEl('p',{text:message});
+				return;
+			}
 			if(before && after && preview && pref.hunkCommands && !lib.identity?.archived){
-				const hunks=textHunks(before,after,pref.diffTimeout).patch.hunks;
+				const hunks=patch.hunks;
 				const controls=el.createEl('details');
 				controls.createEl('summary',{text:p.t('差异块','Hunks')+' ('+hunks.length+')'});
 				for(const [i,hunk] of hunks.entries()){
@@ -103,21 +115,8 @@ class SourceDiff extends ItemView {
 					};
 				}
 			}
-			if(pref.diffStyle==='split') {
-				const changes=diffLines(a,b,{timeout:pref.diffTimeout});
-				if (!changes) throw new Error(p.t('差异计算超时','Diff computation timed out'));
-				const table=el.createEl('table');
-				const header=table.createEl('tr');
-				header.createEl('th',{text:left});header.createEl('th',{text:right});
-				for(const part of changes){
-					const row=table.createEl('tr');
-					row.createEl('td').createEl('pre',{text:part.added?'':part.value});
-					row.createEl('td').createEl('pre',{text:part.removed?'':part.value});
-				}
-			} else {
-				const patch=createTwoFilesPatch(left,right,a,b,undefined,undefined,{timeout:pref.diffTimeout});
-				el.createEl('pre',{text:patch ?? p.t('差异计算超时','Diff computation timed out')});
-			}
+			renderDiff(el,patch.hunks,pref.diffStyle==='split',left,right,initialRows);
+			if(el.parentElement===this.contentEl)this.contentEl.scrollTop=scrollTop;
 		} catch(error){el.createEl('p',{cls:'kb-git-error',text:String(error)});}
 	}
 }

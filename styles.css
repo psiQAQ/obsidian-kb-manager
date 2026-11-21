@@ -84,7 +84,49 @@
 .kb-git-history details { margin-block: var(--size-4-2); }
 .kb-git-history .kb-commit-meta { color: var(--text-muted); }
 .kb-diff-view { min-inline-size: 0; }
-.kb-diff-view table { table-layout: fixed; inline-size: 100%; }
+.kb-diff-view .kb-diff-scroll { overflow-x: auto; }
+.kb-diff-view .kb-diff-table {
+	inline-size: 100%;
+	table-layout: fixed;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+.kb-diff-table th, .kb-diff-table .kb-diff-range {
+	padding: var(--size-4-2);
+	background: var(--background-secondary);
+	text-align: start;
+}
+.kb-diff-table .kb-diff-range, .kb-diff-line {
+	font-family: var(--font-monospace);
+	line-height: 1.55;
+}
+.kb-diff-table .kb-diff-range { color: var(--text-muted); }
+.kb-diff-table .kb-diff-cell { padding: 0; vertical-align: top; }
+.kb-diff-split .kb-diff-cell + .kb-diff-cell { border-inline-start: 1px solid var(--background-modifier-border); }
+.kb-diff-cell.kb-diff-added { background-color: rgba(var(--color-green-rgb), 0.17); }
+.kb-diff-cell.kb-diff-removed { background-color: rgba(var(--color-red-rgb), 0.17); }
+.kb-diff-line {
+	display: grid;
+	grid-template-columns: 4ch 2ch minmax(0, 1fr);
+	padding-inline: var(--size-4-1);
+}
+.kb-diff-unified .kb-diff-line { grid-template-columns: 4ch 4ch 2ch minmax(0, 1fr); }
+.kb-diff-number, .kb-diff-sign {
+	color: var(--text-muted);
+	text-align: end;
+	user-select: none;
+}
+.kb-diff-sign { text-align: center; }
+.kb-diff-line code {
+	padding: 0;
+	color: var(--text-normal);
+	background: transparent;
+	font: inherit;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	tab-size: 4;
+}
+.kb-diff-eol { color: var(--text-muted); font-size: var(--font-ui-smaller); }
 
 @container (max-width: 29rem) {
 	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-info { flex: 1 0 100%; margin-inline-end: 0; }
