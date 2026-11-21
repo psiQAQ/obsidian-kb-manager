@@ -3,18 +3,19 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import test from 'node:test';
-import { VaultDisk, digest } from '../src/fs/vault.ts';
+import { digest } from '../src/fs/vault.ts';
 import { defaults, discover, newIdentity, readManifest, writeIdentity } from '../src/kb/catalog.ts';
 import { renderBase } from '../src/kb/template-core.ts';
 import { applyIgnoreRule, previewRegistryIgnore, readVaultRegistry, writeVaultRegistry } from '../src/registry/desktop.ts';
 import { registerVaultLibrary, scanVaultFolder } from '../src/registry/discovery.ts';
 import { confirmImport, previewImport } from '../src/registry/import.ts';
-import { amendRegistry, parseRegistry, registryDataPath, registryIgnoreFor, registryPath } from '../src/registry/paths.ts';
+import { amendRegistry, parseRegistry, registryDataPath, registryIgnoreFor } from '../src/registry/paths.ts';
 
 import { withLibraryIgnores } from '../src/kb/identity-core.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
 
 const configDir = '.fixture-settings';
+const oldRegistryPath = '.kb-manager/libraries.json';
 
 test('adds missing local ignores once and respects later overriding rules', () => {
 	const existing='/kb.toml\r\n# local identity\r\n';
@@ -76,91 +77,21 @@ test('the Vault registry contains only portable relative paths and reads without
 	assert.equal((await discover(disk,config)).length,2);
 });
 
-test('legacy migration keeps discovery available, then removes only the confirmed registry file',async t=>{
+test('desktop discovery and registration use plugin data and preserve an old registry file',async t=>{
 	const {root,disk,config,create} = await setup(t);
-	const legacy = path.join(root,registryPath);
+	const legacy = path.join(root,oldRegistryPath);
 	const dataFile = path.join(root,registryDataPath(configDir));
 	const original = '[\r\n  "Old/资料"\r\n]\r\n';
-	const adjacentFile = path.join(path.dirname(legacy),'keep.txt');
 	await create('Old/资料');
 	await create('New/资料');
 	await fs.mkdir(path.dirname(legacy));
 	await fs.writeFile(legacy,original);
-	await fs.writeFile(adjacentFile,'keep these bytes\r\n');
-	assert.deepEqual((await discover(disk,config)).map(lib=>lib.location),['Old/资料']);
-	await assert.rejects(registerVaultLibrary(disk,config,'New/资料'));
-	const preview = await disk.registry.previewMigration();
-	assert.ok(preview);
-	assert.equal(await fs.readFile(legacy,'utf8'),original);
+	assert.deepEqual(await discover(disk,config),[]);
 	await assert.rejects(fs.stat(dataFile),{code:'ENOENT'});
-	await disk.registry.migrate(preview);
-	assert.deepEqual(JSON.parse(await fs.readFile(dataFile,'utf8')).registeredLibraries,['Old/资料']);
-	await assert.rejects(fs.stat(legacy),{code:'ENOENT'});
-	assert.equal(await fs.readFile(adjacentFile,'utf8'),'keep these bytes\r\n');
-	assert.deepEqual((await discover(vaultDisk(root,configDir),config)).map(lib=>lib.location),['Old/资料']);
 	await registerVaultLibrary(disk,config,'New/资料');
-	assert.deepEqual((await readVaultRegistry(disk)).paths,['New/资料','Old/资料']);
-});
-
-test('migration preserves a legacy file edited while the new registry was being saved',async t=>{
-	const {root} = await setup(t);
-	const legacy = path.join(root,registryPath);
-	const original = '["Books/Legacy"]';
-	const replacement = '["Books/Legacy","Books/Updated"]';
-	await fs.mkdir(path.dirname(legacy));
-	await fs.writeFile(legacy,original);
-	let shared = {language:'en',defaults:{tree:true}};
-	const disk = new VaultDisk(root,configDir,{
-		async load() { return structuredClone(shared); },
-		async save(data) {
-			const firstWrite = !shared.registeredLibraries;
-			shared = structuredClone(data);
-			if (firstWrite) await fs.writeFile(legacy,replacement);
-		},
-	});
-	const preview = await disk.registry.previewMigration();
-	await assert.rejects(disk.registry.migrate(preview));
-	assert.equal(await fs.readFile(legacy,'utf8'),replacement);
-	assert.deepEqual(shared.registeredLibraries,['Books/Legacy']);
-	await disk.registry.migrate(await disk.registry.previewMigration());
-	await assert.rejects(fs.stat(legacy),{code:'ENOENT'});
-	assert.deepEqual(shared,{language:'en',defaults:{tree:true},registeredLibraries:['Books/Legacy','Books/Updated']});
-});
-
-test('legacy migration refuses linked directories and linked registry files',async t=>{
-	const {root,disk} = await setup(t);
-	const legacy = path.join(root,registryPath);
-	const neighbor = path.join(root,'Neighbor');
-	const existing = path.join(neighbor,path.basename(legacy));
-	const original = '["Old/Library"]';
-	await fs.mkdir(neighbor);
-	await fs.writeFile(existing,original);
-	await fs.symlink(neighbor,path.dirname(legacy),'junction');
-	await assert.rejects(disk.registry.previewMigration());
-	assert.equal(await fs.readFile(existing,'utf8'),original);
-	await fs.unlink(path.dirname(legacy));
-	await fs.mkdir(path.dirname(legacy));
-	await fs.link(existing,legacy);
-	await assert.rejects(disk.registry.previewMigration());
-	assert.equal(await fs.readFile(existing,'utf8'),original);
+	assert.deepEqual(JSON.parse(await fs.readFile(dataFile,'utf8')).registeredLibraries,['New/资料']);
+	assert.deepEqual((await discover(vaultDisk(root,configDir),config)).map(lib=>lib.location),['New/资料']);
 	assert.equal(await fs.readFile(legacy,'utf8'),original);
-	await assert.rejects(fs.stat(path.join(root,registryDataPath(configDir))),{code:'ENOENT'});
-});
-
-test('a Vault configuration named .kb-manager owns the files in that directory',async t=>{
-	const settingsDir = path.dirname(registryPath);
-	const {root,disk,config,create} = await setup(t,settingsDir);
-	const settingsFile = path.join(root,registryPath);
-	const settingsText = '["Old/Unrelated"]\n';
-	await fs.mkdir(path.dirname(settingsFile));
-	await fs.writeFile(settingsFile,settingsText);
-	assert.deepEqual(await readVaultRegistry(disk),{raw:null,paths:[]});
-	assert.equal(await disk.registry.previewMigration(),null);
-	await create('Books/Library');
-	await registerVaultLibrary(disk,config,'Books/Library');
-	const dataFile = path.join(root,registryDataPath(settingsDir));
-	assert.deepEqual(JSON.parse(await fs.readFile(dataFile,'utf8')).registeredLibraries,['Books/Library']);
-	assert.equal(await fs.readFile(settingsFile,'utf8'),settingsText);
 });
 
 test('explicit recursive scans skip templates, configuration, links and nested libraries',async t=>{
@@ -262,7 +193,7 @@ test('the root Git ignore rule matches only the plugin data for a custom Vault c
 	assert.ifError(ownData.error);
 	assert.equal(ownData.status,0);
 	for (const other of [registryDataPath('.custom 1'),registryDataPath(configDir),`${settingsDir}/plugins/other/data.json`,
-		`${settingsDir}/plugins/knowledge-base-manager/manifest.json`,registryPath]) {
+		`${settingsDir}/plugins/knowledge-base-manager/manifest.json`,oldRegistryPath]) {
 		const result = matches(other);
 		assert.ifError(result.error);
 		assert.equal(result.status,1,other);

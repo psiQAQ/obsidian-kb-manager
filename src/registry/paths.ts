@@ -1,10 +1,6 @@
 import { segments } from '../fs/segments.ts';
 import { tr } from '../i18n.ts';
 
-export const registryDirectory = '.kb-manager';
-export const registryName = 'libraries.json';
-export const registryPath = registryDirectory + '/' + registryName;
-
 export function registryDataPath(configDir:string) {
 	return configDir + '/plugins/knowledge-base-manager/data.json';
 }
@@ -26,10 +22,6 @@ export function compareRegistryPaths(a:string,b:string) {
 		if (symbol !== next.value) return symbol.codePointAt(0)! - next.value.codePointAt(0)!;
 	}
 	return right.next().done ? 0 : -1;
-}
-
-export function legacyDirectoryIsConfig(configDir:string) {
-	return sameOrBelow(registryKey(configDir),registryDirectory);
 }
 
 export function validateRegistryPath(relative:string, configDir:string) {

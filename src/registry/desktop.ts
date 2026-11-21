@@ -6,7 +6,7 @@ import { statIfPresent } from '../fs/paths.ts';
 import type { VaultDisk } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { withLibraryIgnores } from '../kb/identity-core.ts';
-import { legacyDirectoryIsConfig, registryDirectory, registryIgnoreFor, registryKey, registryName, registryPath, withIgnoreRule } from './paths.ts';
+import { registryIgnoreFor, registryKey, withIgnoreRule } from './paths.ts';
 
 export type RegistrySnapshot = Awaited<ReturnType<VaultDisk['registry']['read']>>;
 type FileSnapshot = {raw:string;mode:number}|null;
@@ -18,13 +18,6 @@ async function exactChild(directory:string, name:string) {
 		throw new Error(tr('路径名称冲突','Path spelling conflict') + ' · ' + name);
 	}
 	return target;
-}
-
-async function registryFolder(disk:VaultDisk) {
-	const folder = await exactChild(await fs.realpath(disk.root),registryDirectory);
-	const status = await statIfPresent(folder);
-	if (status && !status.isDirectory()) throw new Error(tr('登记目录必须是真实目录','The registry folder must be a real directory'));
-	return {folder,status};
 }
 
 async function readFile(filename:string):Promise<FileSnapshot> {
@@ -39,41 +32,6 @@ async function readFile(filename:string):Promise<FileSnapshot> {
 		}
 		return {raw:new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await file.readFile()),mode:current.mode & 0o777};
 	} finally { await file.close(); }
-}
-
-export function desktopLegacyRegistry(disk:VaultDisk) {
-	return {
-		async read() {
-			if (legacyDirectoryIsConfig(disk.configDir)) return null;
-			try {
-				const {folder,status} = await registryFolder(disk);
-				return status ? (await readFile(await exactChild(folder,registryName)))?.raw ?? null : null;
-			} catch(error) {
-				throw new Error(tr('无法读取旧登记文件，请检查','Could not read the legacy registry. Check') + ' · ' + registryPath + ' · ' + String(error));
-			}
-		},
-		async remove(expected:string) {
-			if (legacyDirectoryIsConfig(disk.configDir)) throw new Error(tr('旧登记目录属于 Vault 配置','The legacy registry folder belongs to the Vault configuration'));
-			const {folder,status} = await registryFolder(disk);
-			const changed = () => new Error(tr('旧版登记已变化，请重新预览','The legacy registry changed. Preview it again'));
-			if (!status) throw changed();
-			const filename = await exactChild(folder,registryName);
-			const original = await statIfPresent(filename);
-			if ((await readFile(filename))?.raw !== expected || !original) throw changed();
-			const currentFolder = await statIfPresent(folder);
-			if (!currentFolder?.isDirectory() || currentFolder.dev !== status.dev || currentFolder.ino !== status.ino) throw changed();
-			const current = await statIfPresent(filename);
-			if (!current?.isFile() || current.nlink !== 1 || current.dev !== original.dev || current.ino !== original.ino ||
-				current.size !== original.size || current.mtimeMs !== original.mtimeMs || current.ctimeMs !== original.ctimeMs) throw changed();
-			await fs.unlink(filename);
-			const remaining = await statIfPresent(folder);
-			if (!remaining?.isDirectory() || remaining.dev !== status.dev || remaining.ino !== status.ino) return;
-			try { await fs.rmdir(folder); }
-			catch (error) {
-				if (!['ENOENT','ENOTEMPTY','EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
-			}
-		},
-	};
 }
 
 export function readRegistryRaw(disk:VaultDisk) { return disk.registry.readRaw(); }

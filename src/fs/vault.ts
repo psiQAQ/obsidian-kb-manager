@@ -3,7 +3,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { segments, statIfPresent } from './paths.ts';
-import { desktopLegacyRegistry } from '../registry/desktop.ts';
 import { PluginDataRegistry } from '../registry/plugin-data.ts';
 import type { PluginDataIO } from '../registry/plugin-data.ts';
 
@@ -22,7 +21,7 @@ export class VaultDisk {
 	constructor(root: string, configDir: string, data: PluginDataIO) {
 		this.root = root;
 		this.configDir = configDir;
-		this.registry = new PluginDataRegistry(configDir,data,desktopLegacyRegistry(this));
+		this.registry = new PluginDataRegistry(configDir,data);
 	}
 
 	validate(relative: string) {

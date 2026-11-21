@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createPreview,instantiate,discoverMobile} from '../src/mobile/catalog.ts';
 import {parseIdentity,readManifest,writePreferences} from '../src/kb/identity-core.ts';
-import {assignMobileCopyId,mobileLegacyRegistry,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
+import {assignMobileCopyId,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
 import {applyLibraryBindings,previewBindings,resumeLibraryBindings} from '../src/mobile/bindings.ts';
 import {mobileRepo} from '../src/mobile/disk.ts';
 import {mobileStatus,editIndex,commit,mobileHistory,effectiveAuthor,localAuthor,configure} from '../src/mobile/git.ts';
@@ -14,7 +14,7 @@ import {download,applyPull,pullPlan,transfer,upstream} from '../src/mobile/remot
 import {mobileHttp} from '../src/mobile/http.ts';
 import {readMobileStorage} from '../src/mobile/storage.ts';
 import {PluginDataRegistry} from '../src/registry/plugin-data.ts';
-import {registryDataPath,registryPath} from '../src/registry/paths.ts';
+import {registryDataPath} from '../src/registry/paths.ts';
 
 function adapter(root){
 	const f=p=>path.join(root,p);
@@ -44,7 +44,7 @@ async function setup(t){
 			await disk.write(dataPath,JSON.stringify(data));
 		},
 	};
-	const registry=new PluginDataRegistry(configDir,storage,mobileLegacyRegistry(disk,configDir));
+	const registry=new PluginDataRegistry(configDir,storage);
 	return {root,disk,dataPath,storage,ctx:{disk,configDir,registry,parents:['libs'],templates:['templates/sample']}};
 }
 async function inputs(root){
@@ -199,36 +199,21 @@ test('mobile creation retries copy and registration failures without duplicate c
 	assert.equal(execFileSync('git',['-C',path.join(root,'libs/retry'),'rev-list','--count','HEAD']).toString().trim(),'1');
 });
 
-test('mobile can read legacy registrations and retries confirmed cleanup without touching neighboring files',async t=>{
+test('mobile reads and updates only the plugin data registry',async t=>{
 	const {root,disk,ctx,storage}=await setup(t),assets=await inputs(root);
-	const raw='["old/library"]\n';
+	const oldPath='.kb-manager/libraries.json',raw='["old/library"]\n';
 	await disk.mkdir('.kb-manager');
-	await disk.write(registryPath,raw);
+	await disk.write(oldPath,raw);
 	await disk.write('.kb-manager/keep.txt','keep me');
 	await storage.save({language:'en',unrelated:{preserved:true}});
+	assert.deepEqual(await discoverMobile(ctx),[]);
 	const request={parent:'libs',name:'new',displayName:'New',description:'',source:'templates/sample',author};
 	const approval=await createPreview(ctx,request,assets);
-	assert.deepEqual(await discoverMobile(ctx),[{location:'old/library',missing:true}]);
-	await assert.rejects(instantiate(ctx,approval,assets),/迁移|migrat/iu);
-	const url='https://example.invalid/library.git';
-	await assert.rejects(download(ctx,'libs','cloned',url,{request:()=>assert.fail('contacted the remote before migration')}),/迁移|migrat/iu);
-	assert.equal(await disk.stat('libs'),null);
-	assert.equal(await disk.read(registryPath),raw);
-	const preview=await ctx.registry.previewMigration();
-	assert.deepEqual(preview.paths,['old/library']);
-	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true}});
-	const remove=disk.remove;
-	disk.remove=async p=>{if(p===registryPath)throw new Error('fixture cleanup failure');await remove(p);};
-	await assert.rejects(ctx.registry.migrate(preview),/fixture cleanup failure/u);
-	assert.equal(await disk.read(registryPath),raw);
-	assert.deepEqual((await storage.load()).registeredLibraries,['old/library']);
-	disk.remove=remove;
-	const reopened=new PluginDataRegistry(ctx.configDir,storage,mobileLegacyRegistry(disk,ctx.configDir));
-	await reopened.migrate(await reopened.previewMigration());
-	assert.equal(await disk.stat(registryPath),null);
+	await instantiate(ctx,approval,assets);
+	assert.equal(await disk.read(oldPath),raw);
 	assert.equal(await disk.read('.kb-manager/keep.txt'),'keep me');
-	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true},registeredLibraries:['old/library']});
-	assert.deepEqual((await discoverMobile({...ctx,registry:reopened})).map(lib=>lib.location),['old/library']);
+	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true},registeredLibraries:['libs/new']});
+	assert.deepEqual((await discoverMobile(ctx)).map(lib=>lib.location),['libs/new']);
 });
 
 function smartHttps(bare,url,auth){

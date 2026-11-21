@@ -29,7 +29,6 @@ import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
-import { showLegacyRegistryMigration } from './ui/manager-registry.ts';
 
 import {packText} from './kb/template-pack.ts';
 
@@ -156,7 +155,6 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.refreshStatus=attachLibraryStatus(this);
 		startAutomation(this);
 		this.app.workspace.onLayoutReady(()=>{
-			void showLegacyRegistryMigration(this).catch(error=>new Notice(String(error),8000));
 			if(this.app.workspace.getLeavesOfType(managerType).some(leaf=>leaf.getRoot()!==this.app.workspace.rightSplit)){
 				void this.openManager().catch(error=>new Notice(String(error)));
 			}

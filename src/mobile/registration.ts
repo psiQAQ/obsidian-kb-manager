@@ -3,7 +3,7 @@ import {identityFile,readManifest,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import type {Mapping} from '../kb/mapping.ts';
 import type {GitPreferences} from '../preferences.ts';
-import {amendRegistry,legacyDirectoryIsConfig,registryDirectory,registryIgnoreFor,registryPath,validateRegistryPath,withIgnoreRule} from '../registry/paths.ts';
+import {amendRegistry,registryIgnoreFor,validateRegistryPath,withIgnoreRule} from '../registry/paths.ts';
 import type {PluginDataRegistry} from '../registry/plugin-data.ts';
 import {checkSpelling,children,key,replaceText} from './disk.ts';
 import type {Disk} from './disk.ts';
@@ -28,26 +28,6 @@ export function libraryPath(ctx:Catalog,path:string){
 	if(ctx.templates.some(dir=>(key(path)+'/').startsWith(key(dir)+'/') || (key(dir)+'/').startsWith(key(path)+'/')))
 		throw new Error(tr('知识库位置与模板目录重叠','The library path overlaps a template directory'));
 	return path;
-}
-
-export function mobileLegacyRegistry(disk:Disk,configDir:string){
-	async function read(){
-		if(legacyDirectoryIsConfig(configDir))return null;
-		await checkSpelling(disk,registryDirectory);
-		const directory=await disk.stat(registryDirectory);
-		if(!directory)return null;
-		if(directory.type!=='folder')throw new Error(tr('旧登记位置已被文件占用','A file occupies the legacy registry folder'));
-		await checkSpelling(disk,registryPath);
-		const status=await disk.stat(registryPath);
-		if(!status)return null;
-		if(status.type!=='file')throw new Error(tr('旧登记表位置不是文件','The legacy registry path is not a file'));
-		return disk.read(registryPath);
-	}
-	return {read,async remove(expected:string){
-		if(await read()!==expected)throw new Error(tr('旧登记表已变化，请重新预览','The legacy registry changed. Preview it again.'));
-		await disk.remove(registryPath);
-		try{await disk.rmdir(registryDirectory,false);}catch{/* Preserve nonempty folders and leave inaccessible ones in place. */}
-	}};
 }
 
 export async function readMobileRegistry(ctx:Catalog){

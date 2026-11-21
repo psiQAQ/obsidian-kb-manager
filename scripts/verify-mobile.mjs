@@ -34,7 +34,7 @@ await mobile.onload();
 assert.ok(commands.has('open-manager'));
 assert.ok(commands.has('create-library'));
 assert.ok(commands.has('insert-library-template'));
-assert.ok(commands.has('migrate-library-registry'));
+assert.ok(!commands.has('migrate-library-registry'));
 assert.deepEqual(structuredClone(device.get('knowledge-base-manager:device-v3').pendingLibraryPreferences),{[libraryId]:{disablePush:true}});
 assert.deepEqual(data,{language:'en',defaults:{},registeredLibraries:['notes/sample'],unknown:{keep:true}});
 await mobile.saveConfig(['books'],[],'zh');

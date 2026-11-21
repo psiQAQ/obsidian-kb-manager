@@ -38,12 +38,6 @@ export class MobileView extends ItemView {
 			this.button(toolbar,tr('克隆','Clone'),()=>cloneForm(p));
 		}else el.createEl('p',{text:tr('此设备已暂停知识库 Git','Library Git is paused on this device')});
 		try{
-			const migration=await p.ctx.registry.previewMigration().catch(()=>true);
-			if(this.revision!==revision)return;
-			if(migration){
-				const row=new Setting(el).setName(tr('旧知识库登记表','Legacy library registry'));
-				this.button(row,tr('预览迁移','Preview migration'),()=>p.previewRegistryMigration());
-			}
 			const libs=await discoverMobile(p.ctx);
 			if(this.revision!==revision)return;
 			if(!libs.length)el.createEl('p',{text:tr('还没有登记知识库','No registered knowledge bases')});

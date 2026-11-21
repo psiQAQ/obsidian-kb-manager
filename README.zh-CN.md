@@ -134,7 +134,7 @@
 - **网络操作**：`获取本库远端`、`拉取本库`、`推送本库`、`管理本库分支`、`设置本库远端`、`管理本库自动操作`
 
 #### 设置存储在哪里？
-- **插件数据**（默认位于 `.obsidian/plugins/knowledge-base-manager/data.json`）保存语言偏好、全局 Git 默认值和已登记知识库的 Vault 相对路径。使用旧版的用户可在 **管理 Vault 知识库登记** 中预览路径并确认迁移。公开 Vault 配置前，请检查该文件是否已被 Git 跟踪。[登记迁移与恢复](docs/library-lifecycle.md)
+- **插件数据**（默认位于 `.obsidian/plugins/knowledge-base-manager/data.json`）保存语言偏好、全局 Git 默认值和已登记知识库的 Vault 相对路径。公开 Vault 配置前，请检查该文件是否已被 Git 跟踪。[登记与恢复](docs/library-lifecycle.md)
 - **本机设备状态**（Obsidian `localStorage`）：保存本设备的父目录、个人模板登记、自动化授权与中断恢复记录，不跨设备误同步。
 - **单库身份与覆盖配置**（`<库根目录>/kb.toml`）：保存库 UUID、模板信息、目录映射 `[paths]`、受管文件指纹及该库对全局 Git 偏好的覆盖项；Git 账号身份与远端配置存于该库 `.git/config`，备用 HTTPS 凭据存于 Obsidian `SecretStorage`。
 
@@ -193,7 +193,7 @@ obsidian-kb-manager/
 │   ├── fs/                          # Vault 文件系统安全边界
 │   │   ├── vault.ts / paths.ts / segments.ts / publish.ts  # 路径越界防御、原子写入与发布预览
 │   │
-│   ├── registry/                    # 插件 data.json 中的知识库登记与旧登记迁移
+│   ├── registry/                    # 插件 data.json 中的知识库登记
 │   │   ├── desktop.ts / discovery.ts / import.ts / paths.ts
 │   │
 │   ├── ui/                          # 桌面端 Obsidian UI、Modal 向导与编辑器集成

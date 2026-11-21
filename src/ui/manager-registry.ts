@@ -1,4 +1,4 @@
-import { Notice, Setting } from 'obsidian';
+import { Setting } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { identityFile } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
@@ -9,7 +9,6 @@ import type { ImportMode } from '../registry/import.ts';
 import { amendRegistry, parseRegistry, registryDataPath } from '../registry/paths.ts';
 import { Dialog } from './dialog.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
-import { showRegistryMigration } from './registry-migration.ts';
 import { registryPathField } from './registry-path-field.ts';
 import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
@@ -117,11 +116,7 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 	let paths:string[] = [];
 	let problem:string|undefined;
 	try { if (raw !== null) paths = parseRegistry(raw,disk.configDir); }
-	catch (error) {
-		// A malformed current field can be rebuilt once any legacy source is resolved.
-		if (await disk.registry.previewMigration()) throw new Error(t('请先在登记中查看旧版迁移','Review the legacy migration in Registry first'));
-		problem = String(error);
-	}
+	catch (error) { problem = String(error); }
 	if (problem && location) throw new Error(t('登记文件有误。请选择 Vault 根目录重建。','The registry is invalid. Select the Vault root to rebuild it.') + '\n' + problem);
 	const {libraries,skipped} = await scanVaultFolder(disk,config,location);
 	const existing = await Promise.all(paths.filter(path=>!libraries.some(lib=>lib.location===path)).map(path=>registryCandidate(disk,config,path)));
@@ -176,19 +171,10 @@ export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager) {
 	dialog.open();
 }
 
-export function showLegacyRegistryMigration(plugin:KnowledgeBaseManager) {
-	return showRegistryMigration(plugin.app,plugin.disk.registry,registryDataPath(plugin.disk.configDir),
-		()=>plugin.refresh(),dialog=>reviewRegistryProtection(plugin,dialog));
-}
-
 export function manageRegistry(plugin:KnowledgeBaseManager) {
 	const {t} = plugin;
 	const dialog = new Dialog(plugin.app,t('Vault 知识库登记','Vault library registry'));
 	dialog.lines([registryDataPath(plugin.disk.configDir)]);
-	dialog.action(t('预览旧版登记迁移','Preview legacy registry migration'),async()=>{
-		if(await showLegacyRegistryMigration(plugin))dialog.close();
-		else new Notice(t('没有待迁移的旧版登记。','No legacy registry is awaiting migration.'));
-	});
 	dialog.action(t('选择 kb.toml 并预览导入','Select kb.toml and preview import'),()=>{
 		dialog.close();
 		pickManifest(plugin,location=>showImportPreview(plugin,location));
