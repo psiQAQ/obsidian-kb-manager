@@ -43,7 +43,14 @@ export function inspectManifest(check: DiagnosticCheckResult, options: Diagnosti
 		check.coverage.checked++;
 		if (!options.registered) check.diagnostics.push({severity: 'warning', code: 'unregistered-library', message: tr('当前 Vault 没有登记本库。','This library is not registered in the current vault.')});
 	}
-	if (options.duplicate) check.diagnostics.push({severity: 'error', code: 'duplicate-library', file: 'kb.toml', message: tr('Vault 已登记另一处具有相同身份的知识库。','Another registered library has the same identity. Review the duplicate registration.')});
+	if (options.duplicate === undefined) {
+		check.coverage.unknown++;
+		const reason = tr('当前入口未提供知识库身份重复检查结果。','The current entry point did not provide the result of the duplicate library identity check.');
+		check.reason = [check.reason, reason].filter(Boolean).join(' ');
+	} else {
+		check.coverage.checked++;
+		if (options.duplicate) check.diagnostics.push({severity: 'error', code: 'duplicate-library', file: 'kb.toml', message: tr('Vault 已登记另一处具有相同身份的知识库。','Another registered library has the same identity. Review the duplicate registration.')});
+	}
 }
 
 export function inspectProperties(check: DiagnosticCheckResult, inventory: Inventory, templateDirs: readonly string[]) {
@@ -72,7 +79,7 @@ async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string
 		check.coverage.checked++;
 		await inspect(file, text);
 	}
-	check.coverage.skipped = inventory.skipped;
+	check.coverage.skipped += inventory.skipped;
 }
 
 const side = new Set(['top','right','bottom','left']);
@@ -85,6 +92,7 @@ const optionalEnum = (value: unknown, domain: Set<string>) => value === undefine
 
 export async function inspectCanvas(check: DiagnosticCheckResult, root: string, inventory: Inventory, options: DiagnosticOptions, location: string) {
 	const {resolve, vaultPath} = linkResolver(options, inventory, root, location);
+	let deferred = false;
 	await inspectStructuredFiles(check, root, inventory, '.canvas', async (file, text) => {
 		function fail(code: string, message: string) {check.diagnostics.push({severity:'error', code, message, file});}
 		let data: unknown;
@@ -112,7 +120,13 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 			for (const occurrence of staticOccurrences({path:file,body,lineOffset:0})) {
 				try {
 					const link = linkRequest(vaultPath(file),occurrence);
-					if (!link || dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {check.coverage.skipped++; continue;}
+					if (!link) {check.coverage.skipped++; continue;}
+					if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
+						check.coverage.skipped++;
+						deferred = true;
+						check.diagnostics.push({file,severity:'info',code:'template-link-deferred',message:tr('Canvas 文本节点中的模板链接待实例化后检查。','Check the template link in the Canvas text node after its variables are filled in.')});
+						continue;
+					}
 					const found = await resolve(file,link);
 					const evidence = found.path ?? (relativePath(link.target) ? link.target : undefined);
 					const pdf = inspectPdfFragment(check,link,found,{file,evidence});
@@ -161,7 +175,10 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 			if (!ids.has(edge.fromNode) || !ids.has(edge.toNode)) fail('canvas-dangling-edge',tr('Canvas 连线引用不存在的节点。','Update or remove the edge that points to a missing Canvas node.'));
 		}
 	});
-	if (check.coverage.unknown) check.reason = tr('部分 Canvas 文件引用、附件、锚点或文本节点内的链接未能确认。','Some Canvas file references, attachments, anchors, or links in text nodes could not be verified.');
+	const reasons = [];
+	if (deferred) reasons.push(tr('Canvas 文本节点中的部分模板链接待实例化后检查。','Check deferred template links in Canvas text nodes after their variables are filled in.'));
+	if (check.coverage.unknown) reasons.push(tr('部分 Canvas 文件引用、附件、锚点或文本节点内的链接未能确认。','Some Canvas file references, attachments, anchors, or links in text nodes could not be verified.'));
+	if (reasons.length) check.reason = reasons.join(' ');
 }
 
 function validFilter(value: unknown, depth = 0): boolean {

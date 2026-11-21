@@ -57,7 +57,7 @@ async function fixture(t) {
 	await put('name.md','# 入口\n');
 	await put('notes/target.md','---\nstatus: ready\n---\n# Local heading\n\nA block. ^visible\n');
 	await put('templates/sample.md','Template sample.\n');
-	return {vault,root,put, options:{libraryRoot:root,vaultRoot:vault,configDir:'.settings',registered:true,nodeExecutable:process.execPath}};
+	return {vault,root,put, options:{libraryRoot:root,vaultRoot:vault,configDir:'.settings',registered:true,duplicate:false,nodeExecutable:process.execPath}};
 }
 
 test('desktop native link evidence and partial coverage distinguish unresolved files and intended cross-library links', async t => {
@@ -91,6 +91,37 @@ test('desktop native link evidence and partial coverage distinguish unresolved f
 	assert.deepEqual(codes(result(report,'portability')),['external-library-dependency']);
 	assert.match(result(report,'portability').diagnostics[0].evidence,/所属库 libraries\/other/u);
 	assert.match(report.logPath,/^\.log\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[\da-f-]+\.json$/u);
+});
+
+test('manifest reports missing registration and duplicate evidence independently', async t => {
+	const {options} = await fixture(t);
+	const inspect = async overrides => result(await runDiagnostics({...options,selected:['manifest'],...overrides}),'manifest');
+	const known = await inspect({});
+	assert.equal(known.status,'passed');
+	assert.equal(known.coverage.unknown,0);
+	assert.equal(known.reason,undefined);
+
+	const duplicateUnknown = await inspect({duplicate:undefined});
+	assert.equal(duplicateUnknown.status,'partial');
+	assert.equal(duplicateUnknown.coverage.checked,known.coverage.checked - 1);
+	assert.equal(duplicateUnknown.coverage.unknown,1);
+	assert.match(duplicateUnknown.reason,/身份重复检查结果/u);
+	assert.deepEqual(codes(duplicateUnknown),[]);
+
+	const registrationUnknown = await inspect({registered:undefined});
+	assert.equal(registrationUnknown.coverage.unknown,1);
+	assert.match(registrationUnknown.reason,/Vault 登记状态/u);
+	const bothUnknown = await inspect({registered:undefined,duplicate:undefined});
+	assert.equal(bothUnknown.status,'partial');
+	assert.equal(bothUnknown.coverage.checked,known.coverage.checked - 2);
+	assert.equal(bothUnknown.coverage.unknown,2);
+	assert.ok(bothUnknown.reason.includes(registrationUnknown.reason));
+	assert.ok(bothUnknown.reason.includes(duplicateUnknown.reason));
+
+	const duplicateFound = await inspect({duplicate:true});
+	assert.equal(duplicateFound.status,'findings');
+	assert.deepEqual(duplicateFound.coverage,known.coverage);
+	assert.deepEqual(codes(duplicateFound),['duplicate-library']);
 });
 
 test('offline ignores literal examples, checks explicit local paths and does not claim Obsidian short-link resolution', async t => {
@@ -135,6 +166,36 @@ test('Canvas validates structure, and Bases report structural errors and unevalu
 	assert.equal(bases.coverage.unknown,1);
 	assert.deepEqual(codes(bases),['base-filter','base-views']);
 	assert.equal(bases.diagnostics[1].line,3);
+});
+
+test('Canvas retains ordinary exclusions and reports deferred template links separately', async t => {
+	const inspect = async text => {
+		const {options,put} = await fixture(t);
+		await put('checks/ignored.canvas','not JSON');
+		await put('sample.canvas',JSON.stringify({nodes:[{x:0,y:0,width:150,height:100,id:'text',type:'text',text}]}));
+		return result(await runDiagnostics({...options,selected:['canvas']}),'canvas');
+	};
+	const ordinary = '[Fixed](./notes/target.md) [Web](https://example.com)';
+	const ordinaryCheck = await inspect(ordinary);
+	assert.equal(ordinaryCheck.status,'passed');
+	assert.deepEqual(ordinaryCheck.coverage,{checked:2,skipped:2,unknown:0});
+	assert.equal(ordinaryCheck.reason,undefined);
+	assert.deepEqual(codes(ordinaryCheck),[]);
+
+	const dynamic = `${ordinary} [[{{date}}]] [Heading](./notes/target.md#{{title}})`;
+	const deferredCheck = await inspect(dynamic);
+	assert.equal(deferredCheck.status,'findings');
+	assert.deepEqual(deferredCheck.coverage,{checked:2,skipped:4,unknown:0});
+	assert.match(deferredCheck.reason,/待实例化/u);
+	assert.deepEqual(deferredCheck.diagnostics.map(({file,severity,code}) => [file,severity,code]),[
+		['sample.canvas','info','template-link-deferred'],['sample.canvas','info','template-link-deferred'],
+	]);
+
+	const partialCheck = await inspect(`${dynamic} [[Short title]]`);
+	assert.equal(partialCheck.status,'partial');
+	assert.deepEqual(partialCheck.coverage,{checked:2,skipped:4,unknown:1});
+	assert.ok(partialCheck.reason.includes(deferredCheck.reason));
+	assert.match(partialCheck.reason,/未能确认/u);
 });
 
 test('template diagnostics check stable links, defer variables, and validate named Base views', async t => {
