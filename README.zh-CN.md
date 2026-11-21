@@ -46,7 +46,7 @@
 
 ### 2. 安装方式
 
-> 当前版本 `3.0.5` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
+> 当前版本 `3.0.6` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
 
 #### 从 Obsidian 插件商店安装
 
@@ -271,7 +271,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 #### CI 与版本发布
 - **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
-- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.5`）后，发布工作流会构建插件、生成构建证明并创建草稿 Release。上传的附件为 `main.js`、`manifest.json` 和 `styles.css`。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.6`）后，发布工作流会构建插件、生成构建证明并创建草稿 Release。上传的附件为 `main.js`、`manifest.json` 和 `styles.css`。
 
 ---
 
