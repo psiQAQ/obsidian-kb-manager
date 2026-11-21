@@ -1,6 +1,6 @@
 {
   "id": "knowledge-garden",
-  "version": "1",
+  "version": "2",
   "name": "知识花园",
   "description": "把随手记录的种子整理成可分享和持续更新的经验。",
   "purpose": "engineering",
@@ -23,7 +23,8 @@
     {
       "id": "workflow",
       "name": "拟分享条目的私有引用",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [

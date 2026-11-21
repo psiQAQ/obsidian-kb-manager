@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
+import {collectCheckLinkEvidence} from './check-links.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, templateSnapshot} from './snapshot.ts';
@@ -25,7 +26,7 @@ export async function listSpecialChecks(libraryRoot: string): Promise<{template?
 
 function aggregate(checks: DiagnosticCheckResult[]): DiagnosticStatus {
 	if (checks.some(check => check.status === 'failed')) return 'failed';
-	if (checks.some(check => check.status === 'partial' || check.diagnostics.some(row => row.code === 'checker-untrusted'))) return 'partial';
+	if (checks.some(check => check.status === 'partial')) return 'partial';
 	if (checks.some(check => check.status === 'findings')) return 'findings';
 	return checks.some(check => check.status === 'passed') ? 'passed' : 'skipped';
 }
@@ -59,27 +60,33 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const available = new Map([...generalChecks, portabilityCheck].map(rule => [rule.id as string,rule]));
 		const active = all ? [...generalChecks.map(item => item.id), ...specials.keys()] : [...new Set(selected)];
 		const checks = new Map(active.map(id => [id, result({id,name:available.get(id)?.name ?? specials.get(id)?.name ?? tr('专项检查','Template check')})]));
+		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
 		const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
 		if (Object.values(links).some(Boolean)) {
-			try {await inspectLinks({...options,vaultRoot:identifiedVault ? vault : undefined}, found, root, relative, links);}
+			try {await inspectLinks(linkOptions, found, root, relative, links);}
 			catch {for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));}
 		}
+		const canvas = {canvas:checks.get('canvas'), portability:links.portability};
+		if (canvas.canvas || canvas.portability) {
+			try {await inspectCanvas(canvas, root, found, linkOptions, relative);}
+			catch {for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));}
+		}
 		const context = needsScripts && template.template && manifest.parsed ? checkContext(relative,template.template,manifest,found.notes) : undefined;
+		let linkEvidence: ReturnType<typeof collectCheckLinkEvidence> | undefined;
+		const readLinks = () => linkEvidence ??= collectCheckLinkEvidence({...options,vaultRoot:identifiedVault ? vault : undefined}, found, root, relative);
 		for (const check of checks.values()) {
 			const special = specials.get(check.id);
 			try {
 				if (special) {
-					const omitted = found.unreadable.length + found.notes.filter(note => note.problem).length;
-					report.checks.push(await runSpecial(special, options, vault, context, omitted, identifiedVault));
+					report.checks.push(await runSpecial(special, options, vault, context, found, identifiedVault, readLinks));
 					continue;
 				}
 				switch (check.id) {
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
 				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined); break;
-				case 'canvas': await inspectCanvas(check, root, found, options, relative); break;
 				case 'bases': await inspectBases(check, root, found); break;
-				case 'links': case 'anchors': case 'portability': break;
+				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}
 			} catch {failure(check, 'check-run-failed', tr('检查未能完成。','Could not complete the check.'));}

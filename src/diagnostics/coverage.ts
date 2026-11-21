@@ -1,0 +1,31 @@
+import {tr} from '../i18n.ts';
+import type {Inventory} from './snapshot.ts';
+import type {DiagnosticCheckResult} from './types.ts';
+
+export function addReason(check: DiagnosticCheckResult, reason: string) {
+	if (check.reason?.includes(reason)) return;
+	check.reason = check.reason ? check.reason + ' ' + reason : reason;
+}
+
+export function reportInventoryCoverage(check: DiagnosticCheckResult, inventory: Inventory) {
+	check.coverage.skipped += inventory.skipped;
+	reportUnreadableDirectories(check, inventory);
+}
+
+export function reportUnreadableDirectories(check: DiagnosticCheckResult, inventory: Inventory) {
+	if (!inventory.unreadableDirectories.size) return;
+	check.coverage.unknown += inventory.unreadableDirectories.size;
+	const message = tr('未能扫描目录中的文件。','Could not scan the files in the directory.');
+	for (const file of inventory.unreadableDirectories)
+		check.diagnostics.push({severity:'info', code:'unreadable-directory', file, message});
+	addReason(check, tr('部分目录无法遍历。','Some directories could not be scanned.'));
+}
+
+export function reportUnreadableNotes(check: DiagnosticCheckResult, inventory: Inventory) {
+	if (!inventory.unreadable.length) return;
+	check.coverage.unknown += inventory.unreadable.length;
+	const message = tr('Markdown 文件不可读或超出扫描限制。','Could not read the Markdown file within the scan limits.');
+	for (const file of inventory.unreadable)
+		check.diagnostics.push({severity:'info', code:'unreadable-note', file, message});
+	addReason(check, tr('部分 Markdown 文件未能读取。','Some Markdown files could not be read.'));
+}

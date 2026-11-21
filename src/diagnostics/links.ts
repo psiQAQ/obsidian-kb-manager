@@ -2,12 +2,13 @@ import {posix as path} from 'node:path';
 import {tr} from '../i18n.ts';
 import {parseMarkdown, prose, wikiPattern} from '../kb/audit-markdown.ts';
 import {baseViewNames} from './base-view.ts';
+import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {inspectFootnotes, inspectPdfFragment} from './references.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, NoteRecord} from './snapshot.ts';
 import {printable} from './types.ts';
-import type {DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
+import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
 
 const newlineOnly = (text: string) => text.replace(/[^\n]/gu, '');
 const local = (value: string) => !/^(?:[A-Za-z][\w+.-]*:|\/\/)/u.test(value);
@@ -45,8 +46,32 @@ export function linkRequest(source: string, occurrence: LinkOccurrence): LinkReq
 	const hash = value.indexOf('#');
 	const target = (hash < 0 ? value : value.slice(0, hash)).trim();
 	const fragment = hash < 0 ? undefined : value.slice(hash);
-	return {source, target: syntax === 'markdown' ? decodeURIComponent(target.split('?')[0]!) : target,
-		fragment: syntax === 'markdown' && fragment ? decodeURIComponent(fragment) : fragment, kind, syntax};
+	const file = syntax === 'markdown' ? target.split('?')[0]! : target;
+	const decode = syntax === 'markdown' && !occurrence.decoded;
+	return {source, target: decode ? decodeURIComponent(file) : file,
+		fragment: decode && fragment ? decodeURIComponent(fragment) : fragment, kind, syntax};
+}
+
+const pathKey = (value: string) => normalize(value.replace(/\.md$/iu, ''));
+const candidateKey = (link: LinkRequest) => !link.canvasPath && relativePath(link.target) ? pathKey(link.target) : '';
+const matchesPath = (candidate: string, target: string) => candidate === target || candidate.endsWith('/' + target);
+
+export function linkCandidateIndex(paths: () => Iterable<string>) {
+	let byName: Map<string, string[]> | undefined;
+	return (link: LinkRequest) => {
+		const target = candidateKey(link);
+		if (!target) return [];
+		if (!byName) {
+			byName = new Map();
+			for (const file of paths()) {
+				const key = path.basename(pathKey(file));
+				const matches = byName.get(key) ?? [];
+				matches.push(file);
+				byName.set(key, matches);
+			}
+		}
+		return (byName.get(path.basename(target)) ?? []).filter(file => matchesPath(pathKey(file), target));
+	};
 }
 
 export function linkResolver(options: DiagnosticOptions, inventory: Inventory, root: string, location: string) {
@@ -68,7 +93,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 	}
 	function staticAnchor(file: string, fragment: string): LinkResolution['anchor'] {
 		const note = notes.get(file);
-		if (!note || fragment.startsWith('##')) return 'unknown';
+		if (!note || note.problem?.code === 'unclosed-frontmatter' || fragment.startsWith('##')) return 'unknown';
 		let marks = anchors.get(file);
 		if (!marks) {
 			const body = maskLiterals(prose(note.body));
@@ -102,37 +127,56 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		let candidate: string;
 		if (!target) candidate = file;
 		else if (explicit) candidate = path.normalize(path.join(path.dirname(file), target));
-		else if ((canvasPath || options.vaultRoot && target.includes('/')) && within(target, location))
+		else if (options.vaultRoot && (canvasPath || target.includes('/')) && within(target, location))
 			candidate = location ? target.slice(location.length + 1) : target;
 		else return {status: 'unknown', reason: tr('离线环境无法确认 Obsidian 选择的目标。','Run this check in Obsidian to confirm where the link resolves.')};
 		if (!relativePath(candidate)) return {status: 'unknown'};
 		let prefix = candidate;
 		while (prefix !== '.') {
+			if (inventory.unreadableDirectories.has(prefix)) return {status:'unknown',reason:tr('无法读取链接目标所在的目录。','Could not scan the directory that contains the link target.')};
 			if (inventory.excluded.has(prefix)) return {status:'unknown',reason:tr('链接指向检查范围之外的目录或文件。','The link points to a file or folder outside the scan scope.')};
 			prefix = path.dirname(prefix);
 		}
-		if (!files.has(candidate) && files.has(candidate + '.md')) candidate += '.md';
+		if (!canvasPath && !files.has(candidate) && files.has(candidate + '.md')) candidate += '.md';
 		if (!files.has(candidate)) return explicit || canvasPath ? {status:'missing'} : {status: 'unknown'};
 		const targetPath = vaultPath(candidate);
 		const anchor = fragment ? /\.base$/iu.test(candidate) ? await baseAnchor(targetPath, fragment) : staticAnchor(candidate, fragment) : undefined;
 		return {status: 'resolved', path:targetPath, anchor};
 	}
-	const byName = new Map<string, string[]>();
+	const localCandidates = linkCandidateIndex(() => Array.from(files, vaultPath));
 	async function candidates(link: LinkRequest) {
-		if (!link.target || link.target.includes('/')) return [];
-		const normalized = (value: string) => normalize(path.basename(value).replace(/\.md$/iu, ''));
-		if (!byName.size) for (const file of files) {
-			const name = normalized(file);
-			const list = byName.get(name) ?? [];
-			list.push(vaultPath(file));
-			byName.set(name, list);
-		}
-		let candidates = byName.get(normalized(link.target)) ?? [];
+		const target = candidateKey(link);
+		if (!target) return [];
+		let candidates = localCandidates(link);
 		try {if (options.linkCandidates) candidates = [...new Set([...candidates, ...await options.linkCandidates(link)])];}
 		catch {/* A missing host index does not change the actual resolution. */}
-		return candidates.filter(candidate => relativePath(candidate) && normalized(candidate) === normalized(link.target)).sort().slice(0, 20);
+		return candidates.filter(candidate => relativePath(candidate) && matchesPath(pathKey(candidate), target)).sort().slice(0, 20);
 	}
-	return {resolve, vaultPath, candidates};
+	const registered = options.registeredPaths?.filter(other => relativePath(other) && other !== location).sort((a,b) => b.length - a.length);
+	function outsideTarget(found: LinkResolution) {
+		const target = found.path;
+		if (found.status !== 'resolved' || !target || within(target, location)) return undefined;
+		const library = registered?.find(other => within(target, other));
+		return {target, library, evidence: [target, library && `${tr('所属库','Owning library')} ${library}`].filter(Boolean).join(' · ')};
+	}
+	async function inspectPortability(check: DiagnosticCheckResult, position: Pick<Diagnostic,'file'|'line'>,
+		link: LinkRequest, found: LinkResolution, details?: string) {
+		check.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
+		const matches = await candidates(link);
+		const matching = matches.length > 1 && `${tr('同名候选','Same-name candidates')} ${matches.join(tr('、',', '))}`;
+		const cross = outsideTarget(found);
+		if (cross) {
+			check.diagnostics.push({...position, evidence:[cross.evidence, details, matching].filter(Boolean).join(' · '),
+				severity: 'warning', code: 'external-library-dependency', message: cross.library
+					? tr('单独移动或克隆本库时需要目标所属库。','Keep the target library available when moving or cloning this library on its own.')
+					: tr('单独移动或克隆本库时需要外部目标文件。','Keep the external target file available when moving or cloning this library on its own.')});
+		} else if (matching) {
+			check.diagnostics.push({...position,severity:'info',code:'same-name-candidates',
+				evidence:[found.path && `${tr('实际目标','Resolved target')} ${found.path}`, details, matching].filter(Boolean).join(' · '),
+				message:tr('链接存在多个同名候选。','Several files share this link name. Use the target path to disambiguate.')});
+		}
+	}
+	return {resolve, vaultPath, outsideTarget, inspectPortability};
 }
 
 export function missingLink(target: string, kind: LinkRequest['kind']) {
@@ -143,26 +187,30 @@ export function missingLink(target: string, kind: LinkRequest['kind']) {
 }
 
 function reasonForUnknown(check: DiagnosticCheckResult) {
-	if (check.coverage.unknown) check.reason = [check.reason, tr('部分结果需要 Obsidian 索引、受支持的链接语法或可读文件才能确认。','Some results need the Obsidian index, supported link syntax, or readable files to be verified.')].filter(Boolean).join(' ');
+	if (check.coverage.unknown)
+		addReason(check, tr('部分结果需要 Obsidian 索引、受支持的链接语法或可读文件才能确认。','Some results need the Obsidian index, supported link syntax, or readable files to be verified.'));
 }
 
 export async function inspectLinks(options: DiagnosticOptions, inventory: Inventory, root: string, location: string,
 	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}) {
 	const {links, anchors, portability} = checks;
 	const all = [links, anchors, portability].filter((item): item is DiagnosticCheckResult => !!item);
-	const {resolve, vaultPath, candidates} = linkResolver(options, inventory, root, location);
+	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
 	for (const check of all) {
-		check.coverage.unknown += inventory.unreadable.length;
-		check.coverage.skipped += inventory.skipped;
+		reportInventoryCoverage(check, inventory);
+		reportUnreadableNotes(check, inventory);
 	}
 	for (const note of inventory.notes) {
 		const footnotes = links ?? anchors;
 		if (footnotes && (note.body.includes('[^') || note.body.includes('^[')))
 			inspectFootnotes(footnotes,maskLiterals(prose(note.body)),note.path,note.lineOffset);
-		const dynamic = fencedBlocks(note.body).filter(block => /^(?:base|dataview(?:js)?|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language)).length;
-		if (dynamic) for (const check of all) {
-			check.coverage.skipped += dynamic;
-			check.reason = tr('查询、公式与自动化代码块的生成内容不参与链接检查。','The link check skips content generated by queries, formulas, and automation blocks.');
+		const dynamic = fencedBlocks(note.body).filter(block => /^(?:base|dataview(?:js)?|tasks|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language));
+		if (dynamic.length) for (const check of all) {
+			check.coverage.skipped += dynamic.length;
+			const message = tr('查询、公式与自动化代码块的生成内容不参与链接检查。','The link check skips content generated by queries, formulas, and automation blocks.');
+			addReason(check, message);
+			for (const block of dynamic) check.diagnostics.push({severity:'info', code:'dynamic-block-skipped',
+				file:note.path, line:block.line + note.lineOffset, evidence:block.language, message});
 		}
 		const source = vaultPath(note.path);
 		let native: LinkOccurrence[] | undefined;
@@ -170,8 +218,18 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 			try {native = await options.collectLinks(source);} catch {/* Treat a cache failure as partial. */}
 			if (native === undefined) for (const check of all) check.coverage.unknown++;
 		}
-		if (note.problem && native === undefined) for (const check of all) check.coverage.unknown++;
+		if (note.problem) for (const check of all) {
+			check.coverage.unknown++;
+			const message = note.problem.code === 'unclosed-frontmatter'
+				? tr('未找到 YAML 属性的结束标记，无法完整检查属性和正文中的链接。','Could not verify all links in the frontmatter and body because the frontmatter has no closing delimiter.')
+				: tr('YAML 属性无效，无法完整检查属性中的链接。','Could not verify all links in the frontmatter because it contains invalid YAML.');
+			check.diagnostics.push({severity:'info', code:'unverified-property-links', file:note.path, line:note.problem.line, message});
+			addReason(check, tr('部分 Markdown 属性中的链接未能验证。','Some links in Markdown frontmatter could not be verified.'));
+		}
 		for (const occurrence of native ?? staticOccurrences(note)) {
+			const line = occurrence.line;
+			if (native && line !== undefined && dynamic.some(block => line >= block.line + note.lineOffset && line <= block.endLine + note.lineOffset))
+				continue;
 			let requestValue: LinkRequest | undefined;
 			try {requestValue = linkRequest(source, occurrence);} catch {
 				if (links) {
@@ -193,7 +251,7 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 			}
 			const found = await resolve(note.path, link);
 			const evidence = found.path ?? (relativePath(link.target) ? link.target : undefined);
-			const cross = !!found.path && !within(found.path, location);
+			const cross = outsideTarget(found);
 			if (links) {
 				links.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
 				if (found.status === 'missing') links.diagnostics.push({...position,evidence,...missingLink(link.target,link.kind)});
@@ -221,20 +279,7 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 					}
 				}
 			}
-			if (portability) {
-				portability.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
-				const matches = await candidates(link);
-				if (cross) {
-					const foreign = options.registeredPaths?.filter(other => relativePath(other) && other !== location && !!found.path && within(found.path, other))
-						.sort((a,b) => b.length - a.length)[0];
-					portability.diagnostics.push({...position, evidence:[evidence, foreign && `${tr('所属库','Owning library')} ${foreign}`, matches.length > 1 && `${tr('同名候选','Same-name candidates')} ${matches.join(tr('、',', '))}`].filter(Boolean).join(' · '),
-						severity: 'warning', code: 'external-library-dependency', message: foreign
-							? tr('单独移动或克隆本库时需要目标所属库。','Keep the target library available when moving or cloning this library on its own.')
-							: tr('单独移动或克隆本库时需要外部目标文件。','Keep the external target file available when moving or cloning this library on its own.')});
-				} else if (matches.length > 1) portability.diagnostics.push({...position,severity:'info',code:'same-name-candidates',
-					evidence:[found.path && `${tr('实际目标','Resolved target')} ${found.path}`, `${tr('同名候选','Same-name candidates')} ${matches.join(tr('、',', '))}`].filter(Boolean).join(' · '),
-					message:tr('链接存在多个同名候选。','Several files share this link name. Use the target path to disambiguate.')});
-			}
+			if (portability) await inspectPortability(portability, position, link, found);
 		}
 	}
 	for (const check of all) reasonForUnknown(check);

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import * as fs from 'node:fs/promises';
+import fsPromises, * as fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import {build} from 'esbuild';
@@ -60,6 +61,17 @@ async function fixture(t) {
 	return {vault,root,put, options:{libraryRoot:root,vaultRoot:vault,configDir:'.settings',registered:true,duplicate:false,nodeExecutable:process.execPath}};
 }
 
+async function withUnscannableDirectory(t, denied, run) {
+	const readdir = fs.readdir;
+	const mocked = t.mock.method(fsPromises,'readdir',async (target,...args) => {
+		if (target === denied) throw Object.assign(new Error('Access denied'),{code:'EACCES'});
+		return await readdir(target,...args);
+	});
+	syncBuiltinESMExports();
+	try {return await run();}
+	finally {mocked.mock.restore(); syncBuiltinESMExports();}
+}
+
 test('desktop native link evidence and partial coverage distinguish unresolved files and intended cross-library links', async t => {
 	const {options,put} = await fixture(t);
 	await put('name.md','Title\n');
@@ -84,11 +96,11 @@ test('desktop native link evidence and partial coverage distinguish unresolved f
 	const links = result(report,'links');
 	assert.equal(links.status,'partial');
 	assert.equal(links.coverage.checked,8);
-	assert.equal(links.coverage.unknown,2);
-	assert.deepEqual(codes(links),['cross-library-link','uncreated-note','missing-attachment','unverified-link','unverified-link']);
+	assert.equal(links.coverage.unknown,3);
+	assert.deepEqual(codes(links),['cross-library-link','uncreated-note','missing-attachment','unverified-link','unverified-link','unverified-property-links']);
 	assert.equal(links.diagnostics[0].evidence,'libraries/other/other.md');
-	assert.deepEqual(codes(result(report,'anchors')),['missing-anchor']);
-	assert.deepEqual(codes(result(report,'portability')),['external-library-dependency']);
+	assert.deepEqual(codes(result(report,'anchors')),['missing-anchor','unverified-property-links']);
+	assert.deepEqual(codes(result(report,'portability')),['external-library-dependency','unverified-property-links']);
 	assert.match(result(report,'portability').diagnostics[0].evidence,/所属库 libraries\/other/u);
 	assert.match(report.logPath,/^\.log\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[\da-f-]+\.json$/u);
 });
@@ -139,9 +151,146 @@ test('offline ignores literal examples, checks explicit local paths and does not
 	assert.equal(links.coverage.checked,3);
 	assert.equal(links.coverage.unknown,3);
 	assert.match(links.reason,/自动化代码块/u);
-	assert.deepEqual(codes(links),['unverified-link','unverified-link','missing-attachment','unverified-link']);
+	assert.deepEqual(codes(links),['dynamic-block-skipped','unverified-link','unverified-link','missing-attachment','unverified-link']);
 	assert.equal(links.diagnostics.find(item => item.code === 'missing-attachment').line,8);
-	assert.deepEqual(codes(result(report,'anchors')),['missing-anchor']);
+	assert.deepEqual(codes(result(report,'anchors')),['dynamic-block-skipped','missing-anchor']);
+});
+
+test('scan gaps affect checks that need to read the file', async t => {
+	const {options,put} = await fixture(t);
+	const selected = ['manifest','properties','links','anchors','canvas','bases','bindings','portability'];
+	const invalidUtf8 = Buffer.from([0xff]);
+	await put('notes/unreadable.md',invalidUtf8);
+	const markdown = await runDiagnostics({...options,selected});
+	for (const id of ['properties','links','anchors','bases','portability']) {
+		const check = result(markdown,id);
+		assert.equal(check.status,'partial',id);
+		assert.equal(check.coverage.unknown,1,id);
+		assert.match(check.reason,/部分 Markdown 文件未能读取/u);
+		assert.deepEqual(check.diagnostics.map(({code,file}) => [code,file]),[['unreadable-note','notes/unreadable.md']]);
+	}
+	for (const id of ['canvas','manifest','bindings']) assert.equal(result(markdown,id).coverage.unknown,0,id);
+
+	await put('notes/unreadable.md','# Now readable');
+	await put('private.base',invalidUtf8);
+	await put('invalid.base','views: [3]');
+	const baseFile = await runDiagnostics({...options,selected});
+	const bases = result(baseFile,'bases');
+	assert.equal(bases.status,'partial');
+	assert.deepEqual(bases.coverage,{checked:1,skipped:1,unknown:1});
+	assert.deepEqual(bases.diagnostics.map(({code,file}) => [code,file]),[
+		['base-views','invalid.base'],['unreadable-file','private.base'],
+	]);
+	assert.match(bases.reason,/未能读取/u);
+	assert.doesNotMatch(bases.reason,/动态表达式/u);
+	for (const id of selected.filter(id => id !== 'bases')) assert.equal(result(baseFile,id).coverage.unknown,0,id);
+});
+
+test('unscannable subdirectories leave affected paths and rules unverified', async t => {
+	const {root,options,put} = await fixture(t);
+	await put('protected/start.md','# Unseen');
+	await put('kb.toml',manifest.replace('notes = "notes"','notes = "notes"\ninbox = "protected/subfolder"')
+		.replace('entry = "name.md"','entry = "protected/start.md"'));
+	await put('name.md','[Unseen](./protected/start.md)\n[Clearly missing](./gone.md)');
+	const selected = ['manifest','properties','links','anchors','canvas','bases','bindings','portability'];
+	const report = await withUnscannableDirectory(t,path.join(root,'protected'),() => runDiagnostics({...options,selected}));
+	const libraryManifest = result(report,'manifest');
+	assert.equal(libraryManifest.status,'partial');
+	assert.equal(libraryManifest.coverage.unknown,2);
+	assert.deepEqual(libraryManifest.diagnostics.map(({code,file,evidence}) => [code,file,evidence]),[
+		['manifest-path-unverified','protected/start.md','protected'],
+		['manifest-path-unverified','protected/subfolder','protected'],
+	]);
+	for (const id of ['properties','links','anchors','canvas','bases','portability']) {
+		const check = result(report,id);
+		assert.equal(check.status,'partial',id);
+		assert.match(check.reason,/部分目录无法遍历/u);
+		assert.ok(check.diagnostics.some(item => item.code === 'unreadable-directory' && item.file === 'protected'),id);
+	}
+	assert.equal(result(report,'bindings').coverage.unknown,0);
+	const links = result(report,'links');
+	assert.deepEqual(links.diagnostics.map(({code,file,line}) => [code,file,line]),[
+		['unreadable-directory','protected',undefined],['unverified-link','name.md',1],['missing-link-target','name.md',2],
+	]);
+	assert.match(links.diagnostics[1].message,/链接目标所在的目录/u);
+});
+
+test('Tasks query blocks identify their source while body links still use available evidence', async t => {
+	const {options,put} = await fixture(t);
+	await put('name.md',[
+		'---','title: Tasks','---',
+		'[Checked](./notes/target.md#Local%20heading)',
+		'```tasks','not done','[[dynamic-missing]]','```',
+		'[Missing](./missing.md)',
+		'~~~dataview','LIST','~~~',
+		'```txt','[[literal-missing]]','```',
+	].join('\n'));
+	const selected = ['links','anchors','portability'];
+	const offline = await runDiagnostics({...options,selected});
+	const visited = [];
+	const native = await runDiagnostics({...options,selected,
+		collectLinks: source => source.endsWith('/name.md') ? [
+			{target:'./notes/target.md#Local%20heading',line:4,kind:'link',syntax:'markdown'},
+			{target:'dynamic-missing',line:7,kind:'link',syntax:'wiki'},
+			{target:'./missing.md',line:9,kind:'link',syntax:'markdown'},
+		] : [],
+		resolveLink: ({target}) => {
+			visited.push(target);
+			return target === './notes/target.md' ? {status:'resolved',path:`${relative}/notes/target.md`,anchor:'resolved'} : {status:'missing'};
+		},
+	});
+	assert.deepEqual(visited,['./notes/target.md','./missing.md']);
+	for (const report of [offline,native]) {
+		for (const id of selected) {
+			const check = result(report,id);
+			assert.equal(check.coverage.unknown,0,id);
+			// The second scan also skips the newly generated .log directory.
+			assert.equal(check.coverage.skipped,report === offline ? 2 : 3,id);
+			assert.deepEqual(check.diagnostics.filter(item => item.code === 'dynamic-block-skipped').map(({file,line,evidence}) => [file,line,evidence]),[
+				['name.md',5,'tasks'],['name.md',10,'dataview'],
+			]);
+		}
+		assert.deepEqual(result(report,'links').diagnostics.filter(item => item.severity === 'error').map(({code,line}) => [code,line]),[
+			['missing-link-target',9],
+		]);
+		assert.equal(result(report,'anchors').coverage.checked,1);
+	}
+});
+
+test('closed malformed frontmatter leaves property links unverified while retaining cached body links', async t => {
+	const {options,put} = await fixture(t);
+	await put('name.md','---\nrefs: ["[[property]]"\n---\n[Missing](./gone.md)\n');
+	const report = await runDiagnostics({...options,selected:['properties','links','anchors','portability'],
+		collectLinks: source => source.endsWith('/name.md') ? [{target:'./gone.md',line:4,kind:'link',syntax:'markdown'}] : [],
+		resolveLink: () => ({status:'missing'}),
+	});
+	const properties = result(report,'properties');
+	assert.equal(properties.status,'findings');
+	assert.equal(properties.coverage.unknown,0);
+	assert.deepEqual(codes(properties),['invalid-frontmatter']);
+	for (const id of ['links','anchors','portability']) {
+		const check = result(report,id);
+		assert.equal(check.status,'partial',id);
+		assert.equal(check.coverage.unknown,1,id);
+		assert.match(check.reason,/Markdown 属性中的链接未能验证/u);
+		assert.ok(check.diagnostics.some(item => item.code === 'unverified-property-links' && item.file === 'name.md' &&
+			item.line === properties.diagnostics[0].line),id);
+	}
+	assert.ok(result(report,'links').diagnostics.some(item => item.code === 'missing-link-target' && item.line === 4));
+});
+
+test('unclosed frontmatter leaves both body anchors and embedded Bases unverified', async t => {
+	const {options,put} = await fixture(t);
+	await put('notes/target.md','---\nname: Example\n\nA block. ^visible\n```base\nviews: [3]\n```\n');
+	await put('name.md','[Anchor](./notes/target.md#^visible)');
+	const report = await runDiagnostics({...options,selected:['anchors','bases']});
+	assert.deepEqual(result(report,'anchors').diagnostics.map(({file,line,code}) => [file,line,code]),[
+		['name.md',1,'unverified-anchor'],['notes/target.md',1,'unverified-property-links'],
+	]);
+	assert.deepEqual(result(report,'bases').diagnostics.map(({file,line,code}) => [file,line,code]),[
+		['notes/target.md',1,'unverified-markdown-body'],
+	]);
+	assert.match(result(report,'bases').reason,/正文无法与属性分开/u);
 });
 
 test('Canvas validates structure, and Bases report structural errors and unevaluated expressions', async t => {
@@ -219,6 +368,20 @@ test('template diagnostics check stable links, defer variables, and validate nam
 	assert.match(cross.evidence,/所属库 libraries\/other.*同名候选.*notes\/固定说明\.md/u);
 });
 
+test('native Markdown paths use the same decoding as the clicked Obsidian link', async t => {
+	const {options,put} = await fixture(t);
+	await put('Probe.md','[Literal](./A%2520B.md)');
+	await put('A%20B.md','literal percent');
+	await put('A B.md','space');
+	const source = relative + '/Probe.md';
+	const report = await runDiagnostics({...options,selected:['links'],
+		collectLinks: file => file === source ? [{kind:'link',target:'./A%20B.md',syntax:'markdown',decoded:true}] : [],
+		resolveLink: request => ({status:request.target === './A%20B.md' ? 'resolved' : 'missing',path:relative+'/A%20B.md'}),
+	});
+	assert.deepEqual(result(report,'links').diagnostics,[]);
+	assert.ok(result(report,'links').coverage.checked > 0);
+});
+
 test('footnotes, PDF page selectors and image dimensions keep their own syntax and source locations', async t => {
 	const {options,put} = await fixture(t);
 	await put('manual.pdf','Fixture for target existence.');
@@ -235,6 +398,8 @@ test('footnotes, PDF page selectors and image dimensions keep their own syntax a
 		'![[libraries/示例库/manual.pdf#page=3&height=400]]',
 		'![[libraries/示例库/image.png|100x145]]',
 		'![Photo|100](./image.png)',
+		'![[libraries/示例库/manual.pdf#selection=1,2,3,4]]',
+		'![[libraries/示例库/manual.pdf#page=3&annotation=note]]',
 	].join('\n'));
 	const report = await runDiagnostics({...options,selected:['links','anchors']});
 	const links = result(report,'links');
@@ -242,6 +407,7 @@ test('footnotes, PDF page selectors and image dimensions keep their own syntax a
 	assert.equal(result(report,'anchors').status,'partial');
 	assert.deepEqual(result(report,'anchors').diagnostics.map(({code,line}) => [code,line]),[
 		['invalid-pdf-page',12], ['invalid-pdf-page',13], ['invalid-pdf-page',14], ['unverified-pdf-page',15],
+		['unverified-pdf-location',18], ['unverified-pdf-location',19], ['unverified-pdf-page',19],
 	]);
 	const native = await runDiagnostics({...options,selected:['links','anchors'],
 		collectLinks:source => source.endsWith('/name.md') ? [{target:'image.png|100x145',kind:'embed',line:16,syntax:'wiki'}] : [],
@@ -289,8 +455,37 @@ test('trusted check executes approved bytes on portable context and writes one l
 	await put('checks/checker.mjs',script+'\n// A local edit requires new approval.');
 	const rejected = await runDiagnostics(accepted);
 	assert.equal(rejected.status,'partial');
+	assert.equal(result(rejected,'fixture.check').status,'partial');
+	assert.equal(result(rejected,'fixture.check').coverage.unknown,1);
 	assert.deepEqual(codes(result(rejected,'fixture.check')),['checker-untrusted']);
 	assert.ok(rejected.logPath);
+});
+
+test('selecting only an approved special check identifies files and directories omitted from its input', async t => {
+	const {root,options,put} = await fixture(t);
+	const script = `export default ({notes}) => {
+		if (notes.length !== 3 || !notes.some(note => note.path === 'notes/target.md'))
+			throw new Error('Unexpected notes in script input');
+		return [];
+	}`;
+	await put('checks/checker.mjs',script);
+	await put('protected/hidden.md','# Hidden');
+	await put('notes/unreadable.md',Buffer.from([0xff]));
+	await put('notes/invalid.md','---\ntitle: [\n---\n# Body');
+	const report = await withUnscannableDirectory(t,path.join(root,'protected'),() =>
+		runDiagnostics({...options,selected:['fixture.check'],trustedDigests:[digest(script)]}));
+	assert.deepEqual(report.checks.map(check => check.id),['fixture.check']);
+	const check = result(report,'fixture.check');
+	assert.equal(check.status,'partial');
+	assert.deepEqual(check.coverage,{checked:1,skipped:0,unknown:3});
+	assert.deepEqual(check.diagnostics.map(({file,line,code}) => [file,line,code]),[
+		['protected',undefined,'unreadable-directory'],
+		['notes/unreadable.md',undefined,'unreadable-note'],
+		['notes/invalid.md',2,'checker-input-invalid-properties'],
+	]);
+	assert.match(check.reason,/目录无法遍历/u);
+	assert.match(check.reason,/Markdown 文件未能读取/u);
+	assert.match(check.reason,/属性无法解析/u);
 });
 
 test('reports checker failures, excessive output, timeouts, and log failure without exposing exceptions', async t => {

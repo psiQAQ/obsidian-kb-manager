@@ -5,7 +5,10 @@ import {declaration,verifyDeclaration} from '../src/kb/template-declaration.ts';
 import {segments} from '../src/fs/segments.ts';
 
 export function templateCatalog(root){
-	const packs=Object.create(null), digests=new Set();
+	const packs=Object.create(null), digests=new Set([
+		// The exact knowledge-garden v1 checker embedded in plugin releases 3.0.0 and 3.0.1.
+		'2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f',
+	]);
 	for(const purpose of readdirSync(root,{withFileTypes:true})){
 		if(!purpose.isDirectory())throw new Error('Unexpected catalogue item: '+purpose.name);
 		for(const dir of readdirSync(join(root,purpose.name),{withFileTypes:true})){

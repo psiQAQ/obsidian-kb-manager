@@ -6,8 +6,9 @@ import * as path from 'node:path';
 import type {Readable, Writable} from 'node:stream';
 import {clearTimeout, setTimeout} from 'node:timers';
 import {tr} from '../i18n.ts';
+import {addReason, reportUnreadableDirectories, reportUnreadableNotes} from './coverage.ts';
 import {relativePath} from './snapshot.ts';
-import type {DeclaredCheck} from './snapshot.ts';
+import type {DeclaredCheck, Inventory} from './snapshot.ts';
 import {isRecord, printable, result, settle} from './types.ts';
 import type {CheckContext, Diagnostic, DiagnosticOptions} from './types.ts';
 
@@ -112,7 +113,7 @@ const errors: Record<string, readonly [string, string]> = {
 	'checker-launch': ['无法启动专项进程。','Could not start the template check process.'],
 	'checker-execution': ['专项脚本执行时抛出异常或退出。','The script threw an exception or exited. Review the script before retrying.'],
 	'checker-export': ['专项脚本须默认导出检查函数。','Export the check function as the script’s default export.'],
-	'checker-output': ['专项脚本须返回符合诊断协议的数组。','Return an array of findings that follows the diagnostic format.'],
+	'checker-output': ['专项脚本返回的结果不符合诊断协议。','Return findings and coverage in the documented format.'],
 };
 
 function readFindings(data: unknown): Diagnostic[] | undefined {
@@ -129,14 +130,15 @@ function readFindings(data: unknown): Diagnostic[] | undefined {
 	return diagnostics;
 }
 
-export async function runSpecial(check: DeclaredCheck, options: DiagnosticOptions, vault: string, context: CheckContext | undefined, omitted: number, identifiedVault: boolean) {
+export async function runSpecial(check: DeclaredCheck, options: DiagnosticOptions, vault: string, context: CheckContext | undefined,
+	inventory: Inventory, identifiedVault: boolean, readLinks: () => Promise<NonNullable<CheckContext['links']>>) {
 	const report = result({id: check.id, name: check.name});
 	function fail(code: string) {
-		report.status = code === 'checker-untrusted' ? 'skipped' : 'failed';
-		report.coverage[report.status === 'skipped' ? 'skipped' : 'unknown']++;
+		report.status = code === 'checker-untrusted' ? 'partial' : 'failed';
+		report.coverage.unknown++;
 		const message = tr(...(errors[code] ?? errors['checker-output']!));
 		report.reason = message;
-		report.diagnostics.push({severity: report.status === 'skipped' ? 'info' : 'error', code, file: check.path, message});
+		report.diagnostics.push({severity: report.status === 'partial' ? 'info' : 'error', code, file: check.path, message});
 		return report;
 	}
 	if (!check.source || !check.digest) return fail('checker-unavailable');
@@ -144,17 +146,30 @@ export async function runSpecial(check: DeclaredCheck, options: DiagnosticOption
 	if (![...options.officialDigests ?? [], ...options.trustedDigests ?? []].includes(check.digest)) return fail('checker-untrusted');
 	const node = await findNode(vault, options.nodeExecutable);
 	if (!node) return fail('checker-node');
-	const input = JSON.stringify({source: check.source.toString('base64'), context});
+	const input = JSON.stringify({source: check.source.toString('base64'), context: check.linkEvidence ? {...context, links: await readLinks()} : context});
 	if (Buffer.byteLength(input) > inputLimit) return fail('checker-input-limit');
 	const response = await execute(node, input, Math.max(1, Math.min(options.timeoutMs ?? 10000, 60000)));
 	if ('error' in response) return fail(response.error);
-	const findings = readFindings(response.data);
-	if (!findings) return fail('checker-output');
+	const output = isRecord(response.data) ? response.data : {findings: response.data, unverified: 0};
+	const {unverified = 0} = output;
+	const findings = readFindings(output.findings);
+	if (!findings || typeof unverified !== 'number' || !Number.isSafeInteger(unverified) || unverified < 0 || unverified > 5000)
+		return fail('checker-output');
 	report.coverage.checked = 1;
-	report.coverage.unknown = omitted + (identifiedVault ? 0 : 1);
-	const reasons = [omitted ? tr('部分笔记不可读或属性无效，未提供给专项脚本。','Notes that were unreadable or had invalid properties were omitted from the script input.') : '',
-		identifiedVault ? '' : tr('未找到 Vault 根目录，无法确认专项使用的 Vault 相对路径。','The vault root is unknown. Provide it to verify vault-relative paths used by the script.')];
-	report.reason = reasons.filter(Boolean).join(' ') || undefined;
+	report.coverage.unknown = (identifiedVault ? 0 : 1) + unverified;
 	report.diagnostics = findings;
+	reportUnreadableDirectories(report, inventory);
+	reportUnreadableNotes(report, inventory);
+	for (const note of inventory.notes) {
+		if (!note.problem) continue;
+		report.coverage.unknown++;
+		const message = tr('无法解析笔记属性，专项脚本未收到这篇笔记。','The script did not receive this note because its frontmatter could not be parsed.');
+		report.diagnostics.push({severity:'info', code:'checker-input-invalid-properties', file:note.path, line:note.problem.line, message});
+		addReason(report, tr('部分笔记的属性无法解析，已从专项输入省略。','Notes with unparseable frontmatter were omitted from the script input.'));
+	}
+	if (!identifiedVault)
+		addReason(report, tr('未找到 Vault 根目录，无法确认专项使用的 Vault 相对路径。','The vault root is unknown. Provide it to verify vault-relative paths used by the script.'));
+	if (unverified)
+		addReason(report, tr('专项检查有待核实的项目。','The template check has items that could not be verified.'));
 	return settle(report);
 }

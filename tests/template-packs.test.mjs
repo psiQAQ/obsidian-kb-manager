@@ -10,6 +10,7 @@ import aiWorklog from '../assets/templates/ai-workflows/ai-worklog/checks/workfl
 import kepano from '../assets/templates/collections/kepano/checks/category-links.mjs';
 import mediaTracker from '../assets/templates/collections/media-tracker/checks/workflow.mjs';
 import garden from '../assets/templates/engineering/knowledge-garden/checks/workflow.mjs';
+import {collectCheckLinkEvidence} from '../src/diagnostics/check-links.ts';
 import radar from '../assets/templates/engineering/technology-radar/checks/workflow.mjs';
 import coursework from '../assets/templates/learning/coursework/checks/workflow.mjs';
 import exam from '../assets/templates/learning/exam-practice/checks/workflow.mjs';
@@ -75,7 +76,8 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 18);
+	assert.equal(digests.length, 19);
+	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
 	const purposes = new Map();
 	const dependencies = new Set();
 	for (const { descriptor, text } of Object.values(packs)) {
@@ -126,12 +128,21 @@ for (const [id, pack] of Object.entries(packs)) {
 		const validator = checkers[id];
 		const initial = notes(text);
 		const context = { template:descriptor, manifest:{ paths:{ wiki:'wiki' } }, libraryRoot:root, notes:initial };
-		assert.deepEqual(await validator(context), []);
+		async function findings(ctx) {
+			if (id !== 'knowledge-garden') return validator(ctx);
+			const inventory = {files:new Set(Object.keys(text)), excluded:new Set(), unreadableDirectories:new Set(),
+				notes:ctx.notes.map(note => ({...note, lineOffset:0}))};
+			const links = await collectCheckLinkEvidence({vaultRoot:'.'}, inventory, '.', root);
+			const result = await validator({...ctx, links});
+			assert.equal(result.unverified, 0);
+			return result.findings;
+		}
+		assert.deepEqual(await findings(context), []);
 		const [path, properties, code, body] = negative[id];
 		const existing = initial.find(note => note.path === path);
 		const replacement = { path, properties:{ ...existing?.properties, ...properties }, body:body ?? existing?.body ?? '' };
-		const findings = await validator({ ...context, notes:[...initial.filter(note => note.path !== path), replacement].sort((a,b)=>a.path.localeCompare(b.path)) });
-		assert.ok(findings.some(finding => finding.code === code && finding.severity === 'warning'), JSON.stringify(findings));
+		const violations = await findings({ ...context, notes:[...initial.filter(note => note.path !== path), replacement].sort((a,b)=>a.path.localeCompare(b.path)) });
+		assert.ok(violations.some(finding => finding.code === code && finding.severity === 'warning'), JSON.stringify(violations));
 	});
 }
 

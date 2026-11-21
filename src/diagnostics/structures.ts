@@ -1,12 +1,13 @@
 import {parse} from 'yaml';
 import {tr} from '../i18n.ts';
+import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
 import {inspectPdfFragment} from './references.ts';
 import {decode, hash, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, manifestSnapshot} from './snapshot.ts';
-import {isRecord} from './types.ts';
-import type {DiagnosticCheckResult, DiagnosticOptions} from './types.ts';
+import {isRecord, printable} from './types.ts';
+import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkRequest} from './types.ts';
 
 type Manifest = Awaited<ReturnType<typeof manifestSnapshot>>;
 
@@ -25,28 +26,39 @@ export function inspectManifest(check: DiagnosticCheckResult, options: Diagnosti
 		if (identity && identity.id !== 'unknown' && (identity.id !== template.template.id || identity.version !== template.template.version))
 			check.diagnostics.push({severity: 'warning', code: 'template-version-drift', file: 'kb-template.json', message: tr('模板声明的 ID 或版本与实例清单不同。','The template ID or version differs from the library manifest. Review both files.')});
 	}
-	const entry = parsed?.identity?.entry ?? template.template?.entry;
-	if (entry) {
+	function verifyPath(file: string, candidates: Set<string>, missing: Omit<Diagnostic, 'file'>) {
+		if (!candidates.has(file)) {
+			const directory = [...inventory.unreadableDirectories].find(dir => file === dir || file.startsWith(dir + '/'));
+			if (directory) {
+				check.coverage.unknown++;
+				const message = tr('无法扫描清单路径所在的目录。','Could not scan the directory that contains the configured path.');
+				check.diagnostics.push({severity:'info', code:'manifest-path-unverified', file, evidence:directory, message});
+				addReason(check, tr('部分清单路径所在的目录无法遍历。','Some configured paths are in directories that could not be scanned.'));
+				return;
+			}
+			check.diagnostics.push({...missing, file});
+		}
 		check.coverage.checked++;
-		if (!inventory.files.has(entry)) check.diagnostics.push({severity: 'error', code: 'missing-entry', file: entry, message: tr('清单指定的入口文件不存在。','The configured entry file is missing. Restore it or update its path.')});
 	}
+	const entry = parsed?.identity?.entry ?? template.template?.entry;
+	if (entry) verifyPath(entry, inventory.files, {severity:'error', code:'missing-entry',
+		message:tr('清单指定的入口文件不存在。','The configured entry file is missing. Restore it or update its path.')});
 	for (const [role, relative] of Object.entries(manifest.paths ?? {})) {
 		if (!relativePath(relative) || relative === entry) continue;
-		check.coverage.checked++;
 		const candidates = ['overview','index','log'].includes(role) ? inventory.files : inventory.directories;
-		if (!candidates.has(relative)) check.diagnostics.push({severity:'error', code:'missing-mapping', file:relative, message:tr('清单映射的文件或目录不存在。','The mapped file or folder is missing. Check the path in kb.toml.'), evidence:role});
+		verifyPath(relative, candidates, {severity:'error', code:'missing-mapping',
+			message:tr('清单映射的文件或目录不存在。','The mapped file or folder is missing. Check the path in kb.toml.'), evidence:role});
 	}
 	if (options.registered === undefined) {
 		check.coverage.unknown++;
-		check.reason = tr('当前入口未提供 Vault 登记状态。','Run the check in the library manager to verify vault registration.');
+		addReason(check, tr('当前入口未提供 Vault 登记状态。','Run the check in the library manager to verify vault registration.'));
 	} else {
 		check.coverage.checked++;
 		if (!options.registered) check.diagnostics.push({severity: 'warning', code: 'unregistered-library', message: tr('当前 Vault 没有登记本库。','This library is not registered in the current vault.')});
 	}
 	if (options.duplicate === undefined) {
 		check.coverage.unknown++;
-		const reason = tr('当前入口未提供知识库身份重复检查结果。','The current entry point did not provide the result of the duplicate library identity check.');
-		check.reason = [check.reason, reason].filter(Boolean).join(' ');
+		addReason(check, tr('当前入口未提供知识库身份重复检查结果。','The current entry point did not provide the result of the duplicate library identity check.'));
 	} else {
 		check.coverage.checked++;
 		if (options.duplicate) check.diagnostics.push({severity: 'error', code: 'duplicate-library', file: 'kb.toml', message: tr('Vault 已登记另一处具有相同身份的知识库。','Another registered library has the same identity. Review the duplicate registration.')});
@@ -54,32 +66,40 @@ export function inspectManifest(check: DiagnosticCheckResult, options: Diagnosti
 }
 
 export function inspectProperties(check: DiagnosticCheckResult, inventory: Inventory, templateDirs: readonly string[]) {
-	check.coverage.skipped = inventory.skipped;
+	reportInventoryCoverage(check, inventory);
+	reportUnreadableNotes(check, inventory);
 	for (const note of inventory.notes) {
 		if (note.problem?.dynamic && templateDirs.some(dir => note.path.startsWith(dir + '/'))) {
 			check.coverage.unknown++;
-			check.reason = tr('有模板的属性只有在实际插入时才能验证。','Check template properties after inserting the template into a note.');
+			addReason(check, tr('有模板的属性只有在实际插入时才能验证。','Check template properties after inserting the template into a note.'));
 			continue;
 		}
 		check.coverage.checked++;
 		if (note.problem) check.diagnostics.push({severity: 'error', code: note.problem.code, line: note.problem.line,
 			file: note.path, message: tr('Markdown 的 YAML 属性无效。','The Markdown frontmatter contains invalid YAML. Check the indicated line.')});
 	}
-	check.coverage.unknown += inventory.unreadable.length;
-	for (const file of inventory.unreadable) check.diagnostics.push({severity: 'info', code: 'unreadable-note', file, message: tr('文件不可读或超出扫描范围限制。','Could not read the file within the scan limits. Check its permissions and size.')});
 }
 
 async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string, inventory: Inventory, extension: string,
-	inspect: (file: string, text: string) => void | Promise<void>) {
+	inspect: (file: string, text: string) => void | Promise<void>,
+	options: {inventoryCoverage?: false; countFiles?: false; onUnreadable?: (diagnostic: Diagnostic) => void} = {}) {
+	if (options.inventoryCoverage !== false) reportInventoryCoverage(check, inventory);
 	for (const file of inventory.files) {
 		if (!file.toLowerCase().endsWith(extension)) continue;
 		let text: string;
 		try {text = decode(await readRelative(root, file));}
-		catch {check.coverage.unknown++; check.diagnostics.push({severity:'info', code:'unreadable-file', file, message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits. Check its permissions and size.')}); continue;}
-		check.coverage.checked++;
+		catch {
+			check.coverage.unknown++;
+			const diagnostic: Diagnostic = {severity:'info', code:'unreadable-file', file,
+				message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')};
+			check.diagnostics.push(diagnostic);
+			options.onUnreadable?.(diagnostic);
+			addReason(check, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
+			continue;
+		}
+		if (options.countFiles !== false) check.coverage.checked++;
 		await inspect(file, text);
 	}
-	check.coverage.skipped += inventory.skipped;
 }
 
 const side = new Set(['top','right','bottom','left']);
@@ -90,68 +110,99 @@ const nonempty = (value: unknown): value is string => typeof value === 'string' 
 const color = (value: unknown) => value === undefined || typeof value === 'string' && /^(?:#[0-9a-f]{6}|[1-6])$/iu.test(value);
 const optionalEnum = (value: unknown, domain: Set<string>) => value === undefined || typeof value === 'string' && domain.has(value);
 
-export async function inspectCanvas(check: DiagnosticCheckResult, root: string, inventory: Inventory, options: DiagnosticOptions, location: string) {
-	const {resolve, vaultPath} = linkResolver(options, inventory, root, location);
+export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticCheckResult; portability?: DiagnosticCheckResult},
+	root: string, inventory: Inventory, options: DiagnosticOptions, location: string) {
+	const check = canvas ?? portability;
+	if (!check) return;
+	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
+	const selected = [canvas, portability].filter((item): item is DiagnosticCheckResult => !!item);
 	let deferred = false;
+	let unresolvedCanvas = false;
+	let unresolvedPortability = false;
 	await inspectStructuredFiles(check, root, inventory, '.canvas', async (file, text) => {
-		function fail(code: string, message: string) {check.diagnostics.push({severity:'error', code, message, file});}
+		function fail(code: string, message: string, evidence?: string) {canvas?.diagnostics.push({severity:'error', code, message, file, evidence});}
+		function uninspectable(code: string, message: string, evidence?: string) {
+			fail(code, message, evidence);
+			if (portability) {
+				portability.coverage.unknown++;
+				unresolvedPortability = true;
+				portability.diagnostics.push({file, evidence, code, message, severity:'info'});
+			}
+		}
 		let data: unknown;
-		try {data = JSON.parse(text);} catch {fail('canvas-json', tr('Canvas 内容不是有效 JSON。','The Canvas file contains invalid JSON.')); return;}
-		if (!isRecord(data) || (data.nodes !== undefined && !Array.isArray(data.nodes)) || (data.edges !== undefined && !Array.isArray(data.edges))) {
-			fail('canvas-structure', tr('Canvas 须含可选的节点与连线数组。','Use arrays for nodes and edges when those fields are present.')); return;
+		try {data = JSON.parse(text);} catch {uninspectable('canvas-json', tr('Canvas 内容不是有效 JSON。','The Canvas file contains invalid JSON.')); return;}
+		const structureMessage = tr('Canvas 须含可选的节点与连线数组。','Use arrays for nodes and edges when those fields are present.');
+		if (!isRecord(data) || (data.nodes !== undefined && !Array.isArray(data.nodes))) {
+			uninspectable('canvas-structure', structureMessage); return;
 		}
-		async function target(value: unknown, fragment?: string) {
-			if (!relativePath(value)) {fail('canvas-file-path', tr('Canvas 文件路径不是有效的 Vault 相对路径。','Use a valid vault-relative path for the Canvas file reference.')); return;}
-			const link = {source:vaultPath(file), target:value, fragment, kind:'embed', syntax:'wiki', canvasPath:true} as const;
+		if (data.edges !== undefined && !Array.isArray(data.edges)) fail('canvas-structure', structureMessage);
+		const source = vaultPath(file);
+		const inspectReference = async (link: LinkRequest, details: string) => {
+			const exact = link.canvasPath;
+			if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
+				for (const item of selected) item.coverage.skipped++;
+				deferred = true;
+				check.diagnostics.push({file,evidence:details,severity:'info',code:'template-link-deferred',message:tr('Canvas 中的模板链接待实例化后检查。','Check the Canvas template link after its variables are filled in.')});
+				return;
+			}
 			const found = await resolve(file, link);
-			const pdf = inspectPdfFragment(check, link, found, {file,evidence:found.path ?? value});
+			const evidence = [found.path ?? (relativePath(link.target) ? link.target : undefined), details].filter(Boolean).join(' · ');
+			const cross = outsideTarget(found);
+			if (portability) await inspectPortability(portability, {file}, link, found, details);
+			else if (cross) check.diagnostics.push({file,evidence:[cross.evidence, details].join(' · '), severity:'info',code:'cross-library-link',
+				message:tr('Canvas 引用解析到当前知识库之外的 Vault 文件。','The Canvas reference resolves to a vault file outside this library.')});
+			const unknownBefore = canvas?.coverage.unknown ?? 0;
+			const pdf = canvas && inspectPdfFragment(canvas, link, found, {file,evidence});
 			if (found.status === 'unknown') {
-				check.coverage.unknown++;
-				check.diagnostics.push({file,severity:'info',code:'canvas-target-unverified',message:tr('未能确认 Canvas 引用的文件。','Could not verify the Canvas file reference.'),evidence:value});
+				if (canvas) canvas.coverage.unknown++;
+				if (portability) unresolvedPortability = true;
+				const diagnostic: Diagnostic = {file,evidence,severity:'info',code:exact ? 'canvas-target-unverified' : 'canvas-text-link-unverified',
+					message:printable(found.reason,512) ? found.reason : exact
+						? tr('未能确认 Canvas 引用的文件。','Could not verify the Canvas file reference.')
+						: tr('未能确认 Canvas 文本节点中的链接。','Could not verify the link in the Canvas text node.')};
+				for (const item of selected) item.diagnostics.push(diagnostic);
+			} else if (canvas) {
+				if (found.status === 'resolved' && !pdf && link.fragment && (!found.anchor || found.anchor === 'unknown')) {
+					canvas.coverage.unknown++;
+					if (exact) canvas.coverage.checked++;
+					else canvas.diagnostics.push({file,evidence,severity:'info',code:'canvas-text-link-unverified',message:tr('未能确认文本节点中的链接片段。','Could not verify the link fragment in the Canvas text node.')});
+				} else {
+					canvas.coverage.checked++;
+					if (found.status === 'missing') {
+						if (exact) fail('canvas-target-missing',tr('Canvas 引用的文件不存在。','The Canvas references a missing file. Restore it or update the node.'),evidence);
+						else canvas.diagnostics.push({file,evidence,...missingLink(link.target,link.kind)});
+					} else if (!pdf && link.fragment && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 引用的标题、块或视图不存在。','The Canvas references a missing heading, block, or view. Check its fragment.'),evidence);
+				}
 			}
-			else {
-				check.coverage.checked++;
-				if (found.status === 'missing') fail('canvas-target-missing',tr('Canvas 引用的文件不存在。','The Canvas references a missing file. Restore it or update the node.'));
-				else if (!pdf && fragment && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 引用的标题或块不存在。','The Canvas references a missing heading or block. Check the node’s subpath.'));
-				else if (!pdf && fragment && found.anchor !== 'resolved') check.coverage.unknown++;
-			}
+			if (canvas && canvas.coverage.unknown > unknownBefore) unresolvedCanvas = true;
+		};
+		async function target(value: unknown, details: string, fragment?: string) {
+			if (!relativePath(value)) {uninspectable('canvas-file-path', tr('Canvas 文件路径不是有效的 Vault 相对路径。','Use a valid vault-relative path for the Canvas file reference.'),details); return;}
+			await inspectReference({source,target:value,fragment,kind:'embed',syntax:'wiki',canvasPath:true}, details);
 		}
-		async function textLinks(body: string) {
+		async function textLinks(body: string, node: string) {
 			for (const occurrence of staticOccurrences({path:file,body,lineOffset:0})) {
+				const details = occurrence.line ? `${node} · ${tr('文本行','Text line')} ${occurrence.line}` : node;
+				let link: LinkRequest | undefined;
 				try {
-					const link = linkRequest(vaultPath(file),occurrence);
-					if (!link) {check.coverage.skipped++; continue;}
-					if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
-						check.coverage.skipped++;
-						deferred = true;
-						check.diagnostics.push({file,severity:'info',code:'template-link-deferred',message:tr('Canvas 文本节点中的模板链接待实例化后检查。','Check the template link in the Canvas text node after its variables are filled in.')});
-						continue;
-					}
-					const found = await resolve(file,link);
-					const evidence = found.path ?? (relativePath(link.target) ? link.target : undefined);
-					const pdf = inspectPdfFragment(check,link,found,{file,evidence});
-					if (found.status === 'unknown' || !pdf && found.status === 'resolved' && link.fragment && (!found.anchor || found.anchor === 'unknown')) {
-						check.coverage.unknown++;
-						check.diagnostics.push({file,evidence,severity:'info',code:'canvas-text-link-unverified',message:tr('未能确认文本节点中的链接或片段。','Could not verify the link or fragment in the Canvas text node.')});
-					} else {
-						check.coverage.checked++;
-						if (found.status === 'missing') check.diagnostics.push({file,evidence,...missingLink(link.target,link.kind)});
-						else if (!pdf && found.anchor === 'missing') fail('canvas-anchor-missing',tr('Canvas 文本节点的链接引用不存在的标题、块或视图。','The Canvas text node links to a missing heading, block, or view. Check the link fragment.'));
-					}
-				} catch {fail('canvas-link-encoding',tr('Canvas 文本节点的链接包含无效 URL 转义。','The Canvas text node contains a link with invalid URL encoding.'));}
+					link = linkRequest(source,occurrence);
+				} catch {uninspectable('canvas-link-encoding',tr('Canvas 文本节点的链接包含无效 URL 转义。','The Canvas text node contains a link with invalid URL encoding.'),details); continue;}
+				if (link) await inspectReference(link, details);
+				else for (const item of selected) item.coverage.skipped++;
 			}
 		}
 		const ids = new Set<string>();
 		for (const node of (data.nodes ?? []) as unknown[]) {
 			if (!isRecord(node) || !nonempty(node.id) || typeof node.type !== 'string' || !type.has(node.type) ||
 				!['x','y','width','height'].every(key => Number.isSafeInteger(node[key])) || !color(node.color)) {
-				fail('canvas-node',tr('Canvas 节点的 ID、类型、坐标、尺寸或颜色无效。','Check the Canvas node’s ID, type, coordinates, dimensions, and color.')); continue;
+				uninspectable('canvas-node',tr('Canvas 节点的 ID、类型、坐标、尺寸或颜色无效。','Check the Canvas node’s ID, type, coordinates, dimensions, and color.')); continue;
 			}
 			if (ids.has(node.id)) fail('canvas-duplicate-node',tr('Canvas 节点 ID 重复。','Give each Canvas node a unique ID.'));
 			ids.add(node.id);
+			const details = printable(node.id,128) ? `${tr('节点','Node')} ${node.id}` : tr('节点','Node');
 			if (node.type === 'text') {
-				if (typeof node.text !== 'string') fail('canvas-text-node',tr('Canvas 文本节点没有文本。','Supply a text string for the Canvas text node.'));
-				else await textLinks(node.text);
+				if (typeof node.text !== 'string') uninspectable('canvas-text-node',tr('Canvas 文本节点没有文本。','Supply a text string for the Canvas text node.'),details);
+				else await textLinks(node.text, details);
 			}
 			if (node.type === 'link' && !nonempty(node.url)) fail('canvas-link-node',tr('Canvas 链接节点没有 URL。','Supply a URL for the Canvas link node.'));
 			if (node.type === 'group' && ((node.label !== undefined && typeof node.label !== 'string') || !optionalEnum(node.backgroundStyle, backgrounds)))
@@ -159,12 +210,13 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 			if (node.type === 'file') {
 				if (node.subpath !== undefined && (typeof node.subpath !== 'string' || !node.subpath.startsWith('#')))
 					fail('canvas-subpath',tr('Canvas 文件节点的子路径须以 # 开头。','Start the Canvas file node’s subpath with #.'));
-				await target(node.file, typeof node.subpath === 'string' && node.subpath.startsWith('#') ? node.subpath : undefined);
+				await target(node.file, details, typeof node.subpath === 'string' && node.subpath.startsWith('#') ? node.subpath : undefined);
 			}
-			if (node.type === 'group' && node.background !== undefined) await target(node.background);
+			if (node.type === 'group' && node.background !== undefined) await target(node.background, details);
 		}
+		if (!canvas || !Array.isArray(data.edges)) return;
 		const edges = new Set<string>();
-		for (const edge of (data.edges ?? []) as unknown[]) {
+		for (const edge of data.edges as unknown[]) {
 			if (!isRecord(edge) || !nonempty(edge.id) || !nonempty(edge.fromNode) || !nonempty(edge.toNode) ||
 				!color(edge.color) || !optionalEnum(edge.fromSide, side) || !optionalEnum(edge.toSide, side) ||
 				!optionalEnum(edge.fromEnd, arrow) || !optionalEnum(edge.toEnd, arrow) || (edge.label !== undefined && typeof edge.label !== 'string')) {
@@ -174,11 +226,22 @@ export async function inspectCanvas(check: DiagnosticCheckResult, root: string, 
 			edges.add(edge.id);
 			if (!ids.has(edge.fromNode) || !ids.has(edge.toNode)) fail('canvas-dangling-edge',tr('Canvas 连线引用不存在的节点。','Update or remove the edge that points to a missing Canvas node.'));
 		}
+	}, {
+		inventoryCoverage: canvas ? undefined : false,
+		countFiles: canvas ? undefined : false,
+		onUnreadable: diagnostic => {
+			if (canvas && portability) {
+				portability.coverage.unknown++;
+				portability.diagnostics.push(diagnostic);
+				addReason(portability, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
+			}
+		},
 	});
-	const reasons = [];
-	if (deferred) reasons.push(tr('Canvas 文本节点中的部分模板链接待实例化后检查。','Check deferred template links in Canvas text nodes after their variables are filled in.'));
-	if (check.coverage.unknown) reasons.push(tr('部分 Canvas 文件引用、附件、锚点或文本节点内的链接未能确认。','Some Canvas file references, attachments, anchors, or links in text nodes could not be verified.'));
-	if (reasons.length) check.reason = reasons.join(' ');
+	for (const item of selected) {
+		if (deferred) addReason(item, tr('Canvas 中的部分模板链接待实例化后检查。','Check deferred Canvas template links after their variables are filled in.'));
+		if (item === canvas ? unresolvedCanvas : unresolvedPortability)
+			addReason(item, tr('部分 Canvas 引用或链接未能确认。','Some Canvas references or links could not be verified.'));
+	}
 }
 
 function validFilter(value: unknown, depth = 0): boolean {
@@ -191,6 +254,7 @@ function validFilter(value: unknown, depth = 0): boolean {
 }
 
 export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory) {
+	let dynamicExpressions = 0;
 	function inspect(file: string, text: string, line?: number) {
 		let base: unknown;
 		try {base = parse(text);} catch {/* Invalid schema below. */}
@@ -208,21 +272,31 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 			const value = base[field];
 			if (value === undefined) continue;
 			if (!isRecord(value) || !Object.values(value).every(nonempty)) fail('base-expression',tr('Base 表达式须为非空字符串。','Write each Base expression as a nonempty string.'));
-			else check.coverage.unknown += Object.keys(value).length;
+			else dynamicExpressions += Object.keys(value).length;
 		}
 		for (const scope of [base, ...views]) {
 			if (scope.filters === undefined) continue;
 			if (!validFilter(scope.filters)) fail('base-filter',tr('Base 过滤器须用语句或 and/or/not 的嵌套列表。','Use an expression or nested and/or/not lists for the Base filter.'));
-			else check.coverage.unknown++;
+			else dynamicExpressions++;
 		}
 	}
 	await inspectStructuredFiles(check, root, inventory, '.base', inspect);
-	for (const note of inventory.notes) for (const block of fencedBlocks(note.body)) {
-		if (block.language !== 'base') continue;
-		check.coverage.checked++;
-		inspect(note.path, block.source, block.line + note.lineOffset);
+	reportUnreadableNotes(check, inventory);
+	for (const note of inventory.notes) {
+		if (note.problem?.code === 'unclosed-frontmatter') {
+			check.coverage.unknown++;
+			const message = tr('未找到 YAML 属性的结束标记，无法检查正文中的 Base 代码块。','Could not scan the body for Base blocks because the frontmatter has no closing delimiter.');
+			check.diagnostics.push({severity:'info', code:'unverified-markdown-body', file:note.path, line:note.problem.line, message});
+			addReason(check, tr('部分 Markdown 正文无法与属性分开。','Some Markdown bodies could not be separated from their frontmatter.'));
+		}
+		for (const block of fencedBlocks(note.body)) {
+			if (block.language !== 'base') continue;
+			check.coverage.checked++;
+			inspect(note.path, block.source, block.line + note.lineOffset);
+		}
 	}
-	if (check.coverage.unknown) check.reason = tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.');
+	check.coverage.unknown += dynamicExpressions;
+	if (dynamicExpressions) addReason(check, tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.'));
 }
 
 export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string) {

@@ -2,7 +2,7 @@ import {stringify} from 'smol-toml';
 import { segments } from '../fs/segments.ts';
 import { tr } from '../i18n.ts';
 
-export interface CheckDeclaration {id:string; name:string; path:string; description?:string}
+export interface CheckDeclaration {id:string; name:string; path:string; description?:string; linkEvidence?:boolean}
 export interface TemplateSource {url:string; author:string; commit:string; license:string; path?:string}
 export interface Declaration {
 	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
@@ -59,7 +59,8 @@ export function declaration(raw:string):Declaration {
 		const ids=new Set<string>(), paths=new Set<string>();
 		for(const check of data.checks as unknown[]){
 			if(!object(check) || typeof check.id!=='string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/u.test(check.id) || reservedChecks.has(check.id) || typeof check.name!=='string' || !check.name.trim() ||
-				typeof check.path!=='string' || !/^checks\/[^/]+\.mjs$/u.test(check.path) || (check.description!==undefined && typeof check.description!=='string'))bad('checks');
+				typeof check.path!=='string' || !/^checks\/[^/]+\.mjs$/u.test(check.path) || (check.description!==undefined && typeof check.description!=='string') ||
+				(check.linkEvidence!==undefined && typeof check.linkEvidence!=='boolean'))bad('checks');
 			segments(check.path);
 			if(ids.has(check.id) || paths.has(check.path.toLowerCase()))bad('checks.'+check.id);
 			ids.add(check.id); paths.add(check.path.toLowerCase());

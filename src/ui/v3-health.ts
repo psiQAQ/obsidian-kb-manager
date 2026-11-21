@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { digest, statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { generalChecks, listDiagnosticHistory, listSpecialChecks, portabilityCheck, runDiagnostics } from '../diagnostics/index.ts';
+import { linkCandidateIndex } from '../diagnostics/links.ts';
 import { officialCheckDigests } from '../kb/template-pack.ts';
 import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
@@ -23,18 +24,20 @@ const checkLabels: Record<string,readonly [string,string]> = {
 };
 const checkName=(id:string,fallback:string)=>checkLabels[id]?tr(...checkLabels[id]):fallback;
 
-function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'> {
+function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'|'linkTargetVisibility'> {
 	const {vault,metadataCache}=plugin.app;
-	let byName:Map<string,string[]>|undefined;
-	const nameKey=(name:string)=>name.normalize('NFC').toLowerCase();
 	return {
 		collectLinks:source=>{
 			const cache=metadataCache.getCache(source);
 			if(!cache)return undefined;
 			const collect=(refs: typeof cache.links,kind:'link'|'embed')=>(refs ?? []).map(ref=>({
-				target:ref.link,kind,line:ref.position.start.line+1,syntax:/^!?\[\[/u.test(ref.original)?'wiki' as const:'markdown' as const,
+				target:ref.link,kind,decoded:true,line:ref.position.start.line+1,syntax:/^!?\[\[/u.test(ref.original)?'wiki' as const:'markdown' as const,
 			}));
 			return [...collect(cache.links,'link'),...collect(cache.embeds,'embed'),...(cache.frontmatterLinks ?? []).map(ref=>({target:ref.link,kind:'link' as const}))];
+		},
+		linkTargetVisibility:target=>{
+			const visibility:unknown=metadataCache.getCache(target)?.frontmatter?.visibility;
+			return visibility==='public' || visibility==='private' ? visibility : undefined;
 		},
 		resolveLink:request=>{
 			const source=vault.getAbstractFileByPath(request.source);
@@ -46,18 +49,7 @@ function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'r
 			if(target.extension!=='md' || !cache)return {status:'resolved',path:target.path,anchor:'unknown'};
 			return {status:'resolved',path:target.path,anchor:resolveSubpath(cache,request.fragment)?'resolved':'missing'};
 		},
-		linkCandidates:request=>{
-			if(!request.target || request.target.includes('/'))return [];
-			if(!byName){
-				byName=new Map();
-				for(const file of vault.getFiles())for(const label of file.extension==='md'?[file.basename,file.name]:[file.name]){
-					const key=nameKey(label), matches=byName.get(key) ?? [];
-					matches.push(file.path);
-					byName.set(key,matches);
-				}
-			}
-			return byName.get(nameKey(request.target)) ?? [];
-		},
+		linkCandidates:linkCandidateIndex(()=>vault.getFiles().map(file=>file.path)),
 	};
 }
 
@@ -136,7 +128,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		for(const check of report.checks){
 			const matches=check.diagnostics.filter(item=>!severity||item.severity===severity)
 				.sort((a,b)=>severityOrder[a.severity]-severityOrder[b.severity]);
-			if(severity && !matches.length)continue;
+			if(severity && !matches.length && check.status!=='partial' && check.status!=='failed')continue;
 			const group=list.createEl('details',{cls:'kb-v3-detail'});
 			group.open=!!matches.length || check.status==='partial' || check.status==='failed';
 			const summary=group.createEl('summary');
@@ -151,9 +143,11 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 				finding.createSpan({cls:'kb-v3-diagnostic-code',text:[item.code,fileLocation].filter(Boolean).join(' · ')});
 				finding.createEl('p',{text:item.message});
 				if(item.evidence)finding.createEl('p',{cls:'kb-v3-muted',text:typeof item.evidence==='string'? item.evidence:JSON.stringify(item.evidence)});
-				if(item.file)finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button'}}).addEventListener('click',()=>{
-					void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
-				});
+				if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile) {
+					finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button'}}).addEventListener('click',()=>{
+						void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
+					});
+				}
 			}
 		}
 		if(!list.childElementCount)list.createEl('p',{cls:'kb-v3-muted',text:tr('没有符合筛选条件的诊断。','No diagnostics match the filter.')});

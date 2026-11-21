@@ -39,9 +39,11 @@ export interface LinkOccurrence {
 	kind: 'link' | 'embed';
 	line?: number;
 	syntax?: 'wiki' | 'markdown';
+	/** Obsidian has already decoded percent escapes in its Markdown reference cache. */
+	decoded?: boolean;
 }
 
-export interface LinkRequest extends Omit<LinkOccurrence, 'line'> {
+export interface LinkRequest extends Omit<LinkOccurrence, 'line' | 'decoded'> {
 	source: string;
 	fragment?: string;
 	canvasPath?: boolean;
@@ -54,6 +56,8 @@ export interface LinkResolution {
 	reason?: string;
 }
 
+export type NoteVisibility = 'public' | 'private';
+
 export interface DiagnosticOptions {
 	libraryRoot: string;
 	vaultRoot?: string;
@@ -64,6 +68,7 @@ export interface DiagnosticOptions {
 	registeredPaths?: readonly string[];
 	resolveLink?: (request: LinkRequest) => LinkResolution | Promise<LinkResolution>;
 	collectLinks?: (source: string) => LinkOccurrence[] | undefined | Promise<LinkOccurrence[] | undefined>;
+	linkTargetVisibility?: (vaultPath: string) => NoteVisibility | undefined | Promise<NoteVisibility | undefined>;
 	linkCandidates?: (request: LinkRequest) => readonly string[] | Promise<readonly string[]>;
 	trustedDigests?: readonly string[];
 	officialDigests?: readonly string[];
@@ -72,11 +77,20 @@ export interface DiagnosticOptions {
 }
 
 export interface SpecialCheck { id: string; name: string; path: string; description?: string; digest?: string; reason?: string }
+export interface CheckLinkEvidence {
+	status: LinkResolution['status'];
+	target?: string;
+	line?: number;
+	path?: string;
+	visibility?: NoteVisibility;
+}
+
 export interface CheckContext {
 	template: Record<string, unknown>;
 	manifest: Record<string, unknown>;
 	libraryRoot: string;
 	notes: { path: string; body: string; properties: Record<string, unknown> }[];
+	links?: Record<string, { complete: boolean; references: CheckLinkEvidence[] }>;
 }
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

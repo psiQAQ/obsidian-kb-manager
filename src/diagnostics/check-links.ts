@@ -1,0 +1,40 @@
+import {dynamicTarget, linkRequest, linkResolver, staticOccurrences} from './links.ts';
+import type {Inventory} from './snapshot.ts';
+import {printable} from './types.ts';
+import type {CheckContext, CheckLinkEvidence, DiagnosticOptions, LinkOccurrence} from './types.ts';
+
+export async function collectCheckLinkEvidence(options: DiagnosticOptions, inventory: Inventory, root: string, libraryPath: string) {
+	const {resolve, vaultPath} = linkResolver(options, inventory, root, libraryPath);
+	const notes = new Map(inventory.notes.map(note => [vaultPath(note.path), note]));
+	const links: NonNullable<CheckContext['links']> = Object.create(null) as NonNullable<CheckContext['links']>;
+	for (const note of inventory.notes) {
+		if (!note.properties) continue;
+		const source = vaultPath(note.path);
+		let native: LinkOccurrence[] | undefined;
+		try {native = await options.collectLinks?.(source);} catch {/* Keep static evidence with incomplete coverage. */}
+		const references: CheckLinkEvidence[] = [];
+		links[note.path] = {complete: !options.collectLinks || native !== undefined, references};
+		for (const occurrence of native ?? staticOccurrences(note)) {
+			const evidence: CheckLinkEvidence = {status: 'unknown', line: occurrence.line,
+				target: printable(occurrence.target, 1000) ? occurrence.target : undefined};
+			try {
+				const link = linkRequest(source, occurrence);
+				if (!link) continue;
+				if (!dynamicTarget(link.target) && !dynamicTarget(link.fragment ?? '')) {
+					const found = await resolve(note.path, link);
+					evidence.status = found.status;
+					if (found.status === 'resolved' && found.path) {
+						evidence.path = found.path;
+						if (/\.md$/iu.test(found.path)) {
+							const local = notes.get(found.path);
+							const visibility = local ? local.properties?.visibility : await options.linkTargetVisibility?.(found.path);
+							if (visibility === 'public' || visibility === 'private') evidence.visibility = visibility;
+						}
+					}
+				}
+			} catch {/* The target or its visibility could not be verified. */}
+			references.push(evidence);
+		}
+	}
+	return links;
+}

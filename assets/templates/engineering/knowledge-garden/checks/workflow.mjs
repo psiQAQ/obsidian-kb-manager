@@ -1,16 +1,29 @@
-export default async function check({ libraryRoot, notes }) {
-	const privateNotes = new Set(notes.filter(note => note.properties.visibility === 'private').map(note => note.path.replace(/\.md$/u, '')));
-	return notes.flatMap(({ path, body, properties }) => {
-		if (properties.type !== 'garden-note' || properties.publish_ready !== true) return [];
-		const text = [body, ...[properties.related].flat()].filter(value => typeof value === 'string').join('\n');
+export default function check({ notes, links }) {
+	const findings = [];
+	let unverified = 0;
+	for (const { path, properties } of notes) {
+		if (properties.type !== 'garden-note' || properties.publish_ready !== true) continue;
+		const source = links?.[path];
+		if (!source?.complete) {
+			unverified++;
+			findings.push({severity:'info', code:'sharing-reference-unverified', file:path, message:'该页面的链接清单未能完整核实。'});
+		}
 		const seen = new Set();
-		return Array.from(text.matchAll(/\[\[([^#|\]]+)/gu), ([, target]) => {
-			const relative = target.startsWith(libraryRoot + '/') ? target.slice(libraryRoot.length + 1) : target;
-			return relative.replace(/\.md$/u, '');
-		}).flatMap(target => {
-			if (!privateNotes.has(target) || seen.has(target)) return [];
+		for (const reference of source?.references ?? []) {
+			if (reference.status === 'missing' || reference.visibility === 'public' ||
+				(reference.path && !/\.md$/iu.test(reference.path))) continue;
+			const target = reference.path ?? reference.target;
+			if (seen.has(target)) continue;
 			seen.add(target);
-			return [{ severity:'warning', code:'sharing-private-reference', file:path, message:'拟分享页面引用私有页面：' + target }];
-		});
-	});
+			const position = {file:path, line:reference.line, evidence:target?.slice(0, 1000)};
+			if (reference.visibility === 'private') {
+				findings.push({...position, severity:'warning', code:'sharing-private-reference', message:'拟分享页面引用了明确标记为私有的页面。'});
+			} else {
+				unverified++;
+				findings.push({...position, severity:'info', code:'sharing-reference-unverified',
+					message:reference.path ? '未能确认链接目标的 visibility 属性。' : '未能核实该链接指向的实际页面。'});
+			}
+		}
+	}
+	return {findings, unverified};
 }

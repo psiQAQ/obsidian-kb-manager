@@ -88,7 +88,9 @@ export default function check({ notes }) {
 - `kb.toml` 随实例保存在本机，含独立 UUID、模板 ID 与版本、显示名、简介、可选入口、Git 偏好及受管字段。插件记录 `kb_root` 在声明文件中的实例化位置及文件指纹。通过插件改名或移动时预览这些字段。已编辑的受管文件列入人工复核。复制完整库可携带原清单恢复身份，新建独立副本使用新 UUID。
 - 可选的 `variables` 提供专项默认值，例如在模板声明写 `"variables": {"minimumSources": 2}`。用户可在实例 `kb.toml` 写 `[variables]` 表并设 `minimumSources = 3`。脚本里用 `manifest.variables?.minimumSources ?? template.variables?.minimumSources ?? 2` 取值。支持字符串、有限数字和布尔值；阈值只参与检验，不会被替换进笔记。
 - `checks` 可省略。每一项有库内唯一 ID、显示名、可选说明和位于 `checks/` 下的独立 `.mjs` 文件。使用输入中的 `template`、`manifest`、`libraryRoot`、`notes` 获取模板声明、实例信息、Vault 相对目录和本次可分析的笔记。每篇笔记有库内相对路径 `path`、正文 `body`、已解析属性 `properties`。专项自有的属性和取值约定由模板作者在首页说明。
+- 检查项可设置 `"linkEvidence": true` 请求本次解析的内部链接。获准运行的脚本可读取 `links[note.path]`，其中 `complete` 表示当前解析器的链接清单可用，`references` 中的每项都有 `status`（`resolved`、`missing` 或 `unknown`），并可包含原链接目标 `target`、1 起计的 `line`、已解析的 Vault 相对 `path` 和 Markdown 目标声明的 `visibility`（`public` 或 `private`）。桌面使用 Obsidian 的实际解析，离线只确认有路径依据的目标。跨库目标只提供其解析路径及可确认的可见性标记。若链接或可见性证据不足，应在结果中标明待核实。
 - 函数返回的每条诊断都要有稳定的 `code`、`severity`（`error`、`warning`、`info`）和给用户看的 `message`。能定位时提供相对文件 `file`、从 1 开始的行号 `line`，可在短字符串 `evidence` 中记录依据。消息以普通文字渲染，颜色、图标和定位由插件提供。检查不得修改知识库。专项由本机 Node 进程执行，具备当前用户权限；声明不能给自身授信。
+- 可以直接返回诊断数组，也可以返回 `{ findings, unverified }`，其中 `findings` 是诊断数组，`unverified` 是 0 到 5000 的整数。大于 0 时检验状态为 `partial`，适合用 `info` 诊断给出待核实的位置与原因。
 - `dependencies` 填可选工作流所需的 Obsidian 社区插件 ID。在首页写清每项依赖的用途、用户触发方式和输出位置。保持 DataviewJS 关闭。模板不复制宿主 `.obsidian`，不设置开库宏或全局新建文件触发器。旧式 `managed` 的 `knowledge.base:overview-bindings` 保留给已有融合总览格式。
 
 ## 离线检验和日志

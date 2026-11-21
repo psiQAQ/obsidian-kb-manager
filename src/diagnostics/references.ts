@@ -46,8 +46,17 @@ export function inspectFootnotes(check: DiagnosticCheckResult, body: string, fil
 export function inspectPdfFragment(check: DiagnosticCheckResult, link: LinkRequest, found: LinkResolution,
 	position: Pick<Diagnostic,'file'|'line'|'evidence'>) {
 	if (!link.fragment || !/\.pdf$/iu.test(found.path ?? link.target)) return false;
-	const pages = link.fragment.slice(1).split('&').filter(part => /^page(?:=|$)/iu.test(part)).map(part => part.slice(5));
-	if (!pages.length) check.coverage.skipped++;
+	const parts = link.fragment.slice(1).split('&');
+	const pages = parts.filter(part => /^page(?:=|$)/iu.test(part)).map(part => part.slice(5));
+	const hasLocation = parts.some(part => /^(?:selection|annotation)(?:=|$)/iu.test(part));
+	if (hasLocation && found.status !== 'missing') {
+		check.coverage.unknown++;
+		check.diagnostics.push({...position,severity:'info',code:'unverified-pdf-location',
+			message:tr('请打开 PDF 核对引用的选区或批注。','Open the PDF to verify the referenced selection or annotation.')});
+	}
+	if (!pages.length) {
+		if (!hasLocation || found.status === 'missing') check.coverage.skipped++;
+	}
 	else if (pages.some(page => !/^\d+$/u.test(page) || !/[1-9]/u.test(page))) {
 		check.coverage.checked++;
 		check.diagnostics.push({...position,severity:'error',code:'invalid-pdf-page',

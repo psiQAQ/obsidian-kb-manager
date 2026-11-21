@@ -9,12 +9,12 @@ import {segments} from '../fs/segments.ts';
 import {key, statIfPresent} from '../fs/vault.ts';
 import {readManifest} from '../kb/identity-core.ts';
 import {declaration} from '../kb/template-declaration.ts';
-import type {Declaration as TemplateDeclaration} from '../kb/template-declaration.ts';
+import type {CheckDeclaration, Declaration as TemplateDeclaration} from '../kb/template-declaration.ts';
 import {generalIds, isRecord, printable} from './types.ts';
 import type {CheckContext, DiagnosticOptions, SpecialCheck, TemplateIdentity} from './types.ts';
 
 export type Declaration = TemplateDeclaration & TemplateIdentity;
-export interface DeclaredCheck extends SpecialCheck { source?: Buffer }
+export interface DeclaredCheck extends SpecialCheck { source?: Buffer; linkEvidence?: CheckDeclaration['linkEvidence'] }
 export interface TemplateSnapshot { template?: Declaration; checks: DeclaredCheck[]; reason?: string; missing?: boolean }
 const bytesPerFile = 2 * 1024 * 1024;
 const bytesPerLibrary = 24 * 1024 * 1024;
@@ -173,17 +173,27 @@ export interface Inventory {
 	excluded: Set<string>;
 	notes: NoteRecord[];
 	unreadable: string[];
+	unreadableDirectories: Set<string>;
 	skipped: number;
 }
 
 export async function inventory(root: string, configDir: string): Promise<Inventory> {
-	const found: Inventory = {files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [], skipped: 0};
+	const found: Inventory = {files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [],
+		unreadableDirectories: new Set(), skipped: 0};
 	let remaining = bytesPerLibrary;
 	async function visit(relative: string) {
 		const directory = path.join(root, relative);
-		const stat = await fs.lstat(directory);
-		if (!stat.isDirectory() || stat.isSymbolicLink()) {found.excluded.add(relative); found.skipped++; return;}
-		const entries = (await fs.readdir(directory, {withFileTypes: true})).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		let entries;
+		try {
+			const stat = await fs.lstat(directory);
+			if (!stat.isDirectory() || stat.isSymbolicLink()) {found.excluded.add(relative); found.skipped++; return;}
+			entries = await fs.readdir(directory, {withFileTypes: true});
+		} catch (error) {
+			if (!relative) throw error;
+			found.unreadableDirectories.add(relative);
+			return;
+		}
+		entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 		if (relative && entries.some(entry => ['.git','kb.toml','kb-manager.json'].includes(key(entry.name)))) {
 			found.excluded.add(relative); found.skipped++; return;
 		}
@@ -192,15 +202,15 @@ export async function inventory(root: string, configDir: string): Promise<Invent
 			const file = relative ? relative + '/' + entry.name : entry.name;
 			if (!relativePath(file) || key(entry.name) === key(configDir) || ['node_modules','__pycache__'].includes(key(entry.name)) ||
 				key(file) === 'checks' || entry.isSymbolicLink()) {found.excluded.add(file); found.skipped++; continue;}
+			if (entry.isDirectory()) await visit(file);
+			if (!entry.isFile()) continue;
+			found.files.add(file);
+			if (!/\.md$/iu.test(file)) continue;
 			try {
-				if (entry.isDirectory()) await visit(file);
-				if (!entry.isFile()) continue;
-				found.files.add(file);
-				if (!/\.md$/iu.test(file)) continue;
 				const bytes = await readRelative(root, file, Math.min(remaining, bytesPerFile));
 				remaining -= bytes.length;
 				found.notes.push(noteRecord(file, decode(bytes)));
-			} catch {found.unreadable.push(file); if (entry.isDirectory()) found.excluded.add(file);}
+			} catch {found.unreadable.push(file);}
 		}
 	}
 	await visit('');
