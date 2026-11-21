@@ -45,7 +45,7 @@ export function createForm(plugin:MobilePlugin) {
 		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
 		const {author,origin,files,branch,message}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
 		const signature=author.name+' <'+author.email+'>';
-		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),p.template.id],
+		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),p.template.id],[tr('通用检验套件','Common check kit'),p.checkKit.version],
 			[tr('分支','Branch'),branch],[tr('提交说明','Commit message'),message],
 			[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],['origin',origin||tr('未设置','Unset')]]);
 		review.lines([tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),

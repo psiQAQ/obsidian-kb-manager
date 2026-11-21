@@ -2,7 +2,7 @@ import {resolve} from 'node:path';
 import process from 'node:process';
 import {tr} from '../i18n.ts';
 import {officialCheckDigests} from '../kb/template-pack.ts';
-import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from './index.ts';
+import {listCommonChecks, listDiagnosticHistory, listSpecialChecks, runDiagnostics} from './index.ts';
 import type {DiagnosticOptions} from './index.ts';
 import {defaultConfigDir} from '../fs/segments.ts';
 import {checkIdPattern, libraryLocation, validConfigDir} from './snapshot.ts';
@@ -49,7 +49,7 @@ export async function runCli(argv: readonly string[]) {
 		if (mode === 'help') return {code:0, payload:{schemaVersion:1, usage}};
 		if (mode === 'history' || mode === 'list') {
 			const {root} = await libraryLocation(options);
-			const data = mode === 'history' ? {reports:await listDiagnosticHistory(root)} : await listSpecialChecks(root);
+			const data = mode === 'history' ? {reports:await listDiagnosticHistory(root)} : {...await listSpecialChecks(root), common:await listCommonChecks(root)};
 			return {code:0, payload:{schemaVersion:1, ...data}};
 		}
 		const report = await runDiagnostics(options);

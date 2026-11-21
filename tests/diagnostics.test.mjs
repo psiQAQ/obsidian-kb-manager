@@ -8,6 +8,8 @@ import test from 'node:test';
 import {build} from 'esbuild';
 import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from '../src/diagnostics/index.ts';
 import {setLanguage} from '../src/i18n.ts';
+import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
+import {writeCheckKit} from '../src/kb/identity-core.ts';
 
 const id = '81079855-d3ba-4c76-b59a-042412ba624a';
 const relative = 'libraries/示例库';
@@ -71,6 +73,42 @@ async function withUnscannableDirectory(t, denied, run) {
 	try {return await run();}
 	finally {mocked.mock.restore(); syncBuiltinESMExports();}
 }
+
+test('a library executes reviewed common and template sources and reports failures independently', async t => {
+	const {options,put,root} = await fixture(t);
+	const kit = checkKitFiles();
+	const hashes = {};
+	for (const [name,source] of Object.entries(kit)) {
+		await put(name,source);
+		hashes[name] = digest(source);
+	}
+	const entry = 'checks/common/properties.mjs';
+	await put('fixture.base','views:\n  - type: table\n    name: Example\n');
+	const common = 'export default ({result}) => {result.coverage.checked++; result.diagnostics.push({code:"edited-common",severity:"warning",file:"name.md",line:1,message:"Common finding"}); return result;}';
+	const special = 'export default () => [{code:"edited-special",severity:"warning",file:"name.md",line:1,message:"Template finding"}];';
+	await put('kb.toml',writeCheckKit(manifest,{protocol:1,version:checkKitVersion,digests:hashes}));
+	await put(entry,common);
+	await put('checks/checker.mjs',special);
+	const selected = ['properties','fixture.check','bases'];
+	const run = trustedDigests => runDiagnostics({...options,selected,trustedDigests});
+	const approved = [digest(common),digest(special)];
+	const before = await run([]);
+	assert.deepEqual(before.checks.slice(0,2).map(codes),[['checker-untrusted'],['checker-untrusted']]);
+	const after = await run(approved);
+	assert.deepEqual(after.checks.slice(0,2).flatMap(c=>c.diagnostics.map(d=>[d.code,d.file,d.line])),[
+		['edited-common','name.md',1],['edited-special','name.md',1],
+	]);
+	const broken = 'export default () => {throw new Error("fixture");};';
+	await put(entry,broken);
+	assert.deepEqual(codes(result(await run(approved),'properties')),['checker-untrusted']);
+	assert.deepEqual(codes(result(await run([...approved,digest(broken)]),'properties')),['checker-execution']);
+	await fs.unlink(path.join(root,entry));
+	const missing = await run(approved);
+	assert.equal(missing.status,'failed');
+	assert.deepEqual(codes(result(missing,'properties')),['checker-unavailable']);
+	assert.equal(result(missing,'properties').diagnostics[0].file,entry);
+	assert.equal(result(missing,'bases').status,'passed');
+});
 
 test('desktop native link evidence and partial coverage distinguish unresolved files and intended cross-library links', async t => {
 	const {options,put} = await fixture(t);

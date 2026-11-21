@@ -5,6 +5,7 @@ import type {Readable, Writable} from 'node:stream';
 import {clearTimeout, setTimeout} from 'node:timers';
 import {findLocalExecutable} from '../fs/local-executable.ts';
 import {tr} from '../i18n.ts';
+import {commonToolsSource} from './common-tools.ts';
 import {addReason, reportUnreadableDirectories, reportUnreadableNotes} from './coverage.ts';
 import {relativePath} from './snapshot.ts';
 import type {DeclaredCheck, Inventory} from './snapshot.ts';
@@ -13,23 +14,24 @@ import type {CheckContext, Diagnostic, DiagnosticOptions} from './types.ts';
 
 const childSource = String.raw`
 import {readFileSync, writeSync} from 'node:fs';
+${commonToolsSource}
 function reply(value) {
 	const bytes = Buffer.from(JSON.stringify(value));
 	for (let offset = 0; offset < bytes.length;) offset += writeSync(3, bytes, offset, bytes.length - offset);
 }
 try {
-	const {source, context} = JSON.parse(readFileSync(0, 'utf8'));
+	const {source, context, chinese} = JSON.parse(readFileSync(0, 'utf8'));
 	const moduleUrl = 'data:text/javascript;base64,' + source;
 	const {default: check} = await import(moduleUrl);
 	if (typeof check !== 'function') reply({error:'checker-export'});
-	else reply({result:await check(context)});
+	else reply({result:chinese === undefined ? await check(context) : await check(context, commonTools(chinese))});
 } catch {reply({error:'checker-execution'});}
 `;
 const outputLimit = 512 * 1024;
 const inputLimit = 32 * 1024 * 1024;
 
 type ChildResult = {error: string} | {data: unknown};
-function execute(node: string, input: string, timeout: number): Promise<ChildResult> {
+function execute(node: string, input: string, timeout: number, maxOutput: number): Promise<ChildResult> {
 	return new Promise(resolve => {
 		const env: NodeJS.ProcessEnv = {};
 		for (const name of ['SystemRoot','WINDIR']) if (process.env[name]) env[name] = process.env[name];
@@ -57,7 +59,7 @@ function execute(node: string, input: string, timeout: number): Promise<ChildRes
 		}
 		function count(chunk: Buffer) {
 			bytes += chunk.length;
-			if (bytes > outputLimit) stop('checker-output-limit');
+			if (bytes > maxOutput) stop('checker-output-limit');
 		}
 		child.stdout.on('data', count);
 		child.stderr.on('data', count);
@@ -79,6 +81,16 @@ function execute(node: string, input: string, timeout: number): Promise<ChildRes
 	});
 }
 
+export async function runChecker(source: Buffer, options: DiagnosticOptions, vault: string,
+	readContext: () => Promise<unknown>, common = false): Promise<ChildResult> {
+	const node = await findLocalExecutable('node', [options.vaultRoot, vault], options.nodeExecutable);
+	if (!node) return {error:'checker-node'};
+	const context = await readContext();
+	const input = JSON.stringify({source:source.toString('base64'), context, chinese:common ? tr('1','0') === '1' : undefined});
+	if (Buffer.byteLength(input) > inputLimit) return {error:'checker-input-limit'};
+	return execute(node, input, Math.max(1, Math.min(options.timeoutMs ?? 10000, 60000)), common ? 4 * 1024 * 1024 : outputLimit);
+}
+
 const errors: Record<string, readonly [string, string]> = {
 	'checker-untrusted': ['专项脚本需要批准当前文件摘要。','Review the script and approve its current fingerprint before running it.'],
 	'checker-unavailable': ['专项脚本不可读或不符合要求。','Check that the script is a readable, standalone UTF-8 file.'],
@@ -94,15 +106,15 @@ const errors: Record<string, readonly [string, string]> = {
 	'checker-output': ['专项脚本返回的结果不符合诊断协议。','Return findings and coverage in the documented format.'],
 };
 
-function readFindings(data: unknown): Diagnostic[] | undefined {
-	if (!Array.isArray(data) || data.length > 5000) return;
+export function readFindings(data: unknown, common = false): Diagnostic[] | undefined {
+	if (!Array.isArray(data) || data.length > (common ? 25000 : 5000)) return;
 	const diagnostics: Diagnostic[] = [];
 	for (const row of data as unknown[]) {
 		if (!isRecord(row) || (row.severity !== 'error' && row.severity !== 'warning' && row.severity !== 'info') ||
 			typeof row.code !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/u.test(row.code) || !printable(row.message, 1000) ||
 			(row.file !== undefined && !relativePath(row.file)) ||
 			(row.line !== undefined && (typeof row.line !== 'number' || !Number.isSafeInteger(row.line) || row.line < 1)) ||
-			(row.evidence !== undefined && !printable(row.evidence, 1000))) return;
+			(row.evidence !== undefined && !printable(row.evidence, common ? 100000 : 1000))) return;
 		diagnostics.push({severity: row.severity, code: row.code, message: row.message, file: row.file, line: row.line, evidence: row.evidence});
 	}
 	return diagnostics;
@@ -122,11 +134,7 @@ export async function runSpecial(check: DeclaredCheck, options: DiagnosticOption
 	if (!check.source || !check.digest) return fail('checker-unavailable');
 	if (!context) return fail('checker-config');
 	if (![...options.officialDigests ?? [], ...options.trustedDigests ?? []].includes(check.digest)) return fail('checker-untrusted');
-	const node = await findLocalExecutable('node', [options.vaultRoot, vault], options.nodeExecutable);
-	if (!node) return fail('checker-node');
-	const input = JSON.stringify({source: check.source.toString('base64'), context: check.linkEvidence ? {...context, links: await readLinks()} : context});
-	if (Buffer.byteLength(input) > inputLimit) return fail('checker-input-limit');
-	const response = await execute(node, input, Math.max(1, Math.min(options.timeoutMs ?? 10000, 60000)));
+	const response = await runChecker(check.source, options, vault, async () => check.linkEvidence ? {...context, links:await readLinks()} : context);
 	if ('error' in response) return fail(response.error);
 	const output = isRecord(response.data) ? response.data : {findings: response.data, unverified: 0};
 	const {unverified = 0} = output;

@@ -1,19 +1,21 @@
 import { ButtonComponent, Notice, Setting, TFile, TFolder, resolveSubpath, setIcon } from 'obsidian';
-import offlineCli from 'kb-manager:offline-cli';
-import { readFile, writeFile } from 'node:fs/promises';
-import { digest, statIfPresent } from '../fs/vault.ts';
+import { offlineRunner } from '../kb/check-kit.ts';
+import { writeFile } from 'node:fs/promises';
+import { statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
+import { commonCheckTrusted, listCommonChecks } from '../diagnostics/common.ts';
 import { generalChecks, listDiagnosticHistory, listSpecialChecks, portabilityCheck, runDiagnostics } from '../diagnostics/index.ts';
 import { linkCandidateIndex } from '../diagnostics/links.ts';
-import { officialCheckDigests } from '../kb/template-pack.ts';
+import { commonRuleSources } from '../kb/common-rules.ts';
+import { officialCheckDigests, packText } from '../kb/template-pack.ts';
 import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { Dialog, V3Dialog, showJsonPreview } from './dialog.ts';
+import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 
 type Options = Parameters<typeof runDiagnostics>[0];
 type Report = Awaited<ReturnType<typeof runDiagnostics>>;
-type SpecialCheck = Awaited<ReturnType<typeof listSpecialChecks>>['checks'][number];
 type Diagnostic = Report['checks'][number]['diagnostics'][number];
 type Severity = Diagnostic['severity'];
 const severityOrder:Record<Severity,number>={error:0,warning:1,info:2};
@@ -188,33 +190,6 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 	render();
 }
 
-function trustKey(plugin:KnowledgeBaseManager) {return plugin.manifest.id+':check-script-trust';}
-
-function trustedDigests(plugin:KnowledgeBaseManager):string[] {
-	const value:unknown=plugin.app.loadLocalStorage(trustKey(plugin));
-	return Array.isArray(value)?value.filter((digest:unknown):digest is string=>typeof digest==='string' && /^[a-f0-9]{64}$/u.test(digest)):[];
-}
-
-async function reviewScript(plugin:KnowledgeBaseManager,lib:Library,check:SpecialCheck,refresh:()=>Promise<void>) {
-	const file=await plugin.disk.path(lib.location+'/'+check.path);
-	const stat=await statIfPresent(file);
-	if(!stat?.isFile() || stat.size>1024*1024)throw new Error(tr('需要可读取的脚本文件（最多 1 MiB）。','Expected a readable script file of at most 1 MiB.'));
-	const bytes=await readFile(file);
-	const expected=digest(bytes);
-	if(expected!==check.digest)throw new Error(tr('脚本已变更，请重新检查。','The script changed. Review it again.'));
-	const dialog=new V3Dialog(plugin.app,tr('审查专项脚本','Review check script'));
-	dialog.facts([[tr('脚本','Script'),lib.location+'/'+check.path],['SHA-256',expected]]);
-	dialog.contentEl.createEl('p',{text:tr('信任仅适用于上面摘要对应的脚本。脚本以本机账号权限运行，可以读写文件和访问网络。','Trust applies to this script digest. The script runs with your account permissions and can access files and the network.')});
-	dialog.contentEl.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:new TextDecoder('utf-8',{fatal:true}).decode(bytes)});
-	dialog.action(tr('信任此版本','Trust this version'),async()=>{
-		const current=(await listSpecialChecks(await plugin.disk.path(lib.location))).checks.find(candidate=>candidate.id===check.id && candidate.path===check.path);
-		if(current?.digest!==expected)throw new Error(tr('脚本已变更，请重新检查。','The script changed. Review it again.'));
-		plugin.app.saveLocalStorage(trustKey(plugin),[...new Set([...trustedDigests(plugin),expected])]);
-		await refresh();dialog.close();
-	}).setCta();
-	dialog.open();
-}
-
 function showHistory(plugin:KnowledgeBaseManager,root:string,onReport:(report:Report)=>void) {
 	const dialog=new V3Dialog(plugin.app,tr('检验历史','Check history'));
 	return listDiagnosticHistory(root).then(history=>{
@@ -237,7 +212,7 @@ export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
 		const relative=destination.trim();
 		if(!relative.endsWith('.cjs'))throw new Error(tr('使用 .cjs 扩展名。','Use the .cjs extension.'));
 		const output=await plugin.disk.path(relative);
-		await writeFile(output,offlineCli,{encoding:'utf8',flag:'wx'});
+		await writeFile(output,offlineRunner(),{encoding:'utf8',flag:'wx'});
 		new Notice(tr('离线检验工具已导出','Offline check tool exported')+' · '+relative);
 		dialog.close();
 	}).setCta();
@@ -254,6 +229,8 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const actions=dialog.contentEl.createDiv({cls:'kb-v3-check-actions'});
 	const selected=new Set<string>();
 	const official=officialCheckDigests();
+	const commonSources=commonRuleSources();
+	let installed=false;
 	let running=false;
 	let allVaultCandidates=false;
 	let candidateScope:HTMLDivElement|undefined;
@@ -262,46 +239,58 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const runAll=dialog.action(tr('运行全部适用项','Run all applicable checks'),()=>run('all'));
 	const history=dialog.action(tr('查看历史','View history'),()=>showHistory(plugin,root,display));
 	const exportButton=dialog.action(tr('导出离线检验工具','Export offline check tool'),async()=>{exportDiagnosticRunner(plugin);});
+	const updateKit=dialog.action(tr('查看检验工具更新','View check kit updates'),()=>showCheckKitUpdate(plugin,lib.location,renderChoices));
 	function display(report:Report){reportView(output,report,plugin,lib);choices.hidden=true;update();}
 	const choose=dialog.action(tr('重新选检查项','Choose checks again'),async()=>{output.empty();choices.hidden=false;await renderChoices();});
-	for(const button of [runSelected,runAll,history,exportButton,choose]){
+	for(const button of [runSelected,runAll,history,exportButton,updateKit,choose]){
 		const row=button.buttonEl.closest('.setting-item');
 		if(row)actions.append(row);
 	}
 	function update(){
 		runSelected.setDisabled(running||!selected.size);
-		for(const button of [...controls,runAll,history,exportButton,choose])button.setDisabled(running);
+		for(const button of [...controls,runAll,history,exportButton,updateKit,choose])button.setDisabled(running);
 		choices.querySelectorAll('input').forEach(input=>{input.disabled=running;});
 		if(candidateScope)candidateScope.hidden=!selected.has(portabilityCheck.id);
 		choose.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',!choices.hidden);
 		runSelected.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
 		runAll.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
+		updateKit.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',!installed);
 	}
 	async function renderChoices(){
-		choices.empty();controls.length=0;
-		const current=await listSpecialChecks(root);
-		for(const [label,items] of [[tr('通用检验','General checks'),[...generalChecks,portabilityCheck]],[tr('模板专项','Template checks'),current.checks]] as const){
+		choices.empty();controls.length=0;candidateScope=undefined;
+		const [common,special]=await Promise.all([listCommonChecks(root),listSpecialChecks(root)]);
+		installed=common.mode==='kit';
+		const general=installed?common.checks:[...generalChecks,portabilityCheck];
+		const approved=trustedDigests(plugin);
+		const specialSources=packText(special.template?.id ?? '');
+		for(const id of selected)if(![...general,...special.checks].some(check=>check.id===id))selected.delete(id);
+		for(const [label,items,isCommon,reason] of [[tr('通用检验','General checks'),general,true,common.reason],
+			[tr('模板专项','Template checks'),special.checks,false,special.reason]] as const){
 			choices.createEl('h3',{text:label});
-			if(!items.length)choices.createEl('p',{cls:'kb-v3-muted',text:current.reason || tr('没有已声明的专项检验。','No template checks declared.')});
+			if(reason || !items.length)choices.createEl('p',{cls:'kb-v3-muted',text:reason ?? (isCommon ?
+				tr('没有可用的通用检验。','No general checks are available.') : tr('没有已声明的专项检验。','No template checks declared.'))});
 			for(const check of items){
 				const row=choices.createEl('label',{cls:'kb-v3-check-choice'});
 				const input=row.createEl('input',{type:'checkbox'});
 				input.checked=selected.has(check.id);
 				input.addEventListener('change',()=>{if(input.checked)selected.add(check.id);else selected.delete(check.id);update();});
-				const name='path' in check?check.name:checkName(check.id,check.name);
+				const name=isCommon?checkName(check.id,check.name):check.name;
 				row.createSpan({text:name});
 				if('path' in check){
 					const spec=check;
-					const trusted=spec.digest && (official.includes(spec.digest) || trustedDigests(plugin).includes(spec.digest));
-					row.createSpan({cls:'kb-v3-muted',text:[spec.description ?? spec.path,spec.reason ?? (!trusted?tr('需信任此版本','Trust required'):tr('已信任','Trusted'))].filter(Boolean).join(' · ')});
-					if(spec.digest && !trusted){
+					const bundled=isCommon?commonCheckTrusted(spec):!!spec.digest && official.includes(spec.digest);
+					const trusted=!!spec.digest && approved.includes(spec.digest);
+					const trust=bundled?tr('官方版本','Official version'):trusted?tr('已授权','Approved'):tr('需授权此版本','Approval required');
+					row.createSpan({cls:'kb-v3-muted',text:[spec.description ?? spec.path,spec.reason ?? trust].filter(Boolean).join(' · ')});
+					if(spec.digest && !bundled){
 						const review=new ButtonComponent(choices).setButtonText(tr('审查脚本','Review script')).onClick(async()=>{
-							try {await reviewScript(plugin,lib,spec,renderChoices);}
+							try {await reviewDiagnosticScript(plugin,lib.location,spec,(isCommon?commonSources:specialSources)[spec.path],renderChoices);}
 							catch(error){new Notice(String(error));}
 						});
 						review.buttonEl.addClass('kb-v3-script-review');controls.push(review);
 					}
-				} else if(check.id===portabilityCheck.id){
+				}
+				if(check.id===portabilityCheck.id){
 					row.createSpan({cls:'kb-v3-muted',text:tr('检查移动或克隆本库时可能失效的引用。默认在当前库及已登记库中查找同名候选。','Check for references that may break when moving or cloning this library. By default, look for same-name candidates in the current and registered libraries.')});
 					candidateScope=choices.createDiv();
 					const scopeRow=candidateScope.createEl('label',{cls:'kb-v3-check-choice'});

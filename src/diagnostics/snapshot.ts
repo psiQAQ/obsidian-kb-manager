@@ -7,7 +7,8 @@ import {isScalar, parseDocument, visit} from 'yaml';
 import {tr} from '../i18n.ts';
 import {defaultConfigDir, segments} from '../fs/segments.ts';
 import {key, statIfPresent} from '../fs/vault.ts';
-import {readManifest} from '../kb/identity-core.ts';
+import {parseCheckKit, readManifest} from '../kb/identity-core.ts';
+import type {CheckKitRecord} from '../kb/identity-core.ts';
 import {declaration} from '../kb/template-declaration.ts';
 import type {CheckDeclaration, Declaration as TemplateDeclaration} from '../kb/template-declaration.ts';
 import {generalIds, isRecord, printable} from './types.ts';
@@ -109,13 +110,19 @@ export async function templateSnapshot(root: string, withScripts: boolean): Prom
 		const snapshot = readDeclaration(decode(await readRelative(root, templateFile)));
 		if (withScripts) for (const check of snapshot.checks) {
 			try {
-				check.source = await readRelative(root, check.path, 512 * 1024);
-				decode(check.source);
-				check.digest = hash(check.source);
+				const {source,digest} = await readChecker(root, check.path);
+				check.source = source;
+				check.digest = digest;
 			} catch {check.reason = tr('专项脚本不可读，或不符合独立 UTF-8 文件要求。','Check that the script is a readable, standalone UTF-8 file.');}
 		}
 		return snapshot;
 	} catch {return {checks: [], reason: tr('模板声明或专项检查列表无效。','Review the template declaration and its check list. They contain an invalid field.')};}
+}
+
+export async function readChecker(root: string, path: string) {
+	const source = await readRelative(root, path, 512 * 1024);
+	const text = decode(source);
+	return {source, text, digest:hash(source)};
 }
 
 export interface NoteRecord {
@@ -215,18 +222,32 @@ export async function inventory(root: string, configDir: string): Promise<Invent
 	return found;
 }
 
-export async function manifestSnapshot(root: string) {
+interface ManifestData {
+	checkKit: CheckKitRecord | null | undefined;
+	version?: unknown;
+	paths?: Record<string, unknown>;
+	variables?: unknown;
+}
+type ManifestSnapshot = ManifestData & ({parsed: ReturnType<typeof readManifest>; reason?:undefined} | {parsed?:undefined; reason:string});
+
+export async function manifestSnapshot(root: string): Promise<ManifestSnapshot> {
+	let checkKit: CheckKitRecord | null | undefined;
+	const invalid = () => ({checkKit, reason:tr('知识库清单缺失、无效或不可读。','Check that kb.toml exists, is readable, and contains a valid library manifest.')});
 	try {
 		const raw = decode(await readRelative(root, 'kb.toml'));
+		// Keep a malformed kit declaration out of the legacy path even if TOML parsing fails.
+		if (/\bcheckKit\b/u.test(raw)) checkKit = null;
+		const {version, paths, variables, checkKit: kit} = parse(raw);
+		if (kit !== undefined) checkKit = null;
+		checkKit = kit === undefined ? undefined : parseCheckKit(kit);
 		const parsed = readManifest(raw);
-		const {version, paths, variables} = parse(raw);
 		const safePaths = isRecord(paths) ? Object.fromEntries(Object.entries(paths).filter(([,value]) => relativePath(value))) : undefined;
 		if (variables !== undefined && (!isRecord(variables) || Object.entries(variables).some(([key, value]) =>
 			!/^[A-Za-z][A-Za-z0-9_]*$/u.test(key) || !(typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)))))
-			return {reason: tr('本库 [variables] 须使用名称与字符串、有限数字或布尔值。','Use named strings, finite numbers, or booleans in [variables].')};
-		return {parsed, version, paths: safePaths, variables};
+			return {checkKit, reason: tr('本库 [variables] 须使用名称与字符串、有限数字或布尔值。','Use named strings, finite numbers, or booleans in [variables].')};
+		return {checkKit, parsed, version, paths: safePaths, variables};
 	}
-	catch {return {reason: tr('知识库清单缺失、无效或不可读。','Check that kb.toml exists, is readable, and contains a valid library manifest.')};}
+	catch {return invalid();}
 }
 
 export function checkContext(root: string, template: Declaration, manifest: Awaited<ReturnType<typeof manifestSnapshot>>, notes: NoteRecord[]): CheckContext {

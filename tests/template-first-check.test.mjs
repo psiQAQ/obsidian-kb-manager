@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import {fileURLToPath} from 'node:url';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {generalChecks, portabilityCheck, runDiagnostics} from '../src/diagnostics/index.ts';
 import {headOid} from '../src/git/repository.ts';
 import {prose} from '../src/kb/audit-markdown.ts';
@@ -86,6 +87,23 @@ test('first general checks find no errors in newly created libraries for all 18 
 			const preview = await previewCreate(disk,defaults,input,skeleton);
 			const {path:libraryRoot,location,head} = await createLibrary(disk,defaults,preview,skeleton);
 			assert.match(head,/^[a-f0-9]{40}$/u);
+			const tracked=execFileSync('git',['ls-files','-z'],{cwd:libraryRoot,encoding:'utf8'}).split('\0');
+			for(const required of ['README.md','checks/kb-check.cjs',...checks.map(check=>'checks/common/'+check+'.mjs')])
+				assert.ok(tracked.includes(required),required);
+			assert.match(await fs.readFile(path.join(libraryRoot,'README.md'),'utf8'),/checks\/kb-check\.cjs/u);
+			if(id==='coursework'){
+				const detached=path.join(directory,'detached');
+				await fs.cp(libraryRoot,detached,{recursive:true,filter:source=>path.basename(source)!=='.git'});
+				const cli=spawnSync(process.execPath,['./checks/kb-check.cjs','--library','.','--checks','all'],{
+					cwd:detached,encoding:'utf8',maxBuffer:8*1024*1024});
+				const data=cli.stdout;
+				assert.ok(cli.status===0 || cli.status===1,cli.stderr || data);
+				const offline=JSON.parse(data);
+				assert.equal(offline.environment,'offline');
+				assert.ok(offline.logPath,offline.logError);
+				assert.ok(offline.checks.some(check=>check.id==='workflow'));
+				assert.ok(offline.checks.every(check=>check.status!=='failed'),data);
+			}
 			const {paths:registeredPaths} = await readVaultRegistry(disk);
 			assert.deepEqual(registeredPaths,[location]);
 			const library = (await discover(disk,defaults)).find(lib => lib.location === location);

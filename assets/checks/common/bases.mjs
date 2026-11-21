@@ -1,0 +1,66 @@
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const nonempty = value => typeof value === 'string' && !!value.trim();
+
+function validFilter(value, depth = 0) {
+	if (nonempty(value)) return true;
+	if (depth >= 32 || !isRecord(value)) return false;
+	const entries = Object.entries(value);
+	if (entries.length !== 1) return false;
+	const [operator, operands] = entries[0];
+	return ['and','or','not'].includes(operator) && Array.isArray(operands) && operands.every(item => validFilter(item, depth + 1));
+}
+
+export default function checkBases({result: check, files, notes, noteCoverage}, {tr, addReason}) {
+	let dynamicExpressions = 0;
+	function inspect(file, base, line) {
+		function fail(code, message) {check.diagnostics.push({severity:'error', code, message, file, line});}
+		if (base === null) return;
+		if (!isRecord(base)) {fail('base-yaml',tr('Base 文件须为有效的 YAML 映射。','Use a valid YAML mapping for the Base.')); return;}
+		if (base.views !== undefined && (!Array.isArray(base.views) || !base.views.every(isRecord))) {
+			fail('base-views',tr('Base 视图须为映射数组。','Define the Base views as a list of mappings.')); return;
+		}
+		const views = base.views ?? [];
+		if (views.some(view => !nonempty(view.type) || !nonempty(view.name))) fail('base-view-identity',tr('Base 视图须声明类型和名称。','Supply a type and name for every Base view.'));
+		if (base.properties !== undefined && (!isRecord(base.properties) || !Object.values(base.properties).every(isRecord)))
+			fail('base-properties',tr('Base 属性配置须为映射。','Use a mapping for each Base property configuration.'));
+		for (const field of ['formulas','summaries']) {
+			const value = base[field];
+			if (value === undefined) continue;
+			if (!isRecord(value) || !Object.values(value).every(nonempty)) fail('base-expression',tr('Base 表达式须为非空字符串。','Write each Base expression as a nonempty string.'));
+			else dynamicExpressions += Object.keys(value).length;
+		}
+		for (const scope of [base, ...views]) {
+			if (scope.filters === undefined) continue;
+			if (!validFilter(scope.filters)) fail('base-filter',tr('Base 过滤器须用语句或 and/or/not 的嵌套列表。','Use an expression or nested and/or/not lists for the Base filter.'));
+			else dynamicExpressions++;
+		}
+	}
+	for (const {file, data, unreadable} of files) {
+		if (unreadable) {
+			check.coverage.unknown++;
+			check.diagnostics.push({severity:'info', code:'unreadable-file', file, message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')});
+			addReason(check, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
+		} else {
+			check.coverage.checked++;
+			inspect(file, data);
+		}
+	}
+	check.coverage.unknown += noteCoverage.coverage.unknown;
+	check.diagnostics.push(...noteCoverage.diagnostics);
+	if (noteCoverage.reason) addReason(check, noteCoverage.reason);
+	for (const {file, problem, blocks} of notes) {
+		if (problem?.code === 'unclosed-frontmatter') {
+			check.coverage.unknown++;
+			const message = tr('未找到 YAML 属性的结束标记，无法检查正文中的 Base 代码块。','Could not scan the body for Base blocks because the frontmatter has no closing delimiter.');
+			check.diagnostics.push({severity:'info', code:'unverified-markdown-body', file, line:problem.line, message});
+			addReason(check, tr('部分 Markdown 正文无法与属性分开。','Some Markdown bodies could not be separated from their frontmatter.'));
+		}
+		for (const {data, line} of blocks) {
+			check.coverage.checked++;
+			inspect(file, data, line);
+		}
+	}
+	check.coverage.unknown += dynamicExpressions;
+	if (dynamicExpressions) addReason(check, tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.'));
+	return check;
+}

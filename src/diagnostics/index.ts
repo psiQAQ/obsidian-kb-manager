@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
+import {commonSnapshot, runCommon} from './common.ts';
+import {commonEvidence} from './common-evidence.ts';
 import {addReason} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
@@ -12,6 +14,7 @@ import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, Diagnos
 
 export {generalChecks, portabilityCheck} from './types.ts';
 export {baseViewStatus} from './base-view.ts';
+export {commonCheckTrusted, listCommonChecks, readDiagnosticScript} from './common.ts';
 export {listDiagnosticHistory} from './history.ts';
 export type * from './types.ts';
 
@@ -46,8 +49,9 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		environment: options.resolveLink ? 'desktop' : 'offline', library:{}, status:'skipped', checks:[]};
 	let location: Awaited<ReturnType<typeof libraryLocation>> | undefined;
 	try {
-		location = await libraryLocation(options);
-		const {root, relative, vault, configDir, identifiedVault} = location;
+		const located = await libraryLocation(options);
+		location = located;
+		const {root, relative, vault, configDir, identifiedVault} = located;
 		const selected = options.selected;
 		const all = !selected || selected === 'all';
 		const needsScripts = all || selected.some(id => !generalIds.has(id));
@@ -61,32 +65,45 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const available = new Map([...generalChecks, portabilityCheck].map(rule => [rule.id as string,rule]));
 		const active = all ? [...generalChecks.map(item => item.id), ...specials.keys()] : [...new Set(selected)];
 		const checks = new Map(active.map(id => [id, result({id,name:available.get(id)?.name ?? specials.get(id)?.name ?? tr('专项检查','Template check')})]));
+		const common = await commonSnapshot(root,manifest.checkKit,active);
+		const commonRules = new Map(common?.map(rule => [rule.id,rule]));
+		let readCommonEvidence: ReturnType<typeof commonEvidence> | undefined;
 		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
-		const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
-		if (links.portability && options.linkCandidateScope) {
-			const scope = options.linkCandidateScope === 'vault'
-				? tr('同名候选范围为整个 Vault。','Same-name candidates are checked across the vault.')
-				: options.registeredPaths
-					? tr('同名候选范围为当前库和已登记库。','Same-name candidates are checked in the current and registered libraries.')
-					: tr('知识库登记不可用，同名候选只检查当前库。','The library registry is unavailable. Same-name candidates are checked in the current library.');
-			addReason(links.portability, scope);
-			if (options.linkCandidateScope === 'registered' && !options.registeredPaths) links.portability.coverage.unknown++;
-		}
-		if (Object.values(links).some(Boolean)) {
-			try {await inspectLinks(linkOptions, found, root, relative, links);}
-			catch {for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));}
-		}
-		const canvas = {canvas:checks.get('canvas'), portability:links.portability};
-		if (canvas.canvas || canvas.portability) {
-			try {await inspectCanvas(canvas, root, found, linkOptions, relative);}
-			catch {for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));}
+		if (!common) {
+			const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
+			if (links.portability && options.linkCandidateScope) {
+				const scope = options.linkCandidateScope === 'vault'
+					? tr('同名候选范围为整个 Vault。','Same-name candidates are checked across the vault.')
+					: options.registeredPaths
+						? tr('同名候选范围为当前库和已登记库。','Same-name candidates are checked in the current and registered libraries.')
+						: tr('知识库登记不可用，同名候选只检查当前库。','The library registry is unavailable. Same-name candidates are checked in the current library.');
+				addReason(links.portability, scope);
+				if (options.linkCandidateScope === 'registered' && !options.registeredPaths) links.portability.coverage.unknown++;
+			}
+			if (Object.values(links).some(Boolean)) {
+				try {await inspectLinks(linkOptions, found, root, relative, links);}
+				catch {for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));}
+			}
+			const canvas = {canvas:checks.get('canvas'), portability:links.portability};
+			if (canvas.canvas || canvas.portability) {
+				try {await inspectCanvas(canvas, root, found, linkOptions, relative);}
+				catch {for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));}
+			}
 		}
 		const context = needsScripts && template.template && manifest.parsed ? checkContext(relative,template.template,manifest,found.notes) : undefined;
 		let linkEvidence: ReturnType<typeof collectCheckLinkEvidence> | undefined;
 		const readLinks = () => linkEvidence ??= collectCheckLinkEvidence({...options,vaultRoot:identifiedVault ? vault : undefined}, found, root, relative);
 		for (const check of checks.values()) {
 			const special = specials.get(check.id);
+			const rule = commonRules.get(check.id);
 			try {
+				if (rule) {
+					report.checks.push(await runCommon(rule, check, options, vault, () => {
+						readCommonEvidence ??= commonEvidence(options,located,found,manifest,template,templateDirs,new Set(commonRules.keys()));
+						return readCommonEvidence(check);
+					}));
+					continue;
+				}
 				if (special) {
 					report.checks.push(await runSpecial(special, options, vault, context, found, identifiedVault, readLinks));
 					continue;

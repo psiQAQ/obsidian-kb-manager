@@ -19,5 +19,5 @@
 		"types": ["node"],
 		"lib": ["ES2021", "DOM"]
 	},
-	"include": ["src/**/*.ts", "tests/*.mjs", "scripts/*.mjs", "assets/templates/**/*.mjs", "assets/templates/**/Integrations/*.js"]
+	"include": ["src/**/*.ts", "tests/**/*.mjs", "scripts/*.mjs", "assets/checks/common/*.mjs", "assets/templates/**/*.mjs", "assets/templates/**/Integrations/*.js"]
 }

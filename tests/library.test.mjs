@@ -4,8 +4,9 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { parse } from 'yaml';
-import { defaults, discover, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
+import { defaults, discover, newIdentity, readManifest, writeCheckKit, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
 import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../src/kb/create.ts';
 import { initialIdentityDefaults } from '../src/git/initial.ts';
 import { headOid, readCommit } from '../src/git/repository.ts';
@@ -56,6 +57,7 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.equal(p.git.identity.email.source,'placeholder');
 	assert.match(p.git.identity.email.value,/@users\.invalid$/u);
 	assert.ok(p.git.staged.includes('knowledge.base'));
+	assert.ok(p.git.staged.includes('checks/kb-check.cjs'));
 	assert.deepEqual(p.git.ignored,['kb.toml']);
 	assert.equal(await fs.stat(await disk.path(p.location)).catch(error=>error.code),'ENOENT');
 	const attempts=await Promise.allSettled(Array.from({length:2},()=>createLibrary(disk,config,p,skeleton,undefined,['Templates'])));
@@ -64,6 +66,15 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.equal(lib.identity.displayName,input.displayName);
 	assert.deepEqual(lib.identity.excludedFolders,['Templates']);
 	const root=await disk.path(lib.location);
+	const {checkKit}=readManifest(await fs.readFile(path.join(root,'kb.toml'),'utf8'));
+	assert.deepEqual(checkKit,p.checkKit);
+	for(const [relative,expected] of Object.entries(checkKit.digests)){
+		assert.ok(p.git.staged.includes(relative));
+		assert.equal(createHash('sha256').update(await fs.readFile(path.join(root,relative))).digest('hex'),expected);
+	}
+	const readme=await fs.readFile(path.join(root,'README.md'),'utf8');
+	assert.match(readme,/node \.\/checks\/kb-check\.cjs --library \. --checks all/u);
+	assert.match(readme,/`analysis-evidence` · 知识页索引与分析证据/u);
 	const base=parse(await fs.readFile(path.join(root,'knowledge.base'),'utf8'));
 	assert.ok(base.views[1].filters.and.includes('file.inFolder("knowledge-base/光学 研究/Notes")'));
 	assert.equal(await fs.readFile(path.join(root,'Templates/人工笔记模板.md'),'utf8'),skeleton['Templates/人工笔记模板.md'].replace(/\r\n/gu,'\n'));
@@ -99,7 +110,7 @@ test('folder template respects ignored files, preserves binary files, and writes
 	const p=await previewCreate(disk,config,input,skeleton);
 	assert.deepEqual(p.template.excluded,['.settings']);
 	assert.deepEqual(p.git.ignored,['cache/local.bin','kb.toml']);
-	assert.deepEqual(p.git.staged,['.gitignore','data.pdf','note.md']);
+	assert.deepEqual(p.git.staged,['.gitattributes','.gitignore','README.md','data.pdf','note.md',...Object.keys(p.checkKit.digests)].sort());
 	assert.equal(p.git.identity.name.source,'local');
 	assert.equal(p.git.identity.email.source,'global');
 	await fs.writeFile(path.join(template,'note.md'),'{{kb_name}}!');
@@ -116,14 +127,46 @@ test('folder template respects ignored files, preserves binary files, and writes
 	assert.doesNotMatch(local,/^user\.email=|^branch\.main\./mu);
 	assert.equal(run('config','--local','remote.origin.url'),input.git.origin);
 	assert.equal(run('status','--porcelain'),'');
+	assert.deepEqual(run('ls-files','-z').split('\0').filter(Boolean).sort(),p.git.staged);
+	assert.equal(run('check-ignore','.log/probe.json'),'.log/probe.json');
 	assert.deepEqual(await fs.readFile(path.join(dir,'data.pdf')),bytes);
 	assert.equal(await fs.readFile(path.join(dir,'note.md'),'utf8'),'{{kb_name}}!');
 	assert.equal(await fs.readFile(path.join(dir,'cache','local.bin'),'utf8'),'local');
 	assert.deepEqual(await fs.readdir(path.join(dir,'empty')),[]);
 	assert.equal(await fs.readFile(path.join(dir,'.gitignore'),'utf8'),'# user ignore\r\ncache/\r\n!kb.toml\r\n/.log/\r\n/kb.toml\r\n');
+	assert.match(await fs.readFile(path.join(dir,'README.md'),'utf8'),/^# 检验本库$/mu);
 	const {identity,mapping}=readManifest(await fs.readFile(path.join(dir,'kb.toml'),'utf8'));
 	assert.equal(identity.displayName,input.displayName);
 	assert.equal(mapping,undefined);
+});
+
+test('desktop creation blocks checker name collisions and ignored README without touching the template',async t=>{
+	const {disk,root,config,input,skeleton}=await setup(t);
+	const template=path.join(root,'样板');
+	await fs.mkdir(path.join(template,'Checks'),{recursive:true});
+	await fs.writeFile(path.join(template,'Checks','custom.mjs'),'// Custom checker\n');
+	const request={...input,source:'样板'};
+	await assert.rejects(previewCreate(disk,config,request,skeleton),/路径冲突|conflict/iu);
+	await fs.rename(path.join(template,'Checks'),path.join(template,'specials'));
+	const readme=Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),Buffer.from('# Original\r\n','utf8')]);
+	await fs.writeFile(path.join(template,'README.md'),readme);
+	await fs.writeFile(path.join(template,'.gitignore'),'/README.md\n');
+	await assert.rejects(previewCreate(disk,config,request,skeleton),/README\.md/u);
+	await fs.writeFile(path.join(template,'.gitignore'),'');
+	const review=await previewCreate(disk,config,request,skeleton);
+	const rendered=review.template.files.find(file=>file.name==='README.md');
+	assert.deepEqual(Buffer.from(rendered.bytes.slice(0,readme.length)),readme);
+	assert.match(Buffer.from(rendered.bytes).toString('utf8'),/\r\n\r\n## 检验本库\r\n/u);
+	assert.deepEqual(await fs.readFile(path.join(template,'README.md')),readme);
+	const runner=review.template.files.find(file=>file.name==='checks/kb-check.cjs');
+	await fs.mkdir(path.join(template,'checks'));
+	await fs.writeFile(path.join(template,runner.name),runner.bytes);
+	const reused=await previewCreate(disk,config,request,skeleton);
+	assert.deepEqual(reused.checkKit,review.checkKit);
+	assert.equal(reused.git.staged.filter(name=>name===runner.name).length,1);
+	await fs.writeFile(path.join(template,'README.md'),Buffer.from([0,255]));
+	await assert.rejects(previewCreate(disk,config,request,skeleton),/UTF-8/u);
+	assert.equal(await fs.stat(await disk.path(review.location)).catch(error=>error.code),'ENOENT');
 });
 
 test('system EMAIL is used only when valid, and an author environment change invalidates confirmation',async t=>{
@@ -246,7 +289,13 @@ test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=
 	await createLibrary(disk,config,preview,skeleton);
 	const [custom]=await discover(disk,config);
 	assert.equal(custom.identity.managed[0].role,'overview-bindings');
-	assert.equal(await fs.readFile(await disk.path(custom.location+'/README.md'),'utf8'),'光学 {{date:YYYY-MM-DD}}');
+	assert.match(await fs.readFile(await disk.path(custom.location+'/README.md'),'utf8'),/^光学 \{\{date:YYYY-MM-DD\}\}\n\n## 检验本库\n/u);
+	const customRoot=await disk.path(custom.location);
+	const git=(...args)=>execFileSync('git',['-C',customRoot,...args]).toString().trim();
+	const tracked=git('ls-files','-z').split('\0').filter(Boolean).sort();
+	assert.deepEqual(tracked,preview.git.staged);
+	assert.ok(['kb-template.json','README.md',...Object.keys(preview.checkKit.digests)].every(file=>tracked.includes(file)));
+	assert.equal(git('check-ignore','.log/probe.json'),'.log/probe.json');
 	const legacy=path.join(root,'knowledge-base','旧库');
 	await fs.mkdir(legacy);await fs.mkdir(path.join(legacy,'raw'));await fs.mkdir(path.join(legacy,'Notes'));
 	await fs.writeFile(path.join(legacy,'kb.toml'),skeleton['kb.toml']);
@@ -289,6 +338,14 @@ test('manifest changes preserve unrelated TOML fields, comments, BOM and CRLF',(
 	assert.ok(edited.includes('# retain this comment\r\ncustom = ["# annotation", "text"]'));
 	assert.ok(edited.includes('[extension]\r\nvalue = """\r\n[manager]\r\nkeep this\r\n"""'));
 	assert.deepEqual(readManifest(edited),{identity:next,mapping:undefined,preferences:{diffStyle:'unified'}});
+	const runner='checks/kb-check.cjs',links='checks/common/links.mjs';
+	const first={protocol:1,version:'3.2.0',digests:{[runner]:'a'.repeat(64)}};
+	const installed=writeCheckKit(edited,first);
+	assert.ok(installed.startsWith(edited));
+	const updated=writeCheckKit(installed,{...first,version:'3.2.1',digests:{[links]:'b'.repeat(64)}});
+	assert.ok(updated.startsWith(edited));
+	assert.equal(/(?<!\r)\n/u.test(updated),false);
+	assert.deepEqual(readManifest(updated).checkKit,{...first,version:'3.2.1',digests:{[runner]:'a'.repeat(64),[links]:'b'.repeat(64)}});
 });
 
 test('parent repository exposure appears in preview without modifying its index',async t=>{

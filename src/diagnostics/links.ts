@@ -18,7 +18,7 @@ const within = (target: string, folder: string) => !folder || target.startsWith(
 const normalize = (value: string) => value.normalize('NFC').toLowerCase();
 export const dynamicTarget = (value: string) => /\{\{|<%|__(?:KB_ROOT|WIKI_PATH|NOTES_PATH|WIKI_DIR|TEMPLATES_DIR|CATEGORY_PATH)__/u.test(value);
 
-function maskLiterals(body: string) {
+export function maskLiterals(body: string) {
 	return body.replace(/%%[\s\S]*?(?:%%|$)|\$\$[\s\S]*?\$\$|(?<![\\\w$])\$[^$\n]+\$(?![\w$])/gu, newlineOnly)
 		.replace(/\{\{[^{}\n]+\}\}|<%[\s\S]*?%>/gu, literal => '{{}}' + newlineOnly(literal));
 }
@@ -191,7 +191,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 				message:tr('链接存在多个同名候选。','Several files share this link name. Use the target path to disambiguate.')});
 		}
 	}
-	return {resolve, vaultPath, outsideTarget, inspectPortability};
+	return {resolve, vaultPath, outsideTarget, candidates, inspectPortability};
 }
 
 export function missingLink(target: string, kind: LinkRequest['kind']) {

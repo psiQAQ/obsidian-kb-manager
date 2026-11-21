@@ -1,3 +1,4 @@
+import { buildCheckKit } from './scripts/build-check-kit.mjs';
 import { templateCatalog } from './scripts/template-catalog.mjs';
 import esbuild from 'esbuild';
 import esbuildSvelte from 'esbuild-svelte';
@@ -18,7 +19,13 @@ if you want to view the source, please visit the github repository of this plugi
 const prod = process.argv[2] === 'production';
 
 const {packs,digests}=templateCatalog(fileURLToPath(new URL('./assets/templates/',import.meta.url)));
-const defines={KB_TEMPLATE_PACKS:JSON.stringify(packs),KB_CHECK_DIGESTS:JSON.stringify(digests)};
+let kit = await buildCheckKit(digests);
+const defines={KB_TEMPLATE_PACKS:JSON.stringify(packs),KB_CHECK_DIGESTS:JSON.stringify(digests),...(prod?kit.defines:{})};
+if (prod) {
+	mkdirSync('dist',{recursive:true});
+	writeFileSync('dist/kb-check.cjs',kit.runner);
+	writeFileSync('dist/cli-build-inputs.json',JSON.stringify(kit.metafile));
+}
 
 const context = await esbuild.context({
 	banner: {
@@ -36,21 +43,14 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 	conditions: ['browser', prod ? 'production' : 'development'],
 	plugins: [
 		esbuildSvelte({compilerOptions: {css: 'injected'}}),
-		{name:'offline-diagnostics',setup(build) {
-			build.onResolve({filter:/^kb-manager:offline-cli$/}, () => ({path:'cli',namespace:'offline-diagnostics'}));
-			build.onLoad({filter:/^cli$/,namespace:'offline-diagnostics'}, async () => {
-				const cli = await esbuild.build({
-					entryPoints:['src/diagnostics/cli.ts'], bundle:true, platform:'node', target:'node20',
-					format:'cjs', outfile:'dist/kb-check.cjs', write:false, metafile:true, minify:true,
-					define:{KB_CHECK_DIGESTS:JSON.stringify(digests)},
-				});
-				const runner = cli.outputFiles[0];
-				if (prod) {
-					mkdirSync('dist', {recursive:true});
-					writeFileSync(runner.path, runner.contents);
-					writeFileSync('dist/cli-build-inputs.json', JSON.stringify(cli.metafile));
-				}
-				return {contents:runner.text, loader:'text', watchFiles:Object.keys(cli.metafile.inputs).map(file => resolve(file))};
+		{name:'watch-check-kit',setup(build){
+			if(prod)return;
+			const directory=fileURLToPath(new URL('./assets/checks/common/',import.meta.url));
+			build.onStart(async()=>{kit=await buildCheckKit(digests);});
+			build.onLoad({filter:/[\\/]kb[\\/](?:check-kit|common-rules)\.ts$/},async({path})=>{
+				const module=await esbuild.transform(readFileSync(path,'utf8'),{loader:'ts',define:kit.defines});
+				return {contents:module.code,loader:'js',resolveDir:dirname(path),watchDirs:[directory],
+					watchFiles:[path,...Object.keys(kit.metafile.inputs).map(file=>resolve(file)),...kit.ruleFiles]};
 			});
 		}},
 		// isomorphic-git's browser module expects Buffer. Scope the shim to that module.

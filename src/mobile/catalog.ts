@@ -6,8 +6,9 @@ import {tr} from '../i18n.ts';
 import {initialCommitOptions} from '../git/initial-options.ts';
 import type {InitialOptions} from '../git/initial-options.ts';
 import {assertUnreservedLibraryPath,libraryDestination,validateRegistryPath,vaultPath} from '../registry/paths.ts';
-import {identityFile,readManifest,withLibraryIgnores,writeIdentity} from '../kb/identity-core.ts';
+import {identityFile,readManifest,withLibraryIgnores,writeCheckKit,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
+import {addCreationCheckKit,assertCreationFilesTracked} from '../kb/check-kit-creation.ts';
 import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
 import type {Template,Variables} from '../kb/template-core.ts';
 import {buffer,bytes,checkSpelling,children,decode,ensureFolder,hash,key,relative} from './disk.ts';
@@ -96,13 +97,13 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,
 	const ignore=template.files.find(file=>file.name==='.gitignore');
 	const ignoreBytes=bytes(withLibraryIgnores(ignore?decode(ignore.bytes):''));
 	if(ignore)ignore.bytes=ignoreBytes;else template.files.push({name:'.gitignore',bytes:ignoreBytes});
+	const checkKit=await addCreationCheckKit(template,hash);
 	const files=await previewInitialFiles({root:location,disk:ctx.disk,configDir:ctx.configDir},template.files);
-	const staged=new Set(files.map(file=>file.name));
-	if(template.files.some(file=>(file.name==='kb-template.json' || file.name.startsWith('checks/')) && !staged.has(file.name)))throw new Error(tr('模板清单与专项脚本必须可提交','Template declarations and checks must be tracked'));
+	assertCreationFilesTracked(template,files.map(file=>file.name));
 	const registryIgnore=await previewMobileRegistryIgnore(ctx);
-	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,files.map(file=>file.name),
+	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,checkKit,files.map(file=>file.name),
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
-	return {location,input,id,template,signature,registryIgnore,initial:{files,author,origin,...options}};
+	return {location,input,id,template,signature,registryIgnore,checkKit,initial:{files,author,origin,...options}};
 }
 
 export async function scratch(ctx:Catalog,parent:string,allowMissingParent=false){
@@ -172,7 +173,8 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 		else if((!input.source || template.overview) && file.name==='knowledge.base')
 			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:input.source?'overview-bindings':undefined});
 	}
-	const asset=template.files.find(file=>file.name===identityFile),manifest=writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity);
+	const asset=template.files.find(file=>file.name===identityFile);
+	const manifest=writeCheckKit(writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity),confirmed.checkKit);
 	const manifestPath=location+'/'+identityFile;
 	const verified=async()=>{
 		if(await ctx.disk.read(manifestPath)!==manifest)throw new Error(tr('目标清单已变化','The destination manifest changed')+' · '+manifestPath);

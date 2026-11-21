@@ -11,9 +11,10 @@ const escaped = (prefix: string) => /(?:^|[^\\])(?:\\\\)*\\$/u.test(prefix);
 const normalize = (name: string) => name.toUpperCase().toLowerCase();
 
 /** The caller supplies Markdown prose with literals and formulas masked and line breaks preserved. */
-export function inspectFootnotes(check: DiagnosticCheckResult, body: string, file: string, lineOffset: number) {
+export function footnoteEvidence(body: string, lineOffset: number) {
 	const defined = new Set<string>(), uncertain = new Set<string>();
 	const refs: {label: string; line: number}[] = [];
+	let inlineCount = 0;
 	for (const [index, raw] of body.split('\n').entries()) {
 		const line = raw.replace(/^(?: {0,3}>[ \t]?)+/u, '');
 		const marker = definition.exec(line);
@@ -26,7 +27,7 @@ export function inspectFootnotes(check: DiagnosticCheckResult, body: string, fil
 		const content = line.slice(marker?.[0].length ?? 0).replace(wikiPattern, '');
 		const normal = content.replace(inline, (text: string, offset: number) => {
 			if (escaped(content.slice(0, offset))) return text;
-			check.coverage.checked++;
+			inlineCount++;
 			return '';
 		});
 		for (const match of normal.matchAll(reference)) {
@@ -34,11 +35,19 @@ export function inspectFootnotes(check: DiagnosticCheckResult, body: string, fil
 			refs.push({label:match[1]!, line:lineOffset + index + 1});
 		}
 	}
-	for (const ref of refs) {
+	return {inlineCount, references:refs.map(ref => {
 		const name = normalize(ref.label);
-		if (!defined.has(name) && uncertain.has(name)) {check.coverage.unknown++; continue;}
+		return {...ref, defined:defined.has(name), ambiguous:uncertain.has(name)};
+	})};
+}
+
+export function inspectFootnotes(check: DiagnosticCheckResult, body: string, file: string, lineOffset: number) {
+	const {inlineCount,references} = footnoteEvidence(body,lineOffset);
+	check.coverage.checked += inlineCount;
+	for (const ref of references) {
+		if (!ref.defined && ref.ambiguous) {check.coverage.unknown++; continue;}
 		check.coverage.checked++;
-		if (!defined.has(name)) check.diagnostics.push({severity:'error',code:'missing-footnote-definition',file,line:ref.line,evidence:ref.label,
+		if (!ref.defined) check.diagnostics.push({severity:'error',code:'missing-footnote-definition',file,line:ref.line,evidence:ref.label,
 			message:tr('本笔记缺少对应的脚注定义。请补充定义或更新引用。','This note is missing the footnote definition. Add the definition or update the reference.')});
 	}
 }

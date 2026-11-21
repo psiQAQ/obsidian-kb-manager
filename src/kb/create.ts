@@ -14,8 +14,9 @@ import { VaultDisk, digest, key, statIfPresent } from '../fs/vault.ts';
 import { headOid, repository } from '../git/repository.ts';
 import { commitInitialRepository, initialConfig, previewInitialRepository, reviewInitialRepository, verifyInitialRepository } from '../git/initial.ts';
 import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial.ts';
-import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeIdentity } from './catalog.ts';
-import type { Config, Library } from './catalog.ts';
+import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeCheckKit, writeIdentity } from './catalog.ts';
+import type { CheckKitRecord, Config, Library } from './catalog.ts';
+import { addCreationCheckKit, assertCreationFilesTracked } from './check-kit-creation.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
 import type { Template } from './template.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
@@ -29,6 +30,7 @@ export interface CreateInput {
 export interface CreatePreview {
 	input: CreateInput; location: string; template: Template; signature: string; warnings: string[];
 	gitConfig: InitialConfig; git: InitialPreview;
+	checkKit: CheckKitRecord;
 }
 
 export async function ancestorWarnings(disk: VaultDisk, location: string): Promise<string[]> {
@@ -92,9 +94,10 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	const bytes=new TextEncoder().encode(withLibraryIgnores(ignore?decoder.decode(ignore.bytes):''));
 	if(ignore)ignore.bytes=bytes;
 	else template.files.push({name:'.gitignore',bytes});
-	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,
+	const checkKit=await addCreationCheckKit(template,digest);
+	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,checkKit,
 		template.files.map(file=>[file.name,digest(file.bytes)])]));
-	return {input,location,template,signature,warnings};
+	return {input,location,template,signature,warnings,checkKit};
 }
 
 async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>,excludedFolders?:string[]){
@@ -123,7 +126,7 @@ async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof descr
 				role:input.source?'overview-bindings':undefined});
 		}
 	}
-	const raw=writeIdentity(original || instanceManifestSeed(template),manifest);
+	const raw=writeCheckKit(writeIdentity(original || instanceManifestSeed(template),manifest),creation.checkKit);
 	await fs.writeFile(path.join(dir,identityFile),raw,{flag:'wx'});
 	return {manifest,manifestSignature:digest(raw)};
 }
@@ -146,7 +149,7 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	try{
 		await writeTemplate(temporary,creation,skeleton);
 		const git=await previewInitialRepository(temporary,creationPaths(creation.template),gitConfig);
-		if(git.ignored.some(name=>name==='kb-template.json' || name.startsWith('checks/')))throw new Error(tr('模板清单与专项脚本必须可提交','Template declarations and checks must be tracked'));
+		assertCreationFilesTracked(creation.template,git.staged);
 		return {...creation,gitConfig,git};
 	}finally{await removePreviewDirectory(temporary,owned);}
 }
@@ -238,7 +241,9 @@ export async function reviewInterruptedCreation(disk:VaultDisk,receipt:CreationR
 		await verifyInitialRepository(dir,head,preview.git);
 		return {head,git:preview.git};
 	}
-	return {head,git:await reviewInitialRepository(dir,creationPaths(preview.template),preview.gitConfig)};
+	const git=await reviewInitialRepository(dir,creationPaths(preview.template),preview.gitConfig);
+	assertCreationFilesTracked(preview.template,git.staged);
+	return {head,git};
 }
 
 async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationReceipt,review:CreationReview,beforeRegistration?:BeforeRegistration){

@@ -141,7 +141,8 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 			git:{defaults,values:{...values},origin,...gitOptions}},skeleton);
 		const {git}=preview;
 		const confirm=new V3Dialog(plugin.app,tr('确认创建','Confirm creation'));
-		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version]]);
+		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version],
+			[tr('通用检验套件','Common check kit'),preview.checkKit.version]]);
 		showTemplateDetails(confirm.contentEl,template);
 		if(preview.warnings.length)confirm.lines(preview.warnings);
 		showInitialPlan(confirm,git);

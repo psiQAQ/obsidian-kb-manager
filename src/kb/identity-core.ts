@@ -14,11 +14,28 @@ export interface Identity {
 	template: {id: string; version: string}; managed: ManagedFile[]; entry?: string;
 	excludedFolders?:string[];
 }
+export interface CheckKitRecord {protocol:1; version:string; digests:Record<string,string>}
 
 function table(value:unknown):Record<string,unknown>|undefined {
 	if(!value || typeof value!=='object')return undefined;
 	const prototype:unknown=Object.getPrototypeOf(value);
 	return prototype===Object.prototype || prototype===null?value as Record<string,unknown>:undefined;
+}
+
+export function parseCheckKit(input:unknown):CheckKitRecord {
+	const value=table(input), digests=table(value?.digests);
+	const invalid=()=>new Error(tr('通用检验套件记录无效','Invalid common check kit record'));
+	if(value?.protocol!==1 || typeof value.version!=='string' || !value.version.trim() || !digests)throw invalid();
+	const paths=new Set<string>();
+	const entries=Object.entries(digests).map(([path,digest]):[string,string]=>{
+		const key=path.normalize('NFC').toLowerCase();
+		if((path!=='checks/kb-check.cjs' && !/^checks\/common\/[^/]+\.mjs$/u.test(path)) ||
+			typeof digest!=='string' || !/^[a-f0-9]{64}$/u.test(digest) || paths.has(key))throw invalid();
+		segments(path);
+		paths.add(key);
+		return [path,digest];
+	});
+	return {protocol:1,version:value.version,digests:Object.fromEntries(entries)};
 }
 
 function manager(input:unknown):Identity {
@@ -92,6 +109,7 @@ export function readManifest(raw:string) {
 		identity,
 		mapping,
 		preferences:readGit(preferences),
+		...(data.checkKit!==undefined && {checkKit:parseCheckKit(data.checkKit)}),
 	};
 }
 
@@ -131,6 +149,22 @@ export function writeIdentity(raw:string, identity:Identity) {
 	}
 	const output=changes.finish();
 	parseIdentity(output);
+	return output;
+}
+
+export function writeCheckKit(raw:string, record:CheckKitRecord) {
+	const current=readManifest(raw).checkKit;
+	const next=parseCheckKit({...record,digests:{...current?.digests,...record.digests}});
+	const changes=new TomlEdits(raw);
+	if(!current)changes.append(stringify({checkKit:{...next}}));
+	else {
+		if(current.version!==next.version)changes.field(['checkKit'],'version',next.version);
+		for(const [path,digest] of Object.entries(next.digests)) {
+			if(current.digests[path]!==digest)changes.field(['checkKit','digests'],path,digest);
+		}
+	}
+	const output=changes.finish();
+	readManifest(output);
 	return output;
 }
 

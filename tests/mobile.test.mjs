@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import {constants} from 'node:fs';
 import * as path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {createPreview,destination,instantiate,discoverMobile} from '../src/mobile/catalog.ts';
 import {parseIdentity,readManifest,writePreferences} from '../src/kb/identity-core.ts';
 import {assignMobileCopyId,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
@@ -72,13 +73,19 @@ test('mobile adapter creates all template types and preserves each library index
 		const preview=await createPreview(ctx,{name,parent:'libs',displayName:name,description:'demo',source,author},assets);
 		const exclusions=name==='c'?['参考 [样例]']:[];
 		const result=await instantiate(ctx,preview,assets,undefined,exclusions);
-		assert.deepEqual(readManifest(await disk.read(result.location+'/kb.toml')).identity.excludedFolders,exclusions);
+		const {identity,checkKit}=readManifest(await disk.read(result.location+'/kb.toml'));
+		assert.deepEqual(identity.excludedFolders,exclusions);
+		assert.deepEqual(checkKit,preview.checkKit);
+		assert.match(await disk.read(result.location+'/README.md'),/node \.\/checks\/kb-check\.cjs --library \. --checks all/u);
 		if(name!=='c'){
 			const clone=path.join(root,'checkout-'+name);
 			execFileSync('git',['clone','--config','core.autocrlf=true','--quiet','--no-local',path.join(root,'libs',name),clone]);
 			assert.match(execFileSync('git',['-C',clone,'check-attr','eol','--','README.md']).toString(),/eol: lf/u);
 			assert.equal((await fs.readFile(path.join(clone,'README.md'),'utf8')).includes('\r\n'),false);
 			assert.equal(execFileSync('git',['-C',clone,'status','--porcelain'],{encoding:'utf8'}),'');
+			for(const [relative,expected] of Object.entries(checkKit.digests)){
+				assert.equal(createHash('sha256').update(await fs.readFile(path.join(clone,relative))).digest('hex'),expected);
+			}
 		}
 		assert.equal(result.head,native(name,'rev-parse','HEAD').toString().trim());
 		assert.equal(native(name,'log','-1','--format=%s%n%an%n%ae%n%cn%n%ce').toString().trim(),
@@ -86,6 +93,7 @@ test('mobile adapter creates all template types and preserves each library index
 		assert.deepEqual(native(name,'ls-tree','--name-only','-r','-z','HEAD').toString().split('\0').filter(Boolean).sort(),preview.initial.files.map(file=>file.name).sort());
 		assert.equal(native(name,'status','--porcelain').length,0);
 		assert.equal(native(name,'check-ignore','kb.toml').toString().trim(),'kb.toml');
+		assert.equal(native(name,'check-ignore','.log/probe.json').toString().trim(),'.log/probe.json');
 		assert.deepEqual(await instantiate(ctx,preview,assets,undefined,exclusions),result);
 	}
 	assert.equal((await discoverMobile(ctx)).length,3);
@@ -143,7 +151,8 @@ test('mobile creation previews Git ignore rules, validates identity and configur
 	const origin='https://example.invalid/team/kb.git',preview=await createPreview(ctx,{...request,origin},assets);
 	assert.equal(preview.initial.branch,'main');
 	assert.equal(preview.initial.message,'Initial commit');
-	assert.deepEqual(preview.initial.files.map(file=>file.name),['.gitignore','hello.md','kb-template.json','nested/extra.md']);
+	const expected=['.gitattributes','.gitignore','README.md','hello.md','kb-template.json','nested/extra.md',...Object.keys(preview.checkKit.digests)].sort();
+	assert.deepEqual(preview.initial.files.map(file=>file.name).sort(),expected);
 	assert.equal(await disk.stat('libs'),null);
 	assert.equal(await disk.stat('.kb-manager'),null);
 	const receipt=await instantiate(ctx,preview,assets),store={...ctx,root:receipt.location};
@@ -154,7 +163,7 @@ test('mobile creation previews Git ignore rules, validates identity and configur
 	assert.equal(native('remote','get-url','origin'),origin);
 	assert.doesNotMatch(native('config','--local','--list'),/^branch\.main\.(remote|merge)=/mu);
 	assert.equal(native('status','--porcelain','--branch'),'## main');
-	assert.deepEqual(native('ls-files').split('\n'),['.gitignore','hello.md','kb-template.json','nested/extra.md']);
+	assert.deepEqual(native('ls-files').split('\n'),expected);
 	assert.equal(native('for-each-ref','refs/remotes'),'');
 	assert.equal(native('check-ignore','pruned/hidden.md'),'pruned/hidden.md');
 	assert.deepEqual((await mobileStatus(store)).changes,[]);
@@ -162,20 +171,27 @@ test('mobile creation previews Git ignore rules, validates identity and configur
 	assert.equal(parseIdentity(await disk.read('libs/preview/kb.toml')).id,receipt.identity.id);
 });
 
-test('mobile creation keeps ignored files local when the initial commit tree is empty',async t=>{
+test('mobile creation refuses templates that exclude or occupy the check kit paths',async t=>{
 	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
 	await disk.write('templates/sample/.gitignore','*\n');
 	const request={parent:'libs',name:'empty',displayName:'Empty',description:'',source:'templates/sample',author};
 	await assert.rejects(createPreview(ctx,request,assets),/清单|tracked/u);
 	await disk.remove('templates/sample/kb-template.json');
+	await assert.rejects(createPreview(ctx,request,assets),/checks\/kb-check\.cjs/u);
+	await disk.write('templates/sample/.gitignore','');
+	await disk.mkdir('templates/sample/checks');
+	await disk.write('templates/sample/checks/kb-check.cjs','// Existing file\n');
+	await assert.rejects(createPreview(ctx,request,assets),/checks\/kb-check\.cjs/u);
+	assert.equal(await disk.read('templates/sample/checks/kb-check.cjs'),'// Existing file\n');
+	assert.equal(await disk.stat('libs'),null);
+	await disk.remove('templates/sample/checks/kb-check.cjs');
 	const review=await createPreview(ctx,request,assets);
-	assert.deepEqual(review.initial.files,[]);
 	const result=await instantiate(ctx,review,assets);
 	const native=(...args)=>execFileSync('git',['-C',path.join(root,result.location),...args]).toString().trim();
-	assert.equal(native('ls-tree','-r','HEAD'),'');
-	assert.equal(native('status','--porcelain','--branch'),'## main');
-	assert.equal(native('log','-1','--format=%s'),'Initial commit');
-	assert.equal(await disk.read('libs/empty/hello.md'),'{{kb_name}}');
+	assert.deepEqual(native('ls-files','-z').split('\0').filter(Boolean).sort(),review.initial.files.map(file=>file.name).sort());
+	assert.equal(await disk.stat(result.location+'/kb-template.json'),null);
+	assert.equal(native('check-ignore','.log/probe.json'),'.log/probe.json');
+	assert.match(await disk.read(result.location+'/README.md'),/本模板未声明专项检验/u);
 });
 
 test('mobile creation retries copy and registration failures without duplicate commits or replacing another library',async t=>{

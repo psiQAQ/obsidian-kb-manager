@@ -1,0 +1,101 @@
+import * as fs from 'node:fs/promises';
+import {join} from 'node:path';
+import {tr} from '../i18n.ts';
+import {commonRuleDigests} from '../kb/common-rules.ts';
+import {libraryLocation, manifestSnapshot, readChecker} from './snapshot.ts';
+import type {DeclaredCheck} from './snapshot.ts';
+import {readFindings, runChecker} from './special.ts';
+import {generalChecks, isRecord, portabilityCheck, printable, settle} from './types.ts';
+import type {Coverage, DiagnosticCheckResult, DiagnosticOptions, SpecialCheck} from './types.ts';
+
+const invalidKit = () => tr('通用规则清单无效。请检查 kb.toml 中的 [checkKit]。','The check kit declaration is invalid. Review [checkKit] in kb.toml.');
+const unavailable = () => tr('通用规则缺失或不可读。','The common rule file is missing or unreadable.');
+const commonRules = [...generalChecks, portabilityCheck];
+const rulePath = (id: string) => `checks/common/${id}.mjs`;
+type KitDeclaration = Awaited<ReturnType<typeof manifestSnapshot>>['checkKit'];
+
+async function localKit(root: string) {
+	// A plain Git checkout has tracked rule files but may not have a private kb.toml.
+	const stat = async (file: string) => fs.lstat(join(root,file)).catch(() => undefined);
+	if (!(await stat('checks'))?.isDirectory() || !(await stat('checks/kb-check.cjs'))?.isFile() || !(await stat('checks/common'))?.isDirectory()) return false;
+	for (const {id} of commonRules) if (await stat(rulePath(id))) return true;
+	return false;
+}
+
+export async function commonSnapshot(root: string, kit: KitDeclaration, selected?: readonly string[]) {
+	if (kit === undefined && !await localKit(root)) return;
+	return Promise.all(commonRules.filter(rule => !selected || selected.includes(rule.id)).map(async rule => {
+		const check: DeclaredCheck = {...rule, path:rulePath(rule.id)};
+		if (kit === null) {check.reason = invalidKit(); return check;}
+		if (kit && !Object.prototype.hasOwnProperty.call(kit.digests, check.path)) {check.reason = unavailable(); return check;}
+		try {
+			const {source, digest} = await readChecker(root, check.path);
+			check.source = source;
+			check.digest = digest;
+		} catch {check.reason = unavailable();}
+		return check;
+	}));
+}
+
+export async function listCommonChecks(libraryRoot: string): Promise<{mode:'legacy'|'kit'; checks:SpecialCheck[]; reason?:string}> {
+	try {
+		const {root} = await libraryLocation({libraryRoot});
+		const {checkKit} = await manifestSnapshot(root);
+		const checks = await commonSnapshot(root, checkKit);
+		if (!checks) return {mode:'legacy', checks:[]};
+		return {mode:'kit', checks:checks.map(({id,name,path,digest,reason}) => ({id,name,path,digest,reason})), reason:checkKit === null ? invalidKit() : undefined};
+	} catch {return {mode:'kit', checks:[], reason:unavailable()};}
+}
+
+export async function readDiagnosticScript(libraryRoot: string, scriptPath: string) {
+	if (!/^checks\/(?:common\/)?[^/]+\.mjs$/u.test(scriptPath)) throw new Error('invalid-check-script-path');
+	const {root} = await libraryLocation({libraryRoot});
+	const {text, digest} = await readChecker(root, scriptPath);
+	return {source:text, digest};
+}
+
+export function commonCheckTrusted(check: SpecialCheck, trustedDigests: readonly string[] = []) {
+	const {digest} = check;
+	return !!digest && (commonRuleDigests()[check.path] === digest || trustedDigests.includes(digest));
+}
+
+function failure(check: DiagnosticCheckResult, path: string, code: string, message: string) {
+	check.status = code === 'checker-untrusted' ? 'partial' : 'failed';
+	check.coverage.unknown++;
+	check.reason = message;
+	check.diagnostics.push({severity:check.status === 'partial' ? 'info' : 'error', code, file:path, message});
+	return check;
+}
+
+function readCoverage(value: unknown): Coverage | undefined {
+	if (!isRecord(value)) return;
+	const {checked, skipped, unknown} = value;
+	const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+	if (isCount(checked) && isCount(skipped) && isCount(unknown)) return {checked, skipped, unknown};
+	return undefined;
+}
+
+export async function runCommon(rule: DeclaredCheck, result: DiagnosticCheckResult, options: DiagnosticOptions, vault: string,
+	readContext: () => Promise<unknown>) {
+	const fail = (code: string, message: string) => failure(result, rule.path, code, message);
+	if (!rule.source || !rule.digest) return fail('checker-unavailable', rule.reason ?? unavailable());
+	if (!commonCheckTrusted(rule, options.trustedDigests))
+		return fail('checker-untrusted', tr('运行前请审查并认可通用规则的当前摘要。','Review and approve the common rule’s current fingerprint before running it.'));
+	const response = await runChecker(rule.source, options, vault, readContext, true);
+	if ('error' in response) {
+		const message = response.error === 'checker-node'
+			? tr('找不到 Vault 外有效的本机 Node.js。','Node.js was not found outside the vault.')
+			: tr('通用规则运行失败','Could not run the common rule') + ` (${response.error}).`;
+		return fail(response.error, message);
+	}
+	const invalidResult = () => fail('checker-output', tr('通用规则返回的结果不符合协议。','Return findings and coverage in the documented common rule format.'));
+	if (!isRecord(response.data)) return invalidResult();
+	const {diagnostics, coverage, reason} = response.data;
+	const findings = readFindings(diagnostics, true);
+	const counts = readCoverage(coverage);
+	if (!findings || !counts || (reason !== undefined && !printable(reason, 100000))) return invalidResult();
+	result.coverage = counts;
+	result.diagnostics = findings;
+	result.reason = reason;
+	return settle(result);
+}
