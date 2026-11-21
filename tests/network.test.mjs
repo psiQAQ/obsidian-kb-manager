@@ -13,6 +13,7 @@ import {clearUndo,finishMerge,inspectMerge,markResolved,undoInfo} from '../src/g
 import {readGrants,AutomationClock,selectPaths} from '../src/git/network-automation.ts';
 import {deletionPlan,removeBranch,remoteRemoval,removeRemote,serverBranches,trackBranch} from '../src/git/network-refs.ts';
 import {previewVersion,saveVersion} from '../src/git/versions.ts';
+import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 test('desktop native launches exclude vault paths and keep device Git configuration', async t => {
 	const workspace=path.resolve('.tmp');
@@ -376,13 +377,12 @@ test('rebase preserves the original author and uses this repository’s committe
 test('clone inspects a remote library before publishing and preserves a competing destination',async t=>{
 	const {downloadLibrary}=await import('../src/kb/clone.ts');
 	const {defaults,newIdentity}=await import('../src/kb/catalog.ts');
-	const {VaultDisk}=await import('../src/fs/vault.ts');
 	const {root,dir,target}=await fixture(t);
 	const {writeIdentity,parseIdentity}=await import('../src/kb/identity-core.ts');
 	const original=newIdentity('Research','',{id:'custom',version:'1'});
 	const choice={kind:'original',raw:writeIdentity('',original)};
 	await transfer(dir,'push',target);
-	const disk=new VaultDisk(root,'.vault-settings'), input={parent:defaults.parents[0],name:'Imported',url:target.url};
+	const disk=vaultDisk(root,'.vault-settings'), input={parent:defaults.parents[0],name:'Imported',url:target.url};
 	const clone=await downloadLibrary(disk,defaults,input);
 	assert.ok(clone.files.includes('note.md'));
 	const destination=path.join(root,input.parent,input.name);

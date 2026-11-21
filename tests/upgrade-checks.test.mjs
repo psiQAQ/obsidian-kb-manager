@@ -5,11 +5,12 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { templateCatalog } from '../scripts/template-catalog.mjs';
-import { digest, VaultDisk } from '../src/fs/vault.ts';
+import { digest } from '../src/fs/vault.ts';
 import { discover } from '../src/kb/catalog.ts';
 import { parseIdentity, readManifest, writeIdentity } from '../src/kb/identity-core.ts';
 import { declaration } from '../src/kb/template-declaration.ts';
 import { registerVaultLibrary } from '../src/registry/discovery.ts';
+import { vaultDisk } from './fixtures/vault-disk.mjs';
 
 const { packs, digests } = templateCatalog(resolve('assets/templates'));
 global.KB_TEMPLATE_PACKS = packs;
@@ -30,7 +31,7 @@ async function fixture(t, initial = {}) {
 	const manifest = writeIdentity('version = 1 # preserve\n[preferences]\ntree = false\n', identity);
 	await writeFile(join(root, 'kb.toml'), manifest);
 	await writeFile(join(root, 'README.md'), '# 原有首页\n');
-	return {root,disk:new VaultDisk(vault, '.settings'),library:{location,identity:parseIdentity(manifest),git:'local'},manifest};
+	return {root,disk:vaultDisk(vault, '.settings'),library:{location,identity:parseIdentity(manifest),git:'local'},manifest};
 }
 
 test('preview publishes the current official checks with the old version and available mapped paths', async t => {

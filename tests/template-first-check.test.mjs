@@ -4,13 +4,13 @@ import path from 'node:path';
 import test from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {generalChecks, portabilityCheck, runDiagnostics} from '../src/diagnostics/index.ts';
-import {VaultDisk} from '../src/fs/vault.ts';
 import {headOid} from '../src/git/repository.ts';
 import {prose} from '../src/kb/audit-markdown.ts';
 import {defaults, discover} from '../src/kb/catalog.ts';
 import {insertTemplate} from '../src/kb/insert.ts';
 import {readVaultRegistry} from '../src/registry/desktop.ts';
 import {templateCatalog} from '../scripts/template-catalog.mjs';
+import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 const {packs} = templateCatalog(fileURLToPath(new URL('../assets/templates/', import.meta.url)));
 // Provide the catalogue normally embedded by esbuild when running this fixture in Node.
@@ -80,7 +80,7 @@ test('first general checks find no errors in newly created libraries for all 18 
 			const vaultRoot = path.join(directory,id);
 			const configDir = '.test-settings';
 			await fs.mkdir(path.join(vaultRoot,configDir),{recursive:true});
-			const disk = new VaultDisk(vaultRoot,configDir);
+			const disk = vaultDisk(vaultRoot,configDir);
 			const input = {parent:defaults.parents[0],name:'新建库 ' + id,displayName:descriptor.name,description:'通用首检',source:builtinSource(id)};
 			const skeleton = packText(id === 'kepano' ? 'kepano' : 'llm-wiki');
 			const preview = await previewCreate(disk,defaults,input,skeleton);

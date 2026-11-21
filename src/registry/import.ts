@@ -71,7 +71,7 @@ export async function previewImport(disk:VaultDisk, config:Config, location:stri
 export type ImportMode = 'register'|'rebind'|'copy'|'copy-rebind';
 
 export async function confirmImport(disk:VaultDisk, config:Config, preview:ImportPreview, mode:ImportMode,
-	assets:(lib:Library)=>Record<string,string>, files:VisibleFiles) {
+	assets:(lib:Library)=>Record<string,string>, files:VisibleFiles, beforeRegistration?:()=>Promise<void>) {
 	const {library,missing,registry} = preview;
 	const rebind = mode === 'rebind' || mode === 'copy-rebind';
 	const copy = mode === 'copy' || mode === 'copy-rebind';
@@ -82,6 +82,7 @@ export async function confirmImport(disk:VaultDisk, config:Config, preview:Impor
 	await writeVaultRegistry(disk,registry.raw,paths,async()=>{
 		const latest = await previewImport(disk,config,library.location,assets,missing && {location:missing.location,id:library.identity?.id});
 		if (JSON.stringify(latest) !== JSON.stringify(preview)) throw new Error(tr('导入目标或预览已变化，请重新查看','The library or import preview changed. Review again'));
+		await beforeRegistration?.();
 		if ((!copy && !rebind) || !library.identity || !library.signature) return;
 		const manifest = await readManifestFile(await disk.path(library.location + '/' + identityFile));
 		if (manifest.signature !== library.signature) throw new Error(tr('清单已变化，请重新预览','Manifest changed. Preview again'));

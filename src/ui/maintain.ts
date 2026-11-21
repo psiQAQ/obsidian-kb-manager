@@ -140,6 +140,7 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
 			const fresh=await planMove(plugin.disk,proposedConfig(),lib,target,name,skeleton);
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error(tr('预览已变化',"Preview has changed"));
+			await plugin.disk.registry.assertWritable();
 			plugin.config=proposedConfig();
 			await plugin.recordMove(plan);
 			confirm.close();dialog.close();

@@ -6,13 +6,15 @@ import * as path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createPreview,instantiate,discoverMobile} from '../src/mobile/catalog.ts';
 import {parseIdentity,readManifest,writePreferences} from '../src/kb/identity-core.ts';
-import {assignMobileCopyId,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
+import {assignMobileCopyId,mobileLegacyRegistry,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
 import {applyLibraryBindings,previewBindings,resumeLibraryBindings} from '../src/mobile/bindings.ts';
 import {mobileRepo} from '../src/mobile/disk.ts';
 import {mobileStatus,editIndex,commit,mobileHistory,effectiveAuthor,localAuthor,configure} from '../src/mobile/git.ts';
 import {download,applyPull,pullPlan,transfer,upstream} from '../src/mobile/remote.ts';
 import {mobileHttp} from '../src/mobile/http.ts';
 import {readMobileStorage} from '../src/mobile/storage.ts';
+import {PluginDataRegistry} from '../src/registry/plugin-data.ts';
+import {registryDataPath,registryPath} from '../src/registry/paths.ts';
 
 function adapter(root){
 	const f=p=>path.join(root,p);
@@ -34,7 +36,16 @@ function adapter(root){
 async function setup(t){
 	await fs.mkdir('.tmp',{recursive:true});const root=await fs.mkdtemp(path.resolve('.tmp','mobile-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
-	const disk=adapter(root);return {root,disk,ctx:{disk,configDir:'.mobile-settings',parents:['libs'],templates:['templates/sample']}};
+	const disk=adapter(root),configDir='.mobile-settings',dataPath=registryDataPath(configDir);
+	const storage={
+		async load(){return await disk.stat(dataPath)?JSON.parse(await disk.read(dataPath)):null;},
+		async save(data){
+			await fs.mkdir(path.dirname(path.join(root,dataPath)),{recursive:true});
+			await disk.write(dataPath,JSON.stringify(data));
+		},
+	};
+	const registry=new PluginDataRegistry(configDir,storage,mobileLegacyRegistry(disk,configDir));
+	return {root,disk,dataPath,storage,ctx:{disk,configDir,registry,parents:['libs'],templates:['templates/sample']}};
 }
 async function inputs(root){
 	const read=async folder=>Object.fromEntries(await Promise.all((await fs.readdir(folder,{recursive:true,withFileTypes:true}))
@@ -50,7 +61,7 @@ async function inputs(root){
 }
 const author={name:'Initial Author',email:'initial@example.invalid'};
 test('mobile adapter creates all template types and preserves each library index and device author fallback',async t=>{
-	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
+	const {root,disk,ctx,storage}=await setup(t),assets=await inputs(root);
 	await disk.mkdir('.git');
 	await disk.write('.gitignore','# existing rule\n/cache/\n');
 	const native=(name,...args)=>execFileSync('git',['-C',path.join(root,'libs',name),...args]);
@@ -73,8 +84,9 @@ test('mobile adapter creates all template types and preserves each library index
 		assert.deepEqual(await instantiate(ctx,preview,assets),result);
 	}
 	assert.equal((await discoverMobile(ctx)).length,3);
-	assert.deepEqual(JSON.parse(await disk.read('.kb-manager/libraries.json')),['libs/a','libs/b','libs/c']);
-	assert.equal(await disk.read('.gitignore'),'# existing rule\n/cache/\n/.kb-manager/\n');
+	assert.deepEqual((await storage.load()).registeredLibraries,['libs/a','libs/b','libs/c']);
+	assert.equal(await disk.stat('.kb-manager'),null);
+	assert.equal(await disk.read('.gitignore'),'# existing rule\n/cache/\n/.mobile-settings/plugins/knowledge-base-manager/data.json\n');
 	assert.equal((await disk.stat('libs/a/kb-manager.json')),null);
 	assert.equal(readManifest(await disk.read('libs/a/kb.toml')).mapping.wiki,'wiki');
 	assert.match(await disk.read('libs/a/.gitignore'),/^\/kb\.toml$/mu);
@@ -156,7 +168,7 @@ test('mobile creation keeps ignored files local when the initial commit tree is 
 });
 
 test('mobile creation retries copy and registration failures without duplicate commits or replacing another library',async t=>{
-	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
+	const {root,disk,ctx,storage}=await setup(t),assets=await inputs(root);
 	await disk.mkdir('.git');
 	const request={parent:'libs',name:'retry',displayName:'Retry',description:'',source:'templates/sample',author};
 	const approval=await createPreview(ctx,request,assets),copy=disk.copy;
@@ -168,14 +180,13 @@ test('mobile creation retries copy and registration failures without duplicate c
 	assert.equal(await disk.stat('libs/retry'),null);
 	assert.deepEqual(await disk.list('libs'),{files:[],folders:[]});
 	assert.deepEqual(await discoverMobile(ctx),[]);
-	disk.copy=async(a,b)=>{
-		if(b==='.kb-manager/libraries.json')throw new Error('fixture registry failure');
-		return copy(a,b);
-	};
+	disk.copy=copy;
+	const save=storage.save;
+	storage.save=async()=>{throw new Error('fixture registry failure');};
 	await assert.rejects(instantiate(ctx,approval,assets),/fixture registry failure/u);
 	const gitHead=await disk.read('libs/retry/.git/refs/heads/main');
 	assert.deepEqual(await discoverMobile(ctx),[]);
-	disk.copy=copy;
+	storage.save=save;
 	const receipt=await instantiate(ctx,approval,assets);
 	assert.equal(receipt.head,gitHead.trim());
 	assert.equal((await discoverMobile(ctx))[0].identity.id,receipt.identity.id);
@@ -186,6 +197,38 @@ test('mobile creation retries copy and registration failures without duplicate c
 	await assert.rejects(instantiate(ctx,conflicting,assets));
 	assert.equal(await disk.read(conflicting.location+'/user.md'),'external file');
 	assert.equal(execFileSync('git',['-C',path.join(root,'libs/retry'),'rev-list','--count','HEAD']).toString().trim(),'1');
+});
+
+test('mobile can read legacy registrations and retries confirmed cleanup without touching neighboring files',async t=>{
+	const {root,disk,ctx,storage}=await setup(t),assets=await inputs(root);
+	const raw='["old/library"]\n';
+	await disk.mkdir('.kb-manager');
+	await disk.write(registryPath,raw);
+	await disk.write('.kb-manager/keep.txt','keep me');
+	await storage.save({language:'en',unrelated:{preserved:true}});
+	const request={parent:'libs',name:'new',displayName:'New',description:'',source:'templates/sample',author};
+	const approval=await createPreview(ctx,request,assets);
+	assert.deepEqual(await discoverMobile(ctx),[{location:'old/library',missing:true}]);
+	await assert.rejects(instantiate(ctx,approval,assets),/迁移|migrat/iu);
+	const url='https://example.invalid/library.git';
+	await assert.rejects(download(ctx,'libs','cloned',url,{request:()=>assert.fail('contacted the remote before migration')}),/迁移|migrat/iu);
+	assert.equal(await disk.stat('libs'),null);
+	assert.equal(await disk.read(registryPath),raw);
+	const preview=await ctx.registry.previewMigration();
+	assert.deepEqual(preview.paths,['old/library']);
+	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true}});
+	const remove=disk.remove;
+	disk.remove=async p=>{if(p===registryPath)throw new Error('fixture cleanup failure');await remove(p);};
+	await assert.rejects(ctx.registry.migrate(preview),/fixture cleanup failure/u);
+	assert.equal(await disk.read(registryPath),raw);
+	assert.deepEqual((await storage.load()).registeredLibraries,['old/library']);
+	disk.remove=remove;
+	const reopened=new PluginDataRegistry(ctx.configDir,storage,mobileLegacyRegistry(disk,ctx.configDir));
+	await reopened.migrate(await reopened.previewMigration());
+	assert.equal(await disk.stat(registryPath),null);
+	assert.equal(await disk.read('.kb-manager/keep.txt'),'keep me');
+	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true},registeredLibraries:['old/library']});
+	assert.deepEqual((await discoverMobile({...ctx,registry:reopened})).map(lib=>lib.location),['old/library']);
 });
 
 function smartHttps(bare,url,auth){
@@ -271,20 +314,20 @@ test('mobile smart HTTPS clone, fetch, fast-forward and push isolate a managed l
 });
 
 test('mobile rebuilds a registry from a selected folder and rebinds only matching files after a complete move',async t=>{
-	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
+	const {root,disk,ctx,dataPath,storage}=await setup(t),assets=await inputs(root);
 	const initial=await createPreview(ctx,{parent:'libs',name:'a',displayName:'Alpha',description:'',source:'builtin:kepano',author},assets);
 	const {identity}=await instantiate(ctx,initial,assets);
 	await disk.mkdir('incoming');
 	await disk.rename('libs/a','incoming/moved');
 	assert.equal((await discoverMobile(ctx))[0].missing,true);
-	assert.deepEqual(JSON.parse(await disk.read('.kb-manager/libraries.json')),['libs/a']);
+	assert.deepEqual((await storage.load()).registeredLibraries,['libs/a']);
 	const changed=identity.managed.find(item=>item.path!=='README.md').path;
 	const changedPath='incoming/moved/'+changed,edited=await disk.read(changedPath)+'\nUser edit\n';
 	await disk.write(changedPath,edited);
 	const [found]=await scanMobile(ctx,'incoming');
 	assert.equal(found.identity.id,identity.id);
 	await registerMobile(ctx,[found],'libs/a');
-	assert.deepEqual(JSON.parse(await disk.read('.kb-manager/libraries.json')),['incoming/moved']);
+	assert.deepEqual((await storage.load()).registeredLibraries,['incoming/moved']);
 	const preview=await previewBindings(ctx,found.location,found.location,found.manifest,assets.kepano);
 	assert.ok(preview.edits.some(edit=>edit.path==='README.md'));
 	assert.ok(preview.manual.some(line=>line.includes(changed)));
@@ -304,11 +347,11 @@ test('mobile rebuilds a registry from a selected folder and rebinds only matchin
 	await registerMobile(ctx,[await selectMobileManifest(ctx,'incoming/copy/kb.toml')]);
 	assert.ok((await discoverMobile(ctx)).every(lib=>lib.duplicate));
 	await assert.rejects(verifyLibrary(ctx,found,true));
-	await disk.remove('.kb-manager/libraries.json');
+	await disk.remove(dataPath);
 	assert.deepEqual(await discoverMobile(ctx),[]);
-	assert.equal(await disk.stat('.kb-manager/libraries.json'),null);
+	assert.equal(await disk.stat(dataPath),null);
 	await registerMobile(ctx,await scanMobile(ctx,'incoming'));
-	assert.deepEqual(JSON.parse(await disk.read('.kb-manager/libraries.json')),['incoming/copy','incoming/moved']);
+	assert.deepEqual((await storage.load()).registeredLibraries,['incoming/copy','incoming/moved']);
 	const source=await disk.read('incoming/moved/kb.toml');
 	await disk.write('incoming/copy/kb.toml',writePreferences(source,{disablePush:true}));
 	const copy=await selectMobileManifest(ctx,'incoming/copy/kb.toml');
@@ -352,4 +395,7 @@ test('mobile migrates only global preferences and keeps incomplete records and p
 	assert.deepEqual(device.pendingLibraryPreferences,{[id]:{tree:true}});
 	assert.deepEqual(device.retained,{value:'unchanged'});
 	assert.equal(readMobileStorage(saved,{...device,grants:{[id]:grant}}).device.grants[id].paused,undefined);
+	const topLevel=readMobileStorage({language:'en',libraries:{[id]:{tree:true}},registeredLibraries:['project']},{});
+	assert.deepEqual(topLevel.device.pendingLibraryPreferences,{[id]:{tree:true}});
+	assert.deepEqual(topLevel.saved,{language:'en',defaults:{}});
 });

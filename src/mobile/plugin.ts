@@ -1,6 +1,9 @@
 import {getLanguage,Notice,Plugin} from 'obsidian';
 import {setLanguage,tr} from '../i18n.ts';
 import {effectivePreferences,readPreferences} from '../preferences.ts';
+import {registryDataPath} from '../registry/paths.ts';
+import {PluginDataRegistry} from '../registry/plugin-data.ts';
+import {showRegistryMigration} from '../ui/registry-migration.ts';
 import {verifyLibrary} from './catalog.ts';
 import type {Catalog,Library} from './catalog.ts';
 import {MobileSettings} from './settings.ts';
@@ -8,6 +11,7 @@ import {MobileView,viewType} from './view.ts';
 import {createForm} from './forms.ts';
 import {registerMobileTemplates} from './insert-template.ts';
 import {manifestForm,scanForm} from './registration-forms.ts';
+import {applyMobileRegistryIgnore,mobileLegacyRegistry,previewMobileRegistryIgnore,registryIgnoreLines} from './registration.ts';
 import {settingsPaths} from './disk.ts';
 import type {BindingPreview} from './bindings.ts';
 import {readMobileStorage} from './storage.ts';
@@ -26,9 +30,11 @@ export default class MobilePlugin extends Plugin {
 		const old:unknown=await this.loadData(),key=this.manifest.id+':device-v3',local:unknown=this.app.loadLocalStorage(key);
 		const {saved,device}=readMobileStorage(old,local);
 		this.saved=saved;this.device=device;
-		this.ctx={disk:this.app.vault.adapter,configDir:this.app.vault.configDir,parents:device.parents,templates:device.templates};
+		const {adapter:disk,configDir}=this.app.vault;
+		const registry=new PluginDataRegistry(configDir,{load:()=>this.loadData(),save:data=>this.saveData(data)},mobileLegacyRegistry(disk,configDir));
+		this.ctx={disk,configDir,registry,parents:device.parents,templates:device.templates};
 		if((old || local) && JSON.stringify(local)!==JSON.stringify(device))this.persistDevice(device);
-		if(old && JSON.stringify(old)!==JSON.stringify(saved))await this.saveData(saved);
+		if(old)await registry.savePreferences(saved);
 		this.updateLanguage();
 		const localKey=this.manifest.id+':mobile-identity-key';
 		const existing=this.app.loadLocalStorage(localKey) as unknown;
@@ -42,6 +48,7 @@ export default class MobilePlugin extends Plugin {
 		registerMobileTemplates(this);
 		this.addCommand({id:'register-library',name:tr('登记知识库清单','Register a library manifest'),callback:()=>manifestForm(this)});
 		this.addCommand({id:'scan-library-registry',name:tr('扫描目录并登记知识库','Scan a folder and register knowledge bases'),callback:()=>scanForm(this)});
+		this.addCommand({id:'migrate-library-registry',name:tr('迁移旧知识库登记表','Migrate the legacy library registry'),callback:()=>this.previewRegistryMigration().catch(e=>this.report(e))});
 	}
 	updateLanguage(){const lang=this.saved.language;setLanguage(lang==='system'?getLanguage():lang);}
 	preferences(lib?:Library){
@@ -61,8 +68,17 @@ export default class MobilePlugin extends Plugin {
 		const saved={...this.saved,language:readPreferences({language}).language};
 		this.persistDevice({...this.device,parents,templates});
 		Object.assign(this.ctx,{parents,templates});
-		await this.saveData(saved);
+		await this.ctx.registry.savePreferences(saved);
 		this.saved=saved;this.updateLanguage();await this.refresh();
+	}
+	async previewRegistryMigration(){
+		const ctx=this.ctx;
+		if(!await showRegistryMigration(this.app,ctx.registry,registryDataPath(ctx.configDir),()=>this.refresh(),async dialog=>{
+			const ignore=await previewMobileRegistryIgnore(ctx),lines=registryIgnoreLines(ignore);
+			if(lines.length)dialog.lines(lines);
+			return ()=>applyMobileRegistryIgnore(ctx,ignore,true);
+		}))
+			new Notice(tr('没有待迁移的旧知识库登记表','No legacy library registry to migrate'));
 	}
 	private persistDevice(device:Device){
 		const key=this.manifest.id+':device-v3';

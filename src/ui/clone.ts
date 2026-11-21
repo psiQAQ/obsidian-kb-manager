@@ -44,7 +44,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 			const publish=async(choice?:CloneManifestChoice)=>{
 				publishing=true;
 				try{
-					await plugin.exclusiveGit(target.relative,async()=>{await protect();await clone.publish(plugin.config,choice);});
+					await plugin.exclusiveGit(target.relative,()=>clone.publish(plugin.config,choice,protect));
 					preview.close();await plugin.refresh();
 				}finally{
 					publishing=false;

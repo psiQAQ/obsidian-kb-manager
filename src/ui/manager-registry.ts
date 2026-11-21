@@ -1,4 +1,4 @@
-import { Setting } from 'obsidian';
+import { Notice, Setting } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { identityFile } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
@@ -6,9 +6,10 @@ import { applyIgnoreRule, previewIgnoreRule, previewRegistryIgnore, readRegistry
 import { registryCandidate, scanVaultFolder } from '../registry/discovery.ts';
 import { confirmImport, previewImport } from '../registry/import.ts';
 import type { ImportMode } from '../registry/import.ts';
-import { amendRegistry, parseRegistry, registryIgnoreRule, registryPath } from '../registry/paths.ts';
+import { amendRegistry, parseRegistry, registryDataPath } from '../registry/paths.ts';
 import { Dialog } from './dialog.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
+import { showRegistryMigration } from './registry-migration.ts';
 import { registryPathField } from './registry-path-field.ts';
 import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
@@ -46,7 +47,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 	const dialog = new Dialog(plugin.app,missing ? t('重新定位已登记知识库','Relocate registered library') : t('预览知识库导入','Preview library import'));
 	const protect=await reviewRegistryProtection(plugin,dialog);
 	dialog.lines([
-		...descriptions(plugin,preview.library), registryPath,
+		...descriptions(plugin,preview.library), registryDataPath(disk.configDir),
 		...(missing ? [missing.location + ' → ' + location,...(missing.id ? [] : [t('此前没有记录该库的 ID，请核对所选库的身份。','The previous ID is unavailable. Verify the selected library identity.')])] : []),
 		...preview.clashes.map(lib=>t('登记中已有同 ID','Same ID already registered') + ' · ' + lib.location),
 		...preview.rebinding.changes.flatMap(change=>[change.file,...change.fields]),
@@ -72,10 +73,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 		}
 	}
 	const apply = (mode:ImportMode)=>async()=>{
-		await plugin.exclusive(location,async()=>{
-			await protect();
-			await confirmImport(disk,plugin.config,preview,mode,assets,visible(plugin));
-		});
+		await plugin.exclusive(location,()=>confirmImport(disk,plugin.config,preview,mode,assets,visible(plugin),protect));
 		dialog.close();
 		await plugin.refresh();
 	};
@@ -104,7 +102,7 @@ export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:
 	const {raw,paths} = await readVaultRegistry(disk);
 	if (!paths.includes(location)) throw new Error(t('登记已变化，请刷新','Registration changed. Refresh the manager.'));
 	const dialog = new Dialog(plugin.app,t('移除登记','Remove registration'));
-	dialog.lines([registryPath,location,t('此操作更新 Vault 的登记列表，保留目录和文件。','This updates the Vault registry and preserves the folder and files.')]);
+	dialog.lines([registryDataPath(disk.configDir),location,t('此操作更新 Vault 的登记列表，保留目录和文件。','This updates the Vault registry and preserves the folder and files.')]);
 	dialog.action(t('移除登记','Remove registration'),async()=>{
 		await plugin.exclusive(location,()=>writeVaultRegistry(disk,raw,amendRegistry(paths,{remove:[location]},disk.configDir)));
 		dialog.close();
@@ -119,14 +117,18 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 	let paths:string[] = [];
 	let problem:string|undefined;
 	try { if (raw !== null) paths = parseRegistry(raw,disk.configDir); }
-	catch (error) { problem = String(error); }
+	catch (error) {
+		// A malformed current field can be rebuilt once any legacy source is resolved.
+		if (await disk.registry.previewMigration()) throw new Error(t('请先在登记中查看旧版迁移','Review the legacy migration in Registry first'));
+		problem = String(error);
+	}
 	if (problem && location) throw new Error(t('登记文件有误。请选择 Vault 根目录重建。','The registry is invalid. Select the Vault root to rebuild it.') + '\n' + problem);
 	const {libraries,skipped} = await scanVaultFolder(disk,config,location);
 	const existing = await Promise.all(paths.filter(path=>!libraries.some(lib=>lib.location===path)).map(path=>registryCandidate(disk,config,path)));
 	const seen = [...libraries,...existing.filter(lib=>lib!==undefined)];
 	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'));
 	const protect=await reviewRegistryProtection(plugin,dialog);
-	dialog.lines([location || t('Vault 根目录','Vault root'),registryPath,...(problem ? [problem] : []),...skipped]);
+	dialog.lines([location || t('Vault 根目录','Vault root'),registryDataPath(disk.configDir),...(problem ? [problem] : []),...skipped]);
 	const selected = new Set<string>();
 	for (const lib of libraries) {
 		const duplicates = lib.identity ? seen.filter(other=>other.location!==lib.location && other.identity?.id===lib.identity?.id) : [];
@@ -149,13 +151,13 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 			if (!additions.length && !problem) return;
 			const next = amendRegistry(paths,{add:additions},disk.configDir);
 			await writeVaultRegistry(disk,raw,next,async()=>{
-				await protect();
 				for (const path of additions) {
 					const current = await registryCandidate(disk,plugin.config,path);
 					if (!current?.signature || current.problem || current.signature!==libraries.find(lib=>lib.location===path)?.signature) {
 						throw new Error(t('知识库已变化，请重新扫描','The library changed. Scan again.') + ' · ' + path);
 					}
 				}
+				await protect();
 			});
 			dialog.close();
 			await plugin.refresh();
@@ -168,16 +170,25 @@ export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager) {
 	const {t,disk} = plugin;
 	const preview = await previewRegistryIgnore(disk);
 	const dialog = new Dialog(plugin.app,t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'));
-	dialog.lines([t('Vault 根目录 .gitignore','Vault root .gitignore'),registryIgnoreRule]);
+	dialog.lines([t('Vault 根目录 .gitignore','Vault root .gitignore'),preview.rule]);
 	if (preview.after === preview.before) dialog.lines([t('忽略规则已存在。','The ignore rule is in place.')]);
 	else dialog.action(t('确认写入规则','Write ignore rule'),async()=>{await applyIgnoreRule(disk,preview);dialog.close();});
 	dialog.open();
 }
 
+export function showLegacyRegistryMigration(plugin:KnowledgeBaseManager) {
+	return showRegistryMigration(plugin.app,plugin.disk.registry,registryDataPath(plugin.disk.configDir),
+		()=>plugin.refresh(),dialog=>reviewRegistryProtection(plugin,dialog));
+}
+
 export function manageRegistry(plugin:KnowledgeBaseManager) {
 	const {t} = plugin;
 	const dialog = new Dialog(plugin.app,t('Vault 知识库登记','Vault library registry'));
-	dialog.lines([registryPath]);
+	dialog.lines([registryDataPath(plugin.disk.configDir)]);
+	dialog.action(t('预览旧版登记迁移','Preview legacy registry migration'),async()=>{
+		if(await showLegacyRegistryMigration(plugin))dialog.close();
+		else new Notice(t('没有待迁移的旧版登记。','No legacy registry is awaiting migration.'));
+	});
 	dialog.action(t('选择 kb.toml 并预览导入','Select kb.toml and preview import'),()=>{
 		dialog.close();
 		pickManifest(plugin,location=>showImportPreview(plugin,location));

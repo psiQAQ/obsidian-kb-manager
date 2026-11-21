@@ -5,10 +5,11 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {parse} from 'yaml';
 import {templateCatalog} from '../scripts/template-catalog.mjs';
-import {VaultDisk,digest} from '../src/fs/vault.ts';
+import {digest} from '../src/fs/vault.ts';
 import {parseIdentity,writeIdentity} from '../src/kb/identity-core.ts';
 import {instanceText,rebindSlots} from '../src/kb/instance-text.ts';
 import {declaration} from '../src/kb/template-declaration.ts';
+import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 const {packs,digests}=templateCatalog(path.resolve('assets/templates'));
 global.KB_TEMPLATE_PACKS=packs;
@@ -57,7 +58,7 @@ test('new pack gets independent identity, public rules, ignored logs and preview
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp','v3-lifecycle-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
-	const disk=new VaultDisk(root,'.settings'),config={parents:['资料'],templates:[]};
+	const disk=vaultDisk(root,'.settings'),config={parents:['资料'],templates:[]};
 	const input={source:'builtin:research-project',parent:'资料',name:'实验甲',displayName:'实验',description:'测试'};
 	const preview=await previewCreate(disk,config,input,{});
 	await createLibrary(disk,config,preview,{});

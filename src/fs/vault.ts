@@ -2,25 +2,27 @@ import { fromEnglish } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { segments } from './paths.ts';
+import { segments, statIfPresent } from './paths.ts';
+import { desktopLegacyRegistry } from '../registry/desktop.ts';
+import { PluginDataRegistry } from '../registry/plugin-data.ts';
+import type { PluginDataIO } from '../registry/plugin-data.ts';
+
+export { statIfPresent } from './paths.ts';
 
 export const key = (name: string) => name.normalize('NFC').toLowerCase();
 export const overlaps = (a: string, b: string) =>
 	(key(a) + '/').startsWith(key(b) + '/') || (key(b) + '/').startsWith(key(a) + '/');
 export const digest = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
 
-export async function statIfPresent(file: string) {
-	try { return await fs.lstat(file); }
-	catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
-}
-
 export class VaultDisk {
 	readonly root: string;
 	readonly configDir: string;
+	readonly registry: PluginDataRegistry;
 
-	constructor(root: string, configDir: string) {
+	constructor(root: string, configDir: string, data: PluginDataIO) {
 		this.root = root;
 		this.configDir = configDir;
+		this.registry = new PluginDataRegistry(configDir,data,desktopLegacyRegistry(this));
 	}
 
 	validate(relative: string) {

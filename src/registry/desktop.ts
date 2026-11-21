@@ -2,13 +2,13 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { statIfPresent } from '../fs/vault.ts';
+import { statIfPresent } from '../fs/paths.ts';
 import type { VaultDisk } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { withLibraryIgnores } from '../kb/identity-core.ts';
-import { parseRegistry, registryDirectory, registryIgnoreRule, registryKey, registryName, serializeRegistry, validateRegistryDirectory, withIgnoreRule } from './paths.ts';
+import { legacyDirectoryIsConfig, registryDirectory, registryIgnoreFor, registryKey, registryName, registryPath, withIgnoreRule } from './paths.ts';
 
-export interface RegistrySnapshot {raw:string|null;paths:string[]}
+export type RegistrySnapshot = Awaited<ReturnType<VaultDisk['registry']['read']>>;
 type FileSnapshot = {raw:string;mode:number}|null;
 
 async function exactChild(directory:string, name:string) {
@@ -21,11 +21,10 @@ async function exactChild(directory:string, name:string) {
 }
 
 async function registryFolder(disk:VaultDisk) {
-	validateRegistryDirectory(disk.configDir);
 	const folder = await exactChild(await fs.realpath(disk.root),registryDirectory);
 	const status = await statIfPresent(folder);
 	if (status && !status.isDirectory()) throw new Error(tr('登记目录必须是真实目录','The registry folder must be a real directory'));
-	return {folder,exists:!!status};
+	return {folder,status};
 }
 
 async function readFile(filename:string):Promise<FileSnapshot> {
@@ -42,15 +41,44 @@ async function readFile(filename:string):Promise<FileSnapshot> {
 	} finally { await file.close(); }
 }
 
-export async function readRegistryRaw(disk:VaultDisk) {
-	const {folder,exists} = await registryFolder(disk);
-	return exists ? (await readFile(await exactChild(folder,registryName)))?.raw ?? null : null;
+export function desktopLegacyRegistry(disk:VaultDisk) {
+	return {
+		async read() {
+			if (legacyDirectoryIsConfig(disk.configDir)) return null;
+			try {
+				const {folder,status} = await registryFolder(disk);
+				return status ? (await readFile(await exactChild(folder,registryName)))?.raw ?? null : null;
+			} catch(error) {
+				throw new Error(tr('无法读取旧登记文件，请检查','Could not read the legacy registry. Check') + ' · ' + registryPath + ' · ' + String(error));
+			}
+		},
+		async remove(expected:string) {
+			if (legacyDirectoryIsConfig(disk.configDir)) throw new Error(tr('旧登记目录属于 Vault 配置','The legacy registry folder belongs to the Vault configuration'));
+			const {folder,status} = await registryFolder(disk);
+			const changed = () => new Error(tr('旧版登记已变化，请重新预览','The legacy registry changed. Preview it again'));
+			if (!status) throw changed();
+			const filename = await exactChild(folder,registryName);
+			const original = await statIfPresent(filename);
+			if ((await readFile(filename))?.raw !== expected || !original) throw changed();
+			const currentFolder = await statIfPresent(folder);
+			if (!currentFolder?.isDirectory() || currentFolder.dev !== status.dev || currentFolder.ino !== status.ino) throw changed();
+			const current = await statIfPresent(filename);
+			if (!current?.isFile() || current.nlink !== 1 || current.dev !== original.dev || current.ino !== original.ino ||
+				current.size !== original.size || current.mtimeMs !== original.mtimeMs || current.ctimeMs !== original.ctimeMs) throw changed();
+			await fs.unlink(filename);
+			const remaining = await statIfPresent(folder);
+			if (!remaining?.isDirectory() || remaining.dev !== status.dev || remaining.ino !== status.ino) return;
+			try { await fs.rmdir(folder); }
+			catch (error) {
+				if (!['ENOENT','ENOTEMPTY','EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+			}
+		},
+	};
 }
 
-export async function readVaultRegistry(disk:VaultDisk):Promise<RegistrySnapshot> {
-	const raw = await readRegistryRaw(disk);
-	return {raw,paths:raw === null ? [] : parseRegistry(raw,disk.configDir)};
-}
+export function readRegistryRaw(disk:VaultDisk) { return disk.registry.readRaw(); }
+
+export function readVaultRegistry(disk:VaultDisk):Promise<RegistrySnapshot> { return disk.registry.read(); }
 
 const updates = new Map<string,Promise<unknown>>();
 async function serializeUpdate<T>(target:string, update:()=>Promise<T>) {
@@ -81,33 +109,12 @@ async function replaceFile(filename:string, before:string|null, after:string, mo
 	}
 }
 
-async function publishRegistry(disk:VaultDisk, before:string|null, paths:readonly string[]) {
-	const after = serializeRegistry(paths,disk.configDir);
-	const {folder,exists} = await registryFolder(disk);
-	if (!exists) {
-		if (before !== null) throw new Error(tr('登记文件已变化，请重新预览','Registry changed. Preview the update again'));
-		try { await fs.mkdir(folder); }
-		catch(error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-		await registryFolder(disk);
-	}
-	return replaceFile(await exactChild(folder,registryName),before,after,0o600);
+export function writeVaultRegistry(disk:VaultDisk, before:string|null, paths:readonly string[], prepare?:()=>Promise<void>) {
+	return disk.registry.write(before,paths,prepare);
 }
 
-export async function writeVaultRegistry(disk:VaultDisk, before:string|null, paths:readonly string[], prepare?:()=>Promise<void>) {
-	serializeRegistry(paths,disk.configDir);
-	return serializeUpdate(path.join(await fs.realpath(disk.root),registryDirectory),async()=>{
-		if (await readRegistryRaw(disk) !== before) throw new Error(tr('登记文件已变化，请重新预览','Registry changed. Preview the update again'));
-		await prepare?.();
-		await publishRegistry(disk,before,paths);
-	});
-}
-
-export async function updateVaultRegistry(disk:VaultDisk, change:(paths:readonly string[])=>string[]) {
-	return serializeUpdate(path.join(await fs.realpath(disk.root),registryDirectory),async()=>{
-		const {raw,paths} = await readVaultRegistry(disk);
-		const next = change(paths);
-		if (JSON.stringify(paths) !== JSON.stringify(next)) await publishRegistry(disk,raw,next);
-	});
+export function updateVaultRegistry(disk:VaultDisk, change:(paths:readonly string[])=>string[]) {
+	return disk.registry.update(change);
 }
 
 async function ignoreFilename(disk:VaultDisk, location:string) {
@@ -127,6 +134,7 @@ async function applyIgnore(disk:VaultDisk,preview:IgnorePreview,edit:IgnoreEdit)
 	return serializeUpdate(filename,async()=>{
 		const current = await readFile(filename);
 		const raw = current?.raw ?? null;
+		if (raw === preview.after && edit(raw) === raw) return;
 		if (raw !== preview.before || edit(raw) !== preview.after) throw new Error(tr('忽略规则已变化，请重新预览','Ignore rules changed. Preview the update again'));
 		await replaceFile(filename,raw,preview.after,current?.mode ?? 0o644);
 	});
@@ -150,5 +158,5 @@ export function applyLibraryIgnores(disk:VaultDisk,preview:IgnorePreview) {
 }
 
 export function previewRegistryIgnore(disk:VaultDisk) {
-	return previewIgnoreRule(disk,'',registryIgnoreRule);
+	return previewIgnoreRule(disk,'',registryIgnoreFor(disk.configDir));
 }

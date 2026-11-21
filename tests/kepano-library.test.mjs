@@ -5,7 +5,7 @@ import test from 'node:test';
 import {gitResult} from '../src/git/network-native.ts';
 import {saveVersion,previewVersion} from '../src/git/versions.ts';
 import { parseDocument } from 'yaml';
-import { VaultDisk, digest } from '../src/fs/vault.ts';
+import { digest } from '../src/fs/vault.ts';
 import { defaults, discover } from '../src/kb/catalog.ts';
 import { createLibrary, previewCreate } from '../src/kb/create.ts';
 import { kepanoSource } from '../src/kb/template.ts';
@@ -13,12 +13,13 @@ import { examine, applyRepair } from '../src/kb/maintenance.ts';
 import { planMove, executeMove } from '../src/kb/move.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
 import { repository } from '../src/git/repository.ts';
+import { vaultDisk } from './fixtures/vault-disk.mjs';
 
 async function setup(t) {
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp/kepano-library-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
-	const disk=new VaultDisk(root,'.settings');
+	const disk=vaultDisk(root,'.settings');
 	const assets=path.resolve('assets/templates/collections/kepano');
 	const skeleton={};
 	for(const item of await fs.readdir(assets,{withFileTypes:true,recursive:true})){

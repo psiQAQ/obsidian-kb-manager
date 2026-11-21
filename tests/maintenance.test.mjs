@@ -3,19 +3,20 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {VaultDisk,digest} from '../src/fs/vault.ts';
+import {digest} from '../src/fs/vault.ts';
 import {newIdentity,discover,identityFile,writeIdentity} from '../src/kb/catalog.ts';
 import {registerVaultLibrary} from '../src/registry/discovery.ts';
 import {initializeRepository} from '../src/git/repository.ts';
 import {renderBase} from '../src/kb/template.ts';
 import {examine,applyRepair} from '../src/kb/maintenance.ts';
 import {planMove,executeMove} from '../src/kb/move.ts';
+import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 test('move resumes after rename, refuses a new edit, preserves staged bytes and custom filters',async t=>{
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp','move-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
-	const disk=new VaultDisk(root,'.settings'),config={parents:['A','B'],templates:[],author:'',email:''};
+	const disk=vaultDisk(root,'.settings'),config={parents:['A','B'],templates:[],author:'',email:''};
 	const libdir=path.join(root,'A','光学');
 	await fs.mkdir(libdir,{recursive:true});await fs.mkdir(path.join(root,'B'));
 	const skeleton={'knowledge.base':await fs.readFile('assets/templates/ai-workflows/llm-wiki/knowledge.base','utf8')};

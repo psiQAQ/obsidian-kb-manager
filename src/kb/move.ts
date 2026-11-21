@@ -64,6 +64,7 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 }
 
 export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={}){
+	await disk.registry.assertWritable();
 	const parent=(file:string)=>path.posix.dirname(file);
 	if(!config.parents.includes(parent(record.destination)))throw new Error(tr('目标父目录登记已变化','The registered destination parent changed'));
 	disk.validate(record.source);disk.validate(record.destination);
@@ -104,6 +105,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}
+	await disk.registry.assertWritable();
 	if(current!==destination){
 		let at=current;
 		if(at===source && key(record.source)===key(record.destination)){

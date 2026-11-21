@@ -3,7 +3,7 @@ import {tr} from '../i18n.ts';
 import {identityFile,readManifest,withManifestIgnore,writeIdentity} from '../kb/identity-core.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {registryPathField} from '../ui/registry-path-field.ts';
-import {registryIgnoreRule,withIgnoreRule} from '../registry/paths.ts';
+import {registryIgnoreFor,withIgnoreRule} from '../registry/paths.ts';
 import {applyLibraryBindings,bindingLines,previewBindings,resumeLibraryBindings} from './bindings.ts';
 import {newIdentity} from './catalog.ts';
 import {checkSpelling,replaceText} from './disk.ts';
@@ -20,15 +20,15 @@ function manifestLines(lib:Library){
 }
 
 export async function registryIgnoreForm(plugin:MobilePlugin){
-	const disk=plugin.ctx.disk,path='.gitignore';
+	const {disk,configDir}=plugin.ctx,path='.gitignore',rule=registryIgnoreFor(configDir);
 	await checkSpelling(disk,path);
 	const before=(await disk.stat(path))?await disk.read(path):undefined;
-	const after=withIgnoreRule(before??null,registryIgnoreRule);
+	const after=withIgnoreRule(before??null,rule);
 	if(after===before){
 		const dlg=new Dialog(plugin.app,tr('Vault Git 忽略规则','Vault Git ignore rule'));
-		dlg.lines([path,registryIgnoreRule,tr('规则已存在','Rule already present')]);dlg.open();return;
+		dlg.lines([path,rule,tr('规则已存在','Rule already present')]);dlg.open();return;
 	}
-	confirm(plugin,tr('写入 Vault Git 忽略规则','Write the Vault Git ignore rule'),[path,registryIgnoreRule],async()=>{
+	confirm(plugin,tr('写入 Vault Git 忽略规则','Write the Vault Git ignore rule'),[path,rule],async()=>{
 		await plugin.catalogWrite(()=>replaceText(disk,path,before,after));
 	});
 }

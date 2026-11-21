@@ -4,7 +4,7 @@ import path from 'node:path';
 import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { VaultDisk } from '../src/fs/vault.ts';
+import { vaultDisk } from './fixtures/vault-disk.mjs';
 import { auditLibrary, createAuditSession } from '../src/kb/audit.ts';
 import { auditChecks } from '../src/kb/audit-types.ts';
 import { inspect } from '../src/kb/catalog.ts';
@@ -27,7 +27,7 @@ async function setup(t) {
 	await put('kb.toml',instanceManifestSeed(descriptor,1));
 	// Match an instantiated Base after the template bindings have been rendered.
 	await put('knowledge.base','views: [{type: table}]\n');
-	const disk = new VaultDisk(vault,'.settings');
+	const disk = vaultDisk(vault,'.settings');
 	const run = async () => auditLibrary(disk,await inspect(disk,location));
 	return {root,vault,put,run,disk};
 }

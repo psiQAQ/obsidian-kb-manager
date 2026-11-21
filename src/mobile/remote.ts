@@ -9,7 +9,7 @@ import {branchName,changed,containsPrivateManifest,expectSnapshot,locked,mobileS
 import type {Store,Snapshot} from './git.ts';
 import {destination,discoverMobile,newIdentity,scratch,publish} from './catalog.ts';
 import type {Catalog} from './catalog.ts';
-import {applyMobileRegistryIgnore,previewMobileRegistryIgnore,readMobileRegistry,updateMobileRegistry} from './registration.ts';
+import {applyMobileRegistryIgnore,previewMobileRegistryIgnore,updateMobileRegistry} from './registration.ts';
 import {applyCloneBindings,previewBindings} from './bindings.ts';
 import type {BindingPreview} from './bindings.ts';
 import {endpoint} from './http.ts';
@@ -110,6 +110,7 @@ export interface CloneReview {
 	registryIgnore:Awaited<ReturnType<typeof previewMobileRegistryIgnore>>;
 }
 export async function download(ctx:Catalog,parent:string,name:string,url:string,http:HttpClient,auth?:GitAuth){
+	await ctx.registry.assertWritable();
 	const location=await destination(ctx,parent,name),temp=await scratch(ctx,parent);
 	const s={disk:ctx.disk,root:temp,configDir:ctx.configDir},r=repo(s);
 	let disposed=false;
@@ -145,9 +146,9 @@ export async function download(ctx:Catalog,parent:string,name:string,url:string,
 			return {choice,source,bindings,ignore,nextIgnore,registryIgnore:await previewMobileRegistryIgnore(current)};
 		}
 		return {location,head,files:[...files.keys()],branch,tracked:remoteManifest!==undefined,hasManifest:!!embedded?.identity,cleanup,review,publish:async(current:Catalog,approved:CloneReview,skeleton:Record<string,string>)=>{
+			await current.registry.assertWritable();
 			const fresh=await review(current,approved.choice,skeleton,approved);
 			if(JSON.stringify(fresh)!==JSON.stringify(approved))throw changed();
-			await readMobileRegistry(current);
 			if((await discoverMobile(current)).some(l=>l.identity?.id===fresh.bindings.id))throw new Error(tr('已有相同身份的知识库','Library ID already exists'));
 			const merged=await applyCloneBindings(current,temp,fresh.bindings);
 			const manifestPath=temp+'/'+identityFile;

@@ -4,7 +4,14 @@ import { tr } from '../i18n.ts';
 export const registryDirectory = '.kb-manager';
 export const registryName = 'libraries.json';
 export const registryPath = registryDirectory + '/' + registryName;
-export const registryIgnoreRule = '/.kb-manager/';
+
+export function registryDataPath(configDir:string) {
+	return configDir + '/plugins/knowledge-base-manager/data.json';
+}
+
+export function registryIgnoreFor(configDir:string) {
+	return '/' + registryDataPath(configDir).replace(/[\\*?[\]]/gu,'\\$&');
+}
 
 export const registryKey = (value:string) => value.normalize('NFC').toLowerCase();
 export function sameOrBelow(candidate:string, root:string) {
@@ -21,10 +28,8 @@ export function compareRegistryPaths(a:string,b:string) {
 	return right.next().done ? 0 : -1;
 }
 
-export function validateRegistryDirectory(configDir:string) {
-	if (sameOrBelow(registryKey(configDir),registryDirectory)) {
-		throw new Error(tr('登记目录与 Vault 配置重叠','The registry folder overlaps the Vault configuration'));
-	}
+export function legacyDirectoryIsConfig(configDir:string) {
+	return sameOrBelow(registryKey(configDir),registryDirectory);
 }
 
 export function validateRegistryPath(relative:string, configDir:string) {

@@ -5,7 +5,7 @@ import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
 import { createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../kb/create.ts';
 import { kepanoSource } from '../kb/template.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
-import { registryPath } from '../registry/paths.ts';
+import { registryDataPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
 import { Dialog, V3Dialog } from './dialog.ts';
@@ -140,7 +140,7 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		showInitialPlan(confirm,git);
 		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
 		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
-		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryPath]);
+		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryDataPath(disk.configDir)]);
 		const registry=await reviewRegistryProtection(plugin,confirm);
 		const filter=await reviewTemplateFilter(plugin.app.vault,confirm,preview.input.source);
 		const protect=async()=>{await filter();await registry();};

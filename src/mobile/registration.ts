@@ -3,11 +3,12 @@ import {identityFile,readManifest,writeIdentity} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import type {Mapping} from '../kb/mapping.ts';
 import type {GitPreferences} from '../preferences.ts';
-import {amendRegistry,parseRegistry,registryDirectory,registryIgnoreRule,registryPath,serializeRegistry,validateRegistryDirectory,validateRegistryPath,withIgnoreRule} from '../registry/paths.ts';
-import {checkSpelling,children,ensureFolder,key,replaceText} from './disk.ts';
+import {amendRegistry,legacyDirectoryIsConfig,registryDirectory,registryIgnoreFor,registryPath,validateRegistryPath,withIgnoreRule} from '../registry/paths.ts';
+import type {PluginDataRegistry} from '../registry/plugin-data.ts';
+import {checkSpelling,children,key,replaceText} from './disk.ts';
 import type {Disk} from './disk.ts';
 
-export interface Catalog {disk:Disk;configDir:string;parents:string[];templates:string[]}
+export interface Catalog {disk:Disk;configDir:string;registry:PluginDataRegistry;parents:string[];templates:string[]}
 export interface Library {
 	location:string;identity?:Identity;mapping?:Mapping;preferences?:Partial<GitPreferences>;manifest?:string;
 	legacy?:boolean;missing?:boolean;problem?:string;duplicate?:boolean;
@@ -29,11 +30,28 @@ export function libraryPath(ctx:Catalog,path:string){
 	return path;
 }
 
+export function mobileLegacyRegistry(disk:Disk,configDir:string){
+	async function read(){
+		if(legacyDirectoryIsConfig(configDir))return null;
+		await checkSpelling(disk,registryDirectory);
+		const directory=await disk.stat(registryDirectory);
+		if(!directory)return null;
+		if(directory.type!=='folder')throw new Error(tr('旧登记位置已被文件占用','A file occupies the legacy registry folder'));
+		await checkSpelling(disk,registryPath);
+		const status=await disk.stat(registryPath);
+		if(!status)return null;
+		if(status.type!=='file')throw new Error(tr('旧登记表位置不是文件','The legacy registry path is not a file'));
+		return disk.read(registryPath);
+	}
+	return {read,async remove(expected:string){
+		if(await read()!==expected)throw new Error(tr('旧登记表已变化，请重新预览','The legacy registry changed. Preview it again.'));
+		await disk.remove(registryPath);
+		try{await disk.rmdir(registryDirectory,false);}catch{/* Preserve nonempty folders and leave inaccessible ones in place. */}
+	}};
+}
+
 export async function readMobileRegistry(ctx:Catalog){
-	validateRegistryDirectory(ctx.configDir);
-	await checkSpelling(ctx.disk,registryPath);
-	const status=await ctx.disk.stat(registryPath);
-	return status?parseRegistry(await ctx.disk.read(registryPath),ctx.configDir):[];
+	return (await ctx.registry.read()).paths;
 }
 
 export async function previewMobileRegistryIgnore(ctx:Catalog){
@@ -42,12 +60,13 @@ export async function previewMobileRegistryIgnore(ctx:Catalog){
 	const path='.gitignore';
 	await checkSpelling(ctx.disk,path);
 	const before=(await ctx.disk.stat(path))?await ctx.disk.read(path):undefined;
-	return {path,before,after:withIgnoreRule(before??null,registryIgnoreRule)};
+	const rule=registryIgnoreFor(ctx.configDir);
+	return {path,before,after:withIgnoreRule(before??null,rule),rule};
 }
 
 type IgnorePreview=Awaited<ReturnType<typeof previewMobileRegistryIgnore>>;
 export function registryIgnoreLines(plan:IgnorePreview){
-	return plan && plan.before!==plan.after?[tr('Vault 根目录 .gitignore · ','Vault root .gitignore · ')+registryIgnoreRule]:[];
+	return plan && plan.before!==plan.after?[tr('Vault 根目录 .gitignore · ','Vault root .gitignore · ')+plan.rule]:[];
 }
 
 export async function applyMobileRegistryIgnore(ctx:Catalog,plan:IgnorePreview,allowApplied=false){
@@ -59,21 +78,7 @@ export async function applyMobileRegistryIgnore(ctx:Catalog,plan:IgnorePreview,a
 
 type RegistryChange=Parameters<typeof amendRegistry>[1];
 export async function updateMobileRegistry(ctx:Catalog,change:RegistryChange):Promise<void>{
-	validateRegistryDirectory(ctx.configDir);
-	const update=(raw:string)=>serializeRegistry(amendRegistry(parseRegistry(raw,ctx.configDir),change,ctx.configDir),ctx.configDir);
-	await checkSpelling(ctx.disk,registryPath);
-	if(await ctx.disk.stat(registryPath)){await ctx.disk.process(registryPath,update);return;}
-	if(!change.add?.length)return;
-	await ensureFolder(ctx.disk,registryDirectory);
-	const temp=registryDirectory+'/.writing-'+crypto.randomUUID();
-	await ctx.disk.write(temp,update('[]'));
-	try{
-		try{await ctx.disk.copy(temp,registryPath);}
-		catch(e){
-			if(!(await ctx.disk.stat(registryPath)))throw e;
-			await ctx.disk.process(registryPath,update);
-		}
-	}finally{await ctx.disk.remove(temp);}
+	await ctx.registry.update(paths=>amendRegistry(paths,change,ctx.configDir));
 }
 
 async function inspect(ctx:Catalog,location:string):Promise<Library>{
@@ -137,6 +142,8 @@ export async function scanMobile(ctx:Catalog,folder:string){
 }
 
 export async function registerMobile(ctx:Catalog,expected:Library[],replace?:string,ignore?:IgnorePreview){
+	await ctx.registry.assertWritable();
+	const snapshot=await ctx.registry.read();
 	if(replace){
 		const previous=(await discoverMobile(ctx)).find(entry=>entry.location===replace);
 		if(!previous?.missing)throw new Error(tr('原登记路径已变化','The previous registration has changed'));
@@ -145,8 +152,8 @@ export async function registerMobile(ctx:Catalog,expected:Library[],replace?:str
 		const current=await inspect(ctx,lib.location);
 		if(!current.manifest || current.manifest!==lib.manifest)throw new Error(tr('清单已变化，请重新预览','Manifest changed. Review it again.'));
 	}
-	await applyMobileRegistryIgnore(ctx,ignore);
-	await updateMobileRegistry(ctx,{add:expected.map(lib=>lib.location),remove:replace?[replace]:undefined});
+	const next=amendRegistry(snapshot.paths,{add:expected.map(lib=>lib.location),remove:replace?[replace]:undefined},ctx.configDir);
+	await ctx.registry.write(snapshot.raw,next,()=>applyMobileRegistryIgnore(ctx,ignore));
 }
 
 export async function assignMobileCopyId(ctx:Catalog,expected:Library,original:string,newId:string){

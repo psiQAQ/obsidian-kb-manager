@@ -149,6 +149,7 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 }
 
 export async function createLibrary(disk: VaultDisk, config: Config, preview: CreatePreview, skeleton: Record<string,string>,beforeRegistration?:()=>Promise<void>) {
+	await disk.registry.assertWritable();
 	const fresh=await describeCreation(disk,config,preview.input,skeleton);
 	if (fresh.signature !== preview.signature) throw new Error(fromEnglish('Template changed. Preview again.','模板已变化，请重新预览。'));
 	const gitConfig=await initialConfig(fresh.input.git);
@@ -166,6 +167,7 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 			throw new Error(tr('首提交内容已变化，请重新预览。','Initial commit contents changed. Preview again.'));
 		if(JSON.stringify(await ancestorWarnings(disk,location))!==JSON.stringify(fresh.warnings))
 			throw new Error(tr('父目录状态已变化，请重新预览。','The parent directory state changed. Preview again.'));
+		await disk.registry.assertWritable();
 		for (let attempt = 0; ; attempt++) {
 			const destination = await disk.path(location);
 			if (await statIfPresent(destination)) throw new Error(fromEnglish('Destination exists: ','目标已存在：') + location);
@@ -237,6 +239,7 @@ async function finishCreation(disk:VaultDisk,config:Config,receipt:CreationRecei
 	await ancestorWarnings(disk,location);
 	if((await discover(disk,config)).some(lib=>lib.identity?.id===manifest.id && lib.location!==location))
 		throw new Error(tr('相同身份的知识库已存在','A library with the same ID already exists'));
+	await disk.registry.assertWritable();
 	let {head}=review;
 	if(head)await verifyInitialRepository(dir,head,review.git);
 	else{
@@ -284,6 +287,7 @@ export async function adopt(disk: VaultDisk, config: Config, preview: Library, c
 	}
 	const target = await disk.path(lib.location+'/'+identityFile);
 	const {raw}=await readManifestFile(target);
+	await disk.registry.assertWritable();
 	await replaceLibraryManifest(disk,lib.location,lib.signature,writeIdentity(raw,manifest));
 	await registerVaultLibrary(disk,config,lib.location);
 	return manifest;

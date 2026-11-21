@@ -5,7 +5,6 @@ import path from 'node:path';
 import { userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
-import { VaultDisk } from '../src/fs/vault.ts';
 import { defaults, discover, scan, newIdentity, readManifest, writeIdentity, writePreferences } from '../src/kb/catalog.ts';
 import { ancestorWarnings, adoptionWarnings, legacyBinding, adopt, createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../src/kb/create.ts';
 import { initialIdentityDefaults } from '../src/git/initial.ts';
@@ -14,6 +13,7 @@ import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { auditLibrary } from '../src/kb/audit.ts';
 import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import { readMapping } from '../src/kb/mapping.ts';
+import { vaultDisk } from './fixtures/vault-disk.mjs';
 
 async function setup(t) {
 	await fs.mkdir('.tmp',{recursive:true});
@@ -31,7 +31,7 @@ async function setup(t) {
 			else process.env[key]=value;
 		}
 	});
-	const disk=new VaultDisk(root,'.settings');
+	const disk=vaultDisk(root,'.settings');
 	const config={...defaults,templates:['样板']};
 	const skeleton={};
 	const assets=path.resolve('assets/templates/ai-workflows/llm-wiki');
@@ -72,7 +72,7 @@ test('built-in creation renders scoped Base, preserves note variables, rejects c
 	assert.deepEqual(run('ls-files','-z').split('\0').filter(Boolean).sort(),p.git.staged);
 	assert.match(execFileSync('git',['-C',root,'check-ignore','-v','kb.toml']).toString(),/\.gitignore:.*:\/kb\.toml/u);
 	assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith('kb-')),['kb-template.json']);
-	assert.equal((await discover(new VaultDisk(disk.root,'.settings'),config))[0].identity.id,lib.identity.id);
+	assert.equal((await discover(vaultDisk(disk.root,disk.configDir),config))[0].identity.id,lib.identity.id);
 });
 test('folder template respects ignored files, preserves binary files, and writes only edited identity fields and origin',async t=>{
 	const {disk,root,config,input,skeleton,global}=await setup(t);

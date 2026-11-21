@@ -29,6 +29,7 @@ import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
+import { showLegacyRegistryMigration } from './ui/manager-registry.ts';
 
 import {packText} from './kb/template-pack.ts';
 
@@ -109,7 +110,7 @@ export default class KnowledgeBaseManager extends Plugin {
 			const stored=this.app.loadLocalStorage(key) as Record<string,unknown>|null;
 			if(JSON.stringify(readPendingLibraryPreferences(stored?.pendingLibraryPreferences,undefined))!==JSON.stringify(pendingLibraryPreferences))
 				throw new Error(tr('无法核验本设备暂存的旧版每库设置','Could not verify the legacy library preferences saved on this device'));
-			await this.saveData({language:this.prefs.language,defaults:this.prefs.defaults});
+			await this.disk.registry.savePreferences({language:this.prefs.language,defaults:this.prefs.defaults});
 		});
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
@@ -128,7 +129,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	async onload(){
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
-		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
+		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir,{load:()=>this.loadData(),save:data=>this.saveData(data)});
 		try { configureGitExecutable(deviceGitPath(this),this.disk.root); }
 		catch (error) { configureGitExecutable('',this.disk.root); new Notice(String(error)); }
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
@@ -155,6 +156,7 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.refreshStatus=attachLibraryStatus(this);
 		startAutomation(this);
 		this.app.workspace.onLayoutReady(()=>{
+			void showLegacyRegistryMigration(this).catch(error=>new Notice(String(error),8000));
 			if(this.app.workspace.getLeavesOfType(managerType).some(leaf=>leaf.getRoot()!==this.app.workspace.rightSplit)){
 				void this.openManager().catch(error=>new Notice(String(error)));
 			}

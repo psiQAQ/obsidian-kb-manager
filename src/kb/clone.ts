@@ -27,6 +27,7 @@ export async function cloneTarget(disk:VaultDisk,config:Config,input:CloneInput)
 }
 
 export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneInput,auth?:Credentials){
+	await disk.registry.assertWritable();
 	const target=await cloneTarget(disk,config,input);
 	const parent=await disk.path(input.parent);
 	await fs.mkdir(parent,{recursive:true});
@@ -53,8 +54,9 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 		if([...files.keys()].some(f=>f.split('/').some(p=>p.toLowerCase()===disk.configDir.toLowerCase())))throw new Error(tr('远端包含 Vault 配置目录','Remote tree contains a vault configuration directory'));
 		const branch=(await gitResult(temporary,['symbolic-ref','--short','HEAD'])).stdout.toString().trim();
 		if(!branch)throw new Error(tr('远端没有默认分支','Remote has no default branch'));
-		return {target,head,branch,files:[...files.keys()],tracked,identity:incoming?.identity,cleanup,publish:async(current:Config,choice?:CloneManifestChoice)=>{
+		return {target,head,branch,files:[...files.keys()],tracked,identity:incoming?.identity,cleanup,publish:async(current:Config,choice?:CloneManifestChoice,beforePublish?:()=>Promise<void>)=>{
 			if(published)throw new Error(tr('已导入','Already imported'));
+			await disk.registry.assertWritable();
 			const fresh=await cloneTarget(disk,current,input);
 			if(JSON.stringify(fresh)!==JSON.stringify(target))throw new Error(tr('目标已变化，请重新预览','Destination changed. Preview again.'));
 			let raw=original;
@@ -87,6 +89,8 @@ export async function downloadLibrary(disk:VaultDisk,config:Config,input:CloneIn
 				await fs.writeFile(file,raw!,{flag:tracked || await statIfPresent(file)?'w':'wx'});
 			}
 			if(identity.schemaVersion===2)await fs.mkdir(join(temporary,'.log'),{recursive:true});
+			await disk.registry.assertWritable();
+			await beforePublish?.();
 			await renameNewDirectory(temporary,await disk.path(target.relative));
 			published=true;
 			try {await registerVaultLibrary(disk,current,target.relative);}
