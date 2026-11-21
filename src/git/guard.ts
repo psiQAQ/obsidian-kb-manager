@@ -48,12 +48,15 @@ export function verifyIndex(index: Buffer, merging:boolean|'resolved'=false): vo
 	if(offset!==index.length-20) throw new Error(fromEnglish('Invalid Git index size','Git 索引大小无效'));
 }
 
-export async function guardGit(dir: string, ownLocks: ReadonlySet<string> = new Set(), historyOnly = false, merging:boolean|'resolved'=false) {
+export type GraphWriteState = 'detached'|'cherry-pick'|'revert'|'rebase'|'merge';
+export async function guardGit(dir: string, ownLocks: ReadonlySet<string> = new Set(), historyOnly = false, merging:boolean|'resolved'=false, graphState?:GraphWriteState) {
 	const gitdir=path.join(dir,'.git');
 	if(!(await statIfPresent(gitdir))?.isDirectory())throw new Error(tr('需要独立的库内 .git 目录','A standalone .git directory is required in this library'));
 	for(const name of ['index.lock','HEAD.lock','MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply','sequencer',
 		'commondir','gitdir','worktrees','objects/info/alternates','config.worktree','shallow','info/attributes']){
 		if(merging===true && name==='MERGE_HEAD')continue;
+		if((graphState==='cherry-pick' && name==='CHERRY_PICK_HEAD') || (graphState==='revert' && name==='REVERT_HEAD') ||
+			(graphState==='rebase' && name==='rebase-merge') || (graphState==='merge' && name==='MERGE_HEAD'))continue;
 		if(!historyOnly && !ownLocks.has(path.join(gitdir,name)) && await statIfPresent(path.join(gitdir,name)))throw new Error(tr('Git 写入受阻：','Git write blocked by: ')+name);
 	}
 	async function checkTree(root: string, metadata: boolean) {
@@ -86,10 +89,11 @@ export async function guardGit(dir: string, ownLocks: ReadonlySet<string> = new 
 		throw new Error(tr('特殊 Git 配置，请用原有 Git 工作流保存版本','Unsupported Git configuration. Use the existing Git workflow to commit.'));
 	}
 	const head=(await fs.readFile(path.join(gitdir,'HEAD'),'utf8')).trim();
-	const branch=head.match(/^ref: refs\/heads\/(.+)$/u)?.[1];
+	const detached=(historyOnly || graphState==='detached' || graphState==='rebase') && /^[a-f0-9]{40}$/u.test(head);
+	const branch=detached?'HEAD':head.match(/^ref: refs\/heads\/(.+)$/u)?.[1];
 	if(!branch || !safeRef('refs/heads/'+branch))throw new Error(tr('不支持的 HEAD 或分支路径','Unsupported HEAD or branch path'));
 	const index=path.join(gitdir,'index');
-	if(!historyOnly && await statIfPresent(index))verifyIndex(await fs.readFile(index),merging);
+	if(!historyOnly && await statIfPresent(index))verifyIndex(await fs.readFile(index),(graphState && graphState!=='detached') || merging);
 	if(merging===true && !/^[0-9a-f]{40}$/u.test((await fs.readFile(path.join(gitdir,'MERGE_HEAD'),'utf8')).trim()))
 		throw new Error(tr('仅支持双亲合并','Only two-parent merges are supported'));
 	return branch;

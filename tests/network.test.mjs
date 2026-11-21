@@ -6,6 +6,9 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {createServer as createTlsServer} from 'node:https';
 import {address,endpoint} from '../src/git/network-http.ts';
+import {advancedPreview,applyAdvanced} from '../src/git/history-advanced.ts';
+import {createGraphTag,fetchGraphBranch,graphRemoteTarget,pushGraphTag} from '../src/git/graph-ref-actions.ts';
+import {deleteGraphRemoteReference,graphPrunePlan,graphRemoteDeletion,pruneGraphRemote} from '../src/git/graph-remote-actions.ts';
 import {initializeRepository} from '../src/git/repository.ts';
 import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,transfer} from '../src/git/network.ts';
 import {blameLine,configureGitExecutable,gitResult,probeGitExecutable,sshRoute} from '../src/git/network-native.ts';
@@ -208,6 +211,63 @@ async function fixture(t,tls=false){
 	await bindRemote(dir,'main','origin',url,'main');
 	return {root,dir,bare,requests,requireAuth:(user,token)=>{expected='Basic '+Buffer.from(user+':'+token).toString('base64');},target:(await remoteState(dir)).target};
 }
+
+test('graph force push previews the server ref and rejects an expired lease',async t=>{
+	const {dir,bare,target}=await fixture(t);
+	await transfer(dir,'push',target);
+	const first=git(dir,'rev-parse','HEAD');
+	await fs.writeFile(path.join(dir,'note.md'),'second\n');git(dir,'add','note.md');git(dir,'commit','-qm','second');
+	const next=git(dir,'rev-parse','HEAD');
+	const plan=await advancedPreview(dir,{action:'force-push',oid:first});
+	await transfer(dir,'push',target);
+	await assert.rejects(applyAdvanced(dir,plan));assert.equal(git(bare,'rev-parse','main'),next);
+	const fresh=await advancedPreview(dir,{action:'force-push',oid:first});
+	await applyAdvanced(dir,fresh);assert.equal(git(bare,'rev-parse','main'),first);
+});
+
+test('graph transfer distinguishes same-named branch and tag, and rejects a stale deletion',async t=>{
+	const {dir,bare,target}=await fixture(t);
+	await transfer(dir,'push',target);
+	const first=git(dir,'rev-parse','HEAD'),branch='refs/heads/shared',tagRef='refs/tags/shared';
+	git(bare,'update-ref',branch,first);
+	const branchTarget=await graphRemoteTarget(dir,'origin','shared');
+	await fetchGraphBranch(dir,branchTarget);
+	assert.equal(git(dir,'rev-parse','refs/remotes/origin/shared'),first);
+	const identity={name:'Tester',email:'test@example.invalid'};
+	await createGraphTag(dir,'shared',first,'Reviewed version',identity);
+	const tag={ref:tagRef,oid:first,tagOid:git(dir,'rev-parse',tagRef)};
+	await pushGraphTag(dir,tag,branchTarget);
+	assert.equal(git(bare,'rev-parse',tagRef),tag.tagOid);
+	const stale=await graphRemoteDeletion(dir,branchTarget,branch,first);
+	await fs.writeFile(path.join(dir,'note.md'),'two\n');git(dir,'add','note.md');git(dir,'commit','-qm','second');
+	await transfer(dir,'push',target);
+	const second=git(dir,'rev-parse','HEAD');git(bare,'update-ref',branch,second);
+	await assert.rejects(deleteGraphRemoteReference(dir,stale),/changed|变化/u);
+	assert.equal(git(bare,'rev-parse',branch),second);
+	await deleteGraphRemoteReference(dir,await graphRemoteDeletion(dir,branchTarget,branch,second));
+	assert.equal(git(bare,'for-each-ref','--format=%(refname)',branch),'');
+	assert.equal(git(bare,'rev-parse',tagRef),tag.tagOid);
+	await deleteGraphRemoteReference(dir,await graphRemoteDeletion(dir,branchTarget,tagRef,tag.tagOid));
+	assert.equal(git(bare,'for-each-ref','--format=%(refname)',tagRef),'');
+	assert.equal(git(dir,'rev-parse',tagRef),tag.tagOid);
+});
+
+test('graph prune removes only reviewed absent tracking refs',async t=>{
+	const {dir,bare,target}=await fixture(t);
+	await transfer(dir,'push',target);
+	const head=git(dir,'rev-parse','HEAD');
+	git(dir,'symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/main');
+	for(const branch of ['gone','revived'])git(dir,'update-ref','refs/remotes/origin/'+branch,head);
+	const remote=await graphRemoteTarget(dir,'origin','main'),plan=await graphPrunePlan(dir,remote);
+	assert.deepEqual(plan.refs.map(item=>item.ref),['refs/remotes/origin/gone','refs/remotes/origin/revived']);
+	git(bare,'update-ref','refs/heads/revived',head);
+	await assert.rejects(pruneGraphRemote(dir,plan),/changed|变化/u);
+	assert.equal(git(dir,'rev-parse','refs/remotes/origin/gone'),head);
+	await pruneGraphRemote(dir,await graphPrunePlan(dir,remote));
+	assert.equal(git(dir,'for-each-ref','--format=%(refname)','refs/remotes/origin/gone'),'');
+	assert.equal(git(dir,'rev-parse','refs/remotes/origin/revived'),head);
+	assert.equal(git(dir,'symbolic-ref','refs/remotes/origin/HEAD'),'refs/remotes/origin/main');
+});
 
 test('System Git operations address only the selected nested repository',async t=>{
 	const {root,dir,bare,target}=await fixture(t);
