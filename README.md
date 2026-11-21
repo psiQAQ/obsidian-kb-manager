@@ -1,5 +1,11 @@
 # Knowledge Base Manager
 
+Manage several projects in one Obsidian vault while keeping a separate Git history for each. Create a knowledge base from one of 18 templates or register an existing folder. From the sidebar you can check links and attachments, review changes, and commit or sync just the selected library.
+
+**Quick start (desktop, Obsidian 1.15.1 or later).** Enable Knowledge Base Manager in **Settings → Community plugins**. Run **Open knowledge base manager** from the command palette, select **New**, choose a template, and preview the files before creating the library. You can leave the Git remote blank to work locally. To check a library, open its **… → Check library** menu.
+
+**Files and permissions.** The plugin uses the local filesystem to manage library files and Git repositories. It uses vault-wide file paths to find library manifests and identify ambiguous links. The copy buttons write diagnostic reports to the clipboard. Git sync connects to the remote you configure. Template-specific checks run in a local Node.js process with your account’s permissions. Review a personal check script before trusting its fingerprint.
+
 > **Obsidian 桌面端多知识库管理插件（`knowledge-base-manager`）**：在同一个 Obsidian Vault 中，用「一库一 `kb.toml` + 一库一 Git」的方式创建、登记、模板化、体检并同步多个彼此独立的知识库。
 
 本插件**不绑定任何特定 Vault 配置仓库**：无论你是全新建立一个空白 Obsidian Vault，还是在已有 Vault 中整理多个专题库，都可以独立安装并使用本插件。
