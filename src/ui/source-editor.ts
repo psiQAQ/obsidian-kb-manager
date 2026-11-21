@@ -90,7 +90,7 @@ class Sign extends GutterMarker {
 	private symbol:string;
 	constructor(symbol:string){super();this.symbol=symbol;}
 	eq(other:Sign){return this.symbol===other.symbol;}
-	toDOM(view:EditorView){const el=view.dom.ownerDocument.createElement('span');el.textContent=this.symbol;return el;}
+	toDOM(view:EditorView){return view.dom.doc.createDocumentFragment().createSpan({text:this.symbol});}
 }
 const marks=StateEffect.define<RangeSet<GutterMarker>>();
 const state=StateField.define<RangeSet<GutterMarker>>({

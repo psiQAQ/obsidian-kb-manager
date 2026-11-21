@@ -61,7 +61,7 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 			});modal.open();
 		})));
 	}
-	if(!plan.conflicts.length)new Setting(el).addButton(b=>b.setButtonText(t('预览合并提交','Preview merge commit')).onClick(run(async()=>{
+	if(!plan.conflicts.length)new Setting(el).setClass('kb-controls-only').addButton(b=>b.setButtonText(t('预览合并提交','Preview merge commit')).onClick(run(async()=>{
 		const fresh=await inspect();
 		const modal=new Dialog(plugin.app,t('完成本库合并','Finish library merge'));
 		modal.lines([lib.location,fresh.head+' + '+fresh.other,...fresh.stagedPaths]);

@@ -15,7 +15,7 @@ export class Dialog extends Modal {
 		new Setting(this.contentEl).setName(label).addDropdown(input=>input.addOptions(options).onChange(change));
 	}
 	action(label: string, action: ()=>Promise<void>) {
-		const row=new Setting(this.contentEl);
+		const row=new Setting(this.contentEl).setClass('kb-controls-only');
 		const errorEl=row.settingEl.createDiv({cls:'kb-action-error',attr:{role:'alert'}});
 		errorEl.hidden=true;
 		return row.addButton(button=>button.setButtonText(label).onClick(async ()=>{
@@ -37,4 +37,12 @@ export class Dialog extends Modal {
 		for(const [label,value] of rows){list.createEl('dt',{text:label});list.createEl('dd',{text:value});}
 	}
 	onClose() { this.contentEl.empty(); }
+}
+
+export class V3Dialog extends Dialog {
+	constructor(app: App, title: string) {
+		super(app,title);
+		this.modalEl.addClass('kb-v3-dialog');
+		this.containerEl.addClass('kb-v3-modal-container');
+	}
 }

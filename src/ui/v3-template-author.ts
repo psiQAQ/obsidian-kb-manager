@@ -8,7 +8,7 @@ import { builtinPacks } from '../kb/template-pack.ts';
 import { declaration, folderTemplate } from '../kb/template.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { createWizard } from './create.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog } from './dialog.ts';
 import { purposeLabels } from './v3-template-catalog.ts';
 
 const exampleCheck=`export default async function check({notes}) {
@@ -34,8 +34,7 @@ async function targetFor(plugin:KnowledgeBaseManager,source:string) {
 }
 
 export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(source:string)=>void) {
-	const dialog=new Dialog(plugin.app,tr('制作模板','Make a template'));
-	dialog.modalEl.addClass('kb-v3-dialog');
+	const dialog=new V3Dialog(plugin.app,tr('制作模板','Make a template'));
 	const labels=purposeLabels();
 	const draft={source:'',id:'',name:'',description:'',purpose:'starter',example:false};
 	dialog.text(tr('新目录（Vault 相对路径）','New folder (vault-relative)'),'',v=>{draft.source=v;},{example:'my-template'});
@@ -63,8 +62,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 			'Templates/Note.md':'# {{title}}\n\n'+tr('创建日期','Created')+' · {{date}}\n',
 			...(example?{'checks/home-section.mjs':exampleCheck}:{}),
 		};
-		const preview=new Dialog(plugin.app,tr('预览模板文件','Preview template files'));
-		preview.modalEl.addClass('kb-v3-dialog');
+		const preview=new V3Dialog(plugin.app,tr('预览模板文件','Preview template files'));
 		preview.facts([[tr('模板目录','Template folder'),source],[tr('模板 ID','Template ID'),id],[tr('用途','Use case'),labels[purpose as keyof typeof labels]]]);
 		preview.lines(Object.keys(files));
 		if(example)preview.contentEl.createEl('p',{text:tr('运行示例检查时须单独信任其代码。','Trust the sample check separately before running it.')});

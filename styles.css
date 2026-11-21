@@ -80,7 +80,7 @@
 @container (max-width: 29rem) {
 	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-info { flex: 1 0 100%; margin-inline-end: 0; }
 	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-control { justify-content: flex-start; }
-	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .setting-item-info:not(:has(.setting-item-name:not(:empty), .setting-item-description:not(:empty))) { display: none; }
+	:is(.kb-dialog, .kb-settings, .kb-manager-sidebar) .kb-controls-only > .setting-item-info { display: none; }
 }
 @container (max-width: 20rem) {
 	.kb-preview-facts { grid-template-columns: minmax(0, 1fr); }
@@ -91,10 +91,10 @@
 .kb-line-counts-colored .kb-lines-deleted { color: var(--text-error); }
 
 /* Obsidian Git also decorates conflict markers in nested repositories. */
-.cm-line:has(.kb-conflict-controls) .git-conflict-actions-widget { display: none; }
+.cm-line.kb-conflict-heading .git-conflict-actions-widget { display: none; }
 
 .kb-v3-dialog { width: min(43rem, calc(100% - 2rem)); }
-.modal-container:has(> .kb-v3-dialog):has(~ .modal-container > .kb-v3-dialog) { visibility: hidden; }
+.kb-v3-modal-container:nth-last-child(n + 2 of .kb-v3-modal-container) { visibility: hidden; }
 .kb-v3-dialog h3 { margin: var(--size-4-4) 0 var(--size-4-2); }
 .kb-v3-template-list {
 	display: grid;
@@ -187,7 +187,7 @@
 .kb-v3-check-choice {
 	display: grid;
 	grid-template-columns: auto 1fr;
-	column-gap: var(--size-4-2);
+	gap: 0 var(--size-4-2);
 	align-items: baseline;
 	padding: var(--size-4-1) 0;
 }
@@ -201,7 +201,7 @@
 	margin-block-start: var(--size-4-4);
 }
 .kb-v3-check-actions .setting-item { border: 0; padding: 0; }
-.kb-v3-check-actions .setting-item:has(button[hidden]),
+.kb-v3-check-actions .setting-item[hidden],
 .kb-v3-check-actions .setting-item-info { display: none; }
 .kb-v3-dialog .kb-v3-code { max-block-size: 30vh; }
 

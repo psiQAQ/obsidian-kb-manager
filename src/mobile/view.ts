@@ -29,7 +29,7 @@ export class MobileView extends ItemView {
 	}
 	async draw(){
 		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();el.addClass('kb-manager-sidebar');
-		const toolbar=new Setting(el);
+		const toolbar=new Setting(el).setClass('kb-controls-only');
 		this.button(toolbar,tr('刷新','Refresh'),()=>this.draw());
 		this.button(toolbar,tr('登记','Register'),()=>manifestForm(p));
 		this.button(toolbar,tr('扫描','Scan'),()=>scanForm(p));

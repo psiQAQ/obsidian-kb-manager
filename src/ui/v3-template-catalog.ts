@@ -7,7 +7,7 @@ import { declaration } from '../kb/template.ts';
 import { builtinPacks, builtinSource } from '../kb/template-pack.ts';
 import type { PackDescriptor } from '../kb/template-pack.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { Dialog } from './dialog.ts';
+import { V3Dialog } from './dialog.ts';
 
 export function purposeLabels() {
 	return {
@@ -84,8 +84,7 @@ export function showTemplateDetails(parent:HTMLElement,template:TemplateChoice) 
 
 export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:TemplateChoice)=>Promise<void>,initial?:TemplateChoice) {
 	const templates=[...builtinTemplates(),...await Promise.all(plugin.config.templates.map(source=>personalTemplate(plugin,source)))];
-	const dialog=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
-	dialog.modalEl.addClass('kb-v3-dialog');
+	const dialog=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	const labels:Record<string,string>=purposeLabels();
 	const purposes=new Set(templates.flatMap(template=>[template.purpose,...(template.purposes ?? [])]).filter(Boolean));
 	const order=[...new Set([...Object.keys(labels).filter(id=>purposes.has(id)),...purposes])];

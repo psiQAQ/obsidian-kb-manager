@@ -15,8 +15,7 @@ class CreditMarker extends GutterMarker {
 		return this.label === other.label && this.title === other.title && this.background === other.background && this.color === other.color;
 	}
 	toDOM(view: EditorView) {
-		const el = view.dom.ownerDocument.createElement('span');
-		el.textContent = this.label || ' '; el.title = this.title;
+		const el = view.dom.doc.createDocumentFragment().createSpan({text:this.label || ' ',title:this.title});
 		el.style.backgroundColor = this.background; el.style.color = this.color;
 		return el;
 	}

@@ -36,8 +36,7 @@ class ConflictButtons extends WidgetType {
 	constructor(private plugin:KnowledgeBaseManager,private lib:Library,private path:string,private block:ConflictBlock,private raw:string){super();}
 	toDOM(view:EditorView){
 		const {plugin,lib,path,block}=this;
-		const el=view.dom.ownerDocument.createElement('span');
-		el.addClass('kb-conflict-controls');
+		const el=view.dom.doc.createDocumentFragment().createSpan({cls:'kb-conflict-controls'});
 		const choices:ConflictChoice[]=block.base===undefined?['ours','theirs','both']:['ours','base','theirs','both'];
 		for(const choice of choices){
 			const label=plugin.t(...labels[choice]);
@@ -121,7 +120,11 @@ export function registerConflictEditor(plugin:KnowledgeBaseManager,updates:Set<(
 					}
 					const lib=this.cached.lib;
 					if(lib && enabled(plugin,lib,view)){
-						next=Decoration.set(blocks.map(block=>Decoration.widget({side:1,widget:new ConflictButtons(plugin,lib,path,block,text.slice(block.from,block.to))}).range(block.headingEnd)));
+					const heading=Decoration.line({class:'kb-conflict-heading'});
+					next=Decoration.set(blocks.flatMap(block=>[
+						heading.range(doc.lineAt(block.headingEnd).from),
+						Decoration.widget({side:1,widget:new ConflictButtons(plugin,lib,path,block,text.slice(block.from,block.to))}).range(block.headingEnd),
+					]),true);
 					}
 				}
 			}

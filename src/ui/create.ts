@@ -8,7 +8,7 @@ import { readVaultRegistry } from '../registry/desktop.ts';
 import { registryPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog } from './dialog.ts';
 import { reviewTemplateFilter } from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
 import { choiceForSource, pickTemplate, showTemplateDetails } from './v3-template-catalog.ts';
@@ -69,8 +69,7 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 	let origin='';
 	let template=initial;
 	const input={parent:config.parents[0]??'',name:'',displayName:'',description:'',source:template.source};
-	const form=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
-	form.modalEl.addClass('kb-v3-dialog');
+	const form=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	const summary=form.contentEl.createEl('details',{cls:'kb-v3-detail'});
 	const chosen=summary.createEl('summary',{text:template.name});
 	const facts=summary.createDiv();
@@ -134,8 +133,7 @@ async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,
 		const skeleton=input.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
 		const preview=await previewCreate(disk,plugin.config,{...input,displayName:input.displayName||input.name,git:{defaults,values:{...values},origin}},skeleton);
 		const {git}=preview;
-		const confirm=new Dialog(plugin.app,tr('确认创建','Confirm creation'));
-		confirm.modalEl.addClass('kb-v3-dialog');
+		const confirm=new V3Dialog(plugin.app,tr('确认创建','Confirm creation'));
 		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version]]);
 		showTemplateDetails(confirm.contentEl,template);
 		if(preview.warnings.length)confirm.lines(preview.warnings);

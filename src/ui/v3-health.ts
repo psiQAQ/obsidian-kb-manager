@@ -9,7 +9,7 @@ import { officialCheckDigests } from '../kb/template-pack.ts';
 import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog } from './dialog.ts';
 
 type Options = Parameters<typeof runDiagnostics>[0];
 type Report = Awaited<ReturnType<typeof runDiagnostics>>;
@@ -170,8 +170,7 @@ async function reviewScript(plugin:KnowledgeBaseManager,lib:Library,check:Specia
 	const bytes=await readFile(file);
 	const expected=digest(bytes);
 	if(expected!==check.digest)throw new Error(tr('脚本已变更，请重新检查。','The script changed. Review it again.'));
-	const dialog=new Dialog(plugin.app,tr('审查专项脚本','Review check script'));
-	dialog.modalEl.addClass('kb-v3-dialog');
+	const dialog=new V3Dialog(plugin.app,tr('审查专项脚本','Review check script'));
 	dialog.facts([[tr('脚本','Script'),lib.location+'/'+check.path],['SHA-256',expected]]);
 	dialog.contentEl.createEl('p',{text:tr('信任仅适用于上面摘要对应的脚本。脚本以本机账号权限运行，可以读写文件和访问网络。','Trust applies to this script digest. The script runs with your account permissions and can access files and the network.')});
 	dialog.contentEl.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:new TextDecoder('utf-8',{fatal:true}).decode(bytes)});
@@ -185,8 +184,7 @@ async function reviewScript(plugin:KnowledgeBaseManager,lib:Library,check:Specia
 }
 
 function showHistory(plugin:KnowledgeBaseManager,root:string,onReport:(report:Report)=>void) {
-	const dialog=new Dialog(plugin.app,tr('检验历史','Check history'));
-	dialog.modalEl.addClass('kb-v3-dialog');
+	const dialog=new V3Dialog(plugin.app,tr('检验历史','Check history'));
 	return listDiagnosticHistory(root).then(history=>{
 		if(!history.length)dialog.contentEl.createEl('p',{text:tr('尚无检验日志。','No check logs yet.')});
 		for(const item of history){
@@ -216,8 +214,8 @@ export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
 
 export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const root=await plugin.disk.path(lib.location);
-	const dialog=new Dialog(plugin.app,tr('检验知识库','Check library'));
-	dialog.modalEl.addClass('kb-v3-dialog','kb-v3-health');
+	const dialog=new V3Dialog(plugin.app,tr('检验知识库','Check library'));
+	dialog.modalEl.addClass('kb-v3-health');
 	dialog.facts([[tr('范围','Scope'),lib.location],[tr('模板','Template'),lib.identity?`${lib.identity.template.id} · ${lib.identity.template.version}`:tr('未知','Unknown')]]);
 	const output=dialog.contentEl.createDiv({cls:'kb-v3-check-output'});
 	const choices=dialog.contentEl.createDiv();
@@ -240,9 +238,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		runSelected.setDisabled(running||!selected.size);
 		for(const button of [...controls,runAll,history,exportButton,choose])button.setDisabled(running);
 		choices.querySelectorAll('input').forEach(input=>{input.disabled=running;});
-		choose.buttonEl.hidden=!choices.hidden;
-		runSelected.buttonEl.hidden=choices.hidden;
-		runAll.buttonEl.hidden=choices.hidden;
+		choose.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',!choices.hidden);
+		runSelected.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
+		runAll.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
 	}
 	async function renderChoices(){
 		choices.empty();controls.length=0;
