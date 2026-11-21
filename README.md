@@ -50,7 +50,7 @@ Manage several projects in one Obsidian vault while keeping a separate Git histo
 
 ### 2. 安装方式
 
-> 当前版本 `3.0.3` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
+> 当前版本 `3.0.4` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
 
 #### 方式 A：从 GitHub Releases 离线安装（推荐）
 1. 从 [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases) 下载对应版本的 `knowledge-base-manager.zip`（或单独下载 `main.js`、`manifest.json`、`styles.css`）。
@@ -267,7 +267,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 #### CI 与版本发布
 - **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
-- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.3`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.4`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
 
 ---
 
