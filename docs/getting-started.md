@@ -2,10 +2,10 @@
 
 桌面版需要 Obsidian 1.15.1 或更高版本和系统 Git。模板已随插件打包。要运行模板专项脚本，还需要能从系统 PATH 找到的 Node.js。安装与建库均可离线完成。
 
-## 安装离线包
+## 手动安装插件
 
-1. 将 `knowledge-base-manager.zip` 解压到目标 Vault 的插件目录。默认位置是 `.obsidian/plugins/`；若自定义了 Vault 配置目录，使用相应的 `plugins/`。
-2. 确认文件层级是 `plugins/knowledge-base-manager/manifest.json`，同层还有 `main.js`、`styles.css`、离线检验工具 `kb-check.cjs` 和许可文件。
+1. 在同一版本的 **Assets** 中下载 `main.js`、`manifest.json` 和 `styles.css`。[GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases/latest)
+2. 将三个文件放入目标 Vault 的 `.obsidian/plugins/knowledge-base-manager/`。若自定义了 Vault 配置目录，使用该目录下的 `plugins/knowledge-base-manager/`。
 3. 重新加载 Obsidian，在 **设置 → 第三方插件** 中启用 **Knowledge Base Manager**。打开左侧书架图标，或运行命令 **打开知识库管理器**。
 
 ## 用「光学研究」试建一个库

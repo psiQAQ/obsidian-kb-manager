@@ -14,11 +14,11 @@
 
 模板专项通过本机 Node.js 运行，脚本拥有当前系统账号的文件和网络权限。内置脚本按发行包中的摘要识别；个人脚本通过检查项旁的 **审查脚本** 查看源码和 SHA-256，再选择 **信任此版本**。脚本内容改变后需重新核对。请只运行你信任的脚本。
 
-通用检验读取清单、笔记、附件引用及宿主提供的元数据，保留笔记内容、Git 暂存区和提交历史。新建实例会在默认由 Git 忽略的 `.log/` 保存每次检验的 JSON 报告；受管路径的修复在独立的预览中确认。模板专项须遵循只读约定。离线 agent 可调用 ZIP 中的 `kb-check.cjs` 并读取报告的 `status`、各项 `coverage` 和 `diagnostics`。[专项脚本协议](template-authoring.md)
+通用检验读取清单、笔记、附件引用及宿主提供的元数据，保留笔记内容、Git 暂存区和提交历史。新建实例会在默认由 Git 忽略的 `.log/` 保存每次检验的 JSON 报告；受管路径的修复在独立的预览中确认。模板专项须遵循只读约定。离线 agent 可调用 `kb-check.cjs` 并读取报告的 `status`、各项 `coverage` 和 `diagnostics`。[专项脚本协议](template-authoring.md)
 
 ## 离线运行与读取报告
 
-在离线包的插件目录中打开终端，将下面的路径换成实际的 Vault 和知识库路径。`--list` 列出本库声明的专项，`--checks all` 运行全部适用项，可移植性可用 `--checks portability` 单独运行。
+在知识库的 **… → 检验 → 导出离线检验工具** 中导出 `kb-check.cjs`。从本地构建的 ZIP 安装时，也可直接使用包内的同名文件。在工具所在目录打开终端，将下面的路径换成实际的 Vault 和知识库路径。`--list` 列出本库声明的专项，`--checks all` 运行全部适用项，可移植性可用 `--checks portability` 单独运行。
 
 ```sh
 node kb-check.cjs --library "/path/to/Vault/knowledge-base/光学研究" --vault-root "/path/to/Vault" --list

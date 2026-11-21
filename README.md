@@ -2,6 +2,8 @@
 
 Manage several projects in one Obsidian vault while keeping a separate Git history for each. Create a knowledge base from one of 18 templates or register an existing folder. From the sidebar you can check links and attachments, review changes, and commit or sync just the selected library.
 
+**Manual installation.** Download `main.js`, `manifest.json`, and `styles.css` from the same release. Place them together in `plugins/knowledge-base-manager/` inside your vault’s configuration folder (normally `.obsidian/`), then reload Obsidian. [Latest release](https://github.com/psiQAQ/obsidian-kb-manager/releases/latest)
+
 **Quick start (desktop, Obsidian 1.15.1 or later).** Enable Knowledge Base Manager in **Settings → Community plugins**. Run **Open knowledge base manager** from the command palette, select **New**, choose a template, and preview the files before creating the library. You can leave the Git remote blank to work locally. To check a library, open its **… → Check library** menu.
 
 **Files and permissions.** The plugin uses the local filesystem to manage library files and Git repositories. It uses vault-wide file paths to find library manifests and identify ambiguous links. The copy buttons write diagnostic reports to the clipboard. Git sync connects to the remote you configure. Template-specific checks run in a local Node.js process with your account’s permissions. Review a personal check script before trusting its fingerprint.
@@ -52,17 +54,19 @@ Manage several projects in one Obsidian vault while keeping a separate Git histo
 
 > 当前版本 `3.0.4` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
 
-#### 方式 A：从 GitHub Releases 离线安装（推荐）
-1. 从 [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases) 下载对应版本的 `knowledge-base-manager.zip`（或单独下载 `main.js`、`manifest.json`、`styles.css`）。
-2. 将解压后的插件文件夹放到你的 Vault 插件目录：
+#### 从 GitHub Releases 手动安装
+
+1. 打开目标版本的 **Assets**，分别下载 `main.js`、`manifest.json` 和 `styles.css`。[最新 Release](https://github.com/psiQAQ/obsidian-kb-manager/releases/latest)
+2. 在 Vault 的插件目录中创建 `knowledge-base-manager` 文件夹，把三个文件直接放入其中。使用自定义 Vault 配置目录时，将下方的 `.obsidian` 替换为实际目录名。
    ```text
    <你的 Vault>/.obsidian/plugins/knowledge-base-manager/
    ├── main.js
    ├── manifest.json
    └── styles.css
    ```
-   *(ZIP 另含 `kb-check.cjs`、`LICENSE` 和 `THIRD_PARTY_NOTICES.md`。仅安装三个插件文件时，可从检验界面导出同版本 CLI。使用自定义 Vault 配置目录时，将插件装入该目录下的 `plugins/`。)*
 3. 重启或重载 Obsidian，进入 **设置 → 第三方插件** 启用 **Knowledge Base Manager**。
+
+如需制作离线安装包，可从源码构建并运行打包脚本，得到 `dist/knowledge-base-manager.zip`。[本地打包步骤](docs/development.md)
 
 ---
 
@@ -111,7 +115,7 @@ Manage several projects in one Obsidian vault while keeping a separate Git histo
 
 在知识库行的 **… → 检验** 中，插件会运行结构/链接检查以及该库模板声明的专项检查（`checks/*.mjs`）：
 - **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，选择 **审查脚本**，核对源码与摘要后点 **信任此版本**。脚本在本机以当前账号权限运行，修改后需重新核对。
-- **离线 CLI**：在已安装 Node.js 的环境或配合 AI Agent 时，可直接运行离线包中的 `kb-check.cjs`（输出单行 UTF-8 JSON，并在库内 `.log/` 留存检查历史）：
+- **离线 CLI**：在 **… → 检验 → 导出离线检验工具** 中导出 `kb-check.cjs`，然后在导出文件所在目录用 Node.js 运行以下命令。工具输出单行 UTF-8 JSON，并在库内 `.log/` 留存检查历史。
   ```bash
   node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --list
   node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --checks all
@@ -267,7 +271,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 #### CI 与版本发布
 - **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
-- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.4`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.4`）后，发布工作流会构建插件、生成构建证明并创建草稿 Release。上传的附件为 `main.js`、`manifest.json` 和 `styles.css`。
 
 ---
 
