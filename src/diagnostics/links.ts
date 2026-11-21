@@ -62,13 +62,14 @@ export function linkCandidateIndex(paths: () => Iterable<string>) {
 		const target = candidateKey(link);
 		if (!target) return [];
 		if (!byName) {
-			byName = new Map();
+			const index = new Map<string, string[]>();
 			for (const file of paths()) {
 				const key = path.basename(pathKey(file));
-				const matches = byName.get(key) ?? [];
+				const matches = index.get(key) ?? [];
 				matches.push(file);
-				byName.set(key, matches);
+				index.set(key, matches);
 			}
+			byName = index;
 		}
 		return (byName.get(path.basename(target)) ?? []).filter(file => matchesPath(pathKey(file), target));
 	};
@@ -143,14 +144,28 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		const anchor = fragment ? /\.base$/iu.test(candidate) ? await baseAnchor(targetPath, fragment) : staticAnchor(candidate, fragment) : undefined;
 		return {status: 'resolved', path:targetPath, anchor};
 	}
-	const localCandidates = linkCandidateIndex(() => Array.from(files, vaultPath));
-	async function candidates(link: LinkRequest) {
+	const localCandidates = linkCandidateIndex(function* () {for (const file of files) yield vaultPath(file);});
+	const unavailableIndex = tr('无法读取 Obsidian 的同名候选。','Could not read same-name candidates from Obsidian.');
+	async function candidates(check: DiagnosticCheckResult, link: LinkRequest, found: LinkResolution) {
 		const target = candidateKey(link);
 		if (!target) return [];
-		let candidates = localCandidates(link);
-		try {if (options.linkCandidates) candidates = [...new Set([...candidates, ...await options.linkCandidates(link)])];}
-		catch {/* A missing host index does not change the actual resolution. */}
-		return candidates.filter(candidate => relativePath(candidate) && matchesPath(pathKey(candidate), target)).sort().slice(0, 20);
+		const candidates = new Set(localCandidates(link));
+		if (found.status === 'resolved' && found.path) candidates.add(found.path);
+		if (!check.reason?.includes(unavailableIndex)) {
+			try {
+				const host = await options.linkCandidates?.(link) ?? [];
+				if ('paths' in host) {
+					if (host.missingLibraries.length && addReason(check, tr('已跳过不存在的登记目录','Skipped missing registered folders') + ' · ' + host.missingLibraries.join(', ')))
+						check.coverage.skipped += host.missingLibraries.length;
+					if (host.unavailableLibraries.length && addReason(check, tr('无法从 Obsidian 索引核实登记目录的候选','Could not verify candidates for registered folders in Obsidian’s index') + ' · ' + host.unavailableLibraries.join(', ')))
+						check.coverage.unknown += host.unavailableLibraries.length;
+				}
+				for (const path of 'paths' in host ? host.paths : host) candidates.add(path);
+			} catch {
+				if (addReason(check, unavailableIndex)) check.coverage.unknown++;
+			}
+		}
+		return [...candidates].filter(candidate => relativePath(candidate) && matchesPath(pathKey(candidate), target)).sort().slice(0, 20);
 	}
 	const registered = options.registeredPaths?.filter(other => relativePath(other) && other !== location).sort((a,b) => b.length - a.length);
 	function outsideTarget(found: LinkResolution) {
@@ -162,7 +177,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 	async function inspectPortability(check: DiagnosticCheckResult, position: Pick<Diagnostic,'file'|'line'>,
 		link: LinkRequest, found: LinkResolution, details?: string) {
 		check.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
-		const matches = await candidates(link);
+		const matches = await candidates(check, link, found);
 		const matching = matches.length > 1 && `${tr('同名候选','Same-name candidates')} ${matches.join(tr('、',', '))}`;
 		const cross = outsideTarget(found);
 		if (cross) {

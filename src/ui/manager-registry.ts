@@ -1,4 +1,4 @@
-import { FuzzySuggestModal, Notice, Setting, TFile, TFolder } from 'obsidian';
+import { Setting } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { identityFile } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
@@ -9,20 +9,10 @@ import type { ImportMode } from '../registry/import.ts';
 import { amendRegistry, parseRegistry, registryIgnoreRule, registryPath } from '../registry/paths.ts';
 import { Dialog } from './dialog.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
+import { registryPathField } from './registry-path-field.ts';
 import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
 import { gitResult } from '../git/network-native.ts';
-
-function choose<T>(plugin:KnowledgeBaseManager, title:string, items:T[], label:(v:T)=>string, run:(v:T)=>Promise<void>) {
-	class Picker extends FuzzySuggestModal<T> {
-		getItems(){return items;}
-		getItemText(value:T){return label(value);}
-		onChooseItem(value:T){void run(value).catch(error=>new Notice(String(error),8000));}
-	}
-	const picker = new Picker(plugin.app);
-	picker.setPlaceholder(title);
-	picker.open();
-}
 
 function descriptions(plugin:KnowledgeBaseManager, lib:Library) {
 	const {t} = plugin;
@@ -36,15 +26,17 @@ function descriptions(plugin:KnowledgeBaseManager, lib:Library) {
 }
 
 function pickManifest(plugin:KnowledgeBaseManager, run:(location:string)=>Promise<void>) {
-	const items = plugin.app.vault.getFiles().filter(f=>f.name === identityFile && f.parent && f.parent.path !== '/');
-	if (!items.length) {
-		new Notice(plugin.t('当前 Vault 中没有可选择的 kb.toml','There is no kb.toml to select in this Vault'));
-		return;
-	}
-	choose(plugin,plugin.t('选择知识库的 kb.toml','Select the library kb.toml'),items,f=>f.path,async f=>{
-		if (!(plugin.app.vault.getAbstractFileByPath(f.path) instanceof TFile) || !f.parent) throw new Error(plugin.t('文件已变化，请重新选择','File changed. Select it again.'));
-		await run(f.parent.path);
+	const {app,t} = plugin;
+	const dialog = new Dialog(app,t('选择知识库的 kb.toml','Select the library kb.toml'));
+	const getPath = registryPathField(dialog,app,'manifest');
+	dialog.action(t('预览','Preview'),async()=>{
+		const file = app.vault.getFileByPath(getPath());
+		if (file?.name !== identityFile || !file.parent || file.parent.isRoot())
+			throw new Error(t('请选择知识库根目录中的 kb.toml','Select kb.toml at the library root'));
+		dialog.close();
+		await run(file.parent.path);
 	});
+	dialog.open();
 }
 
 export async function showImportPreview(plugin:KnowledgeBaseManager, location:string, missing?:{location:string;id?:string}) {
@@ -193,9 +185,19 @@ export function manageRegistry(plugin:KnowledgeBaseManager) {
 	});
 	dialog.action(t('选择目录并扫描','Choose a folder to scan'),()=>{
 		dialog.close();
-		const folders = plugin.app.vault.getAllLoadedFiles().filter(f=>f instanceof TFolder).map(f=>f.path);
-		choose(plugin,t('选择需要扫描的目录','Choose the folder to scan'),['',...folders.filter(p=>p && p!=='/')],
-			path=>path || t('Vault 根目录','Vault root'),path=>showScanPreview(plugin,path));
+		const scan = new Dialog(plugin.app,t('选择需要扫描的目录','Choose the folder to scan'));
+		const getFolder = registryPathField(scan,plugin.app,'folder');
+		scan.action(t('扫描所选目录','Scan selected folder'),async()=>{
+			const folder = getFolder();
+			if (!folder) throw new Error(t('请选择目录','Select a folder'));
+			await showScanPreview(plugin,folder);
+			scan.close();
+		});
+		scan.action(t('扫描整个 Vault','Scan entire vault'),async()=>{
+			await showScanPreview(plugin,'');
+			scan.close();
+		});
+		scan.open();
 		return Promise.resolve();
 	});
 	dialog.action(t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'),async()=>{await showRegistryIgnorePreview(plugin);dialog.close();});

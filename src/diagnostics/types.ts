@@ -58,6 +58,13 @@ export interface LinkResolution {
 
 export type NoteVisibility = 'public' | 'private';
 
+interface ScopedLinkCandidates {
+	paths: readonly string[];
+	missingLibraries: readonly string[];
+	unavailableLibraries: readonly string[];
+}
+type LinkCandidates = readonly string[] | ScopedLinkCandidates;
+
 export interface DiagnosticOptions {
 	libraryRoot: string;
 	vaultRoot?: string;
@@ -69,7 +76,8 @@ export interface DiagnosticOptions {
 	resolveLink?: (request: LinkRequest) => LinkResolution | Promise<LinkResolution>;
 	collectLinks?: (source: string) => LinkOccurrence[] | undefined | Promise<LinkOccurrence[] | undefined>;
 	linkTargetVisibility?: (vaultPath: string) => NoteVisibility | undefined | Promise<NoteVisibility | undefined>;
-	linkCandidates?: (request: LinkRequest) => readonly string[] | Promise<readonly string[]>;
+	linkCandidates?: (request: LinkRequest) => LinkCandidates | Promise<LinkCandidates>;
+	linkCandidateScope?: 'registered' | 'vault';
 	trustedDigests?: readonly string[];
 	officialDigests?: readonly string[];
 	nodeExecutable?: string;

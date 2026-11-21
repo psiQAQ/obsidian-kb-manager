@@ -1,4 +1,5 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
+import { tr } from '../i18n.ts';
 import { addTextField } from './text-field.ts';
 
 type TextOptions = NonNullable<Parameters<typeof addTextField>[3]>;
@@ -45,4 +46,23 @@ export class V3Dialog extends Dialog {
 		this.modalEl.addClass('kb-v3-dialog');
 		this.containerEl.addClass('kb-v3-modal-container');
 	}
+}
+
+export function showJsonPreview(app: App, title: string, value: object) {
+	const dialog = new V3Dialog(app,title);
+	dialog.contentEl.createEl('p',{text:tr(
+		'选中内容后，用系统复制快捷键、右键菜单或长按菜单复制。',
+		'Select text, then copy using your keyboard, the context menu, or the touch selection menu.',
+	)});
+	const input = dialog.contentEl.createEl('textarea',{
+		cls:'kb-json-preview',
+		attr:{'aria-label':title,readonly:'',rows:'12',spellcheck:'false',wrap:'off'},
+	});
+	input.value = JSON.stringify(value,null,2);
+	new Setting(dialog.contentEl).setClass('kb-controls-only').addButton(button =>
+		button.setButtonText(tr('全选','Select all')).onClick(() => {
+			input.focus();
+			input.select();
+		}));
+	dialog.open();
 }

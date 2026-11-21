@@ -3,8 +3,9 @@ import type {Inventory} from './snapshot.ts';
 import type {DiagnosticCheckResult} from './types.ts';
 
 export function addReason(check: DiagnosticCheckResult, reason: string) {
-	if (check.reason?.includes(reason)) return;
+	if (check.reason?.includes(reason)) return false;
 	check.reason = check.reason ? check.reason + ' ' + reason : reason;
+	return true;
 }
 
 export function reportInventoryCoverage(check: DiagnosticCheckResult, inventory: Inventory) {

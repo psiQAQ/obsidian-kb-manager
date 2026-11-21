@@ -1,4 +1,4 @@
-import { ButtonComponent, Notice, Setting, TFile, resolveSubpath, setIcon } from 'obsidian';
+import { ButtonComponent, Notice, Setting, TFile, TFolder, resolveSubpath, setIcon } from 'obsidian';
 import offlineCli from 'kb-manager:offline-cli';
 import { readFile, writeFile } from 'node:fs/promises';
 import { digest, statIfPresent } from '../fs/vault.ts';
@@ -9,7 +9,7 @@ import { officialCheckDigests } from '../kb/template-pack.ts';
 import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { Dialog, V3Dialog } from './dialog.ts';
+import { Dialog, V3Dialog, showJsonPreview } from './dialog.ts';
 
 type Options = Parameters<typeof runDiagnostics>[0];
 type Report = Awaited<ReturnType<typeof runDiagnostics>>;
@@ -25,8 +25,37 @@ const checkLabels: Record<string,readonly [string,string]> = {
 };
 const checkName=(id:string,fallback:string)=>checkLabels[id]?tr(...checkLabels[id]):fallback;
 
-function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'|'linkTargetVisibility'> {
+function linkOptions(plugin:KnowledgeBaseManager, location:string, registeredPaths:readonly string[], allVault:boolean):
+	Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'|'linkCandidateScope'|'linkTargetVisibility'> {
 	const {vault,metadataCache}=plugin.app;
+	const vaultCandidates=linkCandidateIndex(function* () {for(const file of vault.getFiles())yield file.path;});
+	function* candidatePaths(folders:TFolder[]) {
+		const seen=new Set<string>();
+		while(folders.length){
+			const folder=folders.pop()!;
+			if(folder.path===location || seen.has(folder.path))continue;
+			seen.add(folder.path);
+			for(const child of folder.children){
+				if(child instanceof TFolder)folders.push(child);
+				else if(child instanceof TFile)yield child.path;
+			}
+		}
+	}
+	async function loadRegisteredCandidates() {
+		const folders:TFolder[]=[];
+		const missingLibraries:string[]=[],unavailableLibraries:string[]=[];
+		for(const path of registeredPaths){
+			if(path===location)continue;
+			const folder=vault.getFolderByPath(path);
+			if(folder){folders.push(folder);continue;}
+			try {
+				const status=await statIfPresent(await plugin.disk.path(path));
+				(status?.isDirectory() ? unavailableLibraries : missingLibraries).push(path);
+			} catch {unavailableLibraries.push(path);}
+		}
+		return {lookup:linkCandidateIndex(()=>candidatePaths(folders)),missingLibraries,unavailableLibraries};
+	}
+	let registeredCandidates:ReturnType<typeof loadRegisteredCandidates>|undefined;
 	return {
 		collectLinks:source=>{
 			const cache=metadataCache.getCache(source);
@@ -50,7 +79,11 @@ function linkOptions(plugin:KnowledgeBaseManager):Pick<Options,'collectLinks'|'r
 			if(target.extension!=='md' || !cache)return {status:'resolved',path:target.path,anchor:'unknown'};
 			return {status:'resolved',path:target.path,anchor:resolveSubpath(cache,request.fragment)?'resolved':'missing'};
 		},
-		linkCandidates:linkCandidateIndex(()=>vault.getFiles().map(file=>file.path)),
+		linkCandidates:allVault?vaultCandidates:async request=>{
+			const {lookup,missingLibraries,unavailableLibraries}=await (registeredCandidates??=loadRegisteredCandidates());
+			return {paths:lookup(request),missingLibraries,unavailableLibraries};
+		},
+		linkCandidateScope:allVault?'vault':'registered',
 	};
 }
 
@@ -119,9 +152,8 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		input.selectEl.setAttribute('aria-label',tr('严重程度','Severity'));
 		input.addOptions({'':tr('全部','All'),error:tr('错误','Errors'),warning:tr('警告','Warnings'),info:tr('提示','Info')})
 			.onChange(value=>{severity=value as Severity|'';render();});
-	}).addButton(button=>button.setButtonText(tr('复制报告','Copy report')).onClick(async()=>{
-		try {await navigator.clipboard.writeText(JSON.stringify(report,null,2));new Notice(tr('报告已复制','Report copied'));}
-		catch(error){new Notice(String(error));}
+	}).addButton(button=>button.setButtonText(tr('查看报告 JSON','View report JSON')).onClick(()=>{
+		showJsonPreview(plugin.app,tr('检验报告','Check report'),report);
 	}));
 	results.append(list);
 	function render(){
@@ -223,6 +255,8 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const selected=new Set<string>();
 	const official=officialCheckDigests();
 	let running=false;
+	let allVaultCandidates=false;
+	let candidateScope:HTMLDivElement|undefined;
 	const controls:ButtonComponent[]=[];
 	const runSelected=dialog.action(tr('运行所选','Run selected'),()=>run([...selected])).setCta();
 	const runAll=dialog.action(tr('运行全部适用项','Run all applicable checks'),()=>run('all'));
@@ -238,6 +272,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		runSelected.setDisabled(running||!selected.size);
 		for(const button of [...controls,runAll,history,exportButton,choose])button.setDisabled(running);
 		choices.querySelectorAll('input').forEach(input=>{input.disabled=running;});
+		if(candidateScope)candidateScope.hidden=!selected.has(portabilityCheck.id);
 		choose.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',!choices.hidden);
 		runSelected.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
 		runAll.buttonEl.closest('.setting-item')?.toggleAttribute('hidden',choices.hidden);
@@ -266,7 +301,15 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 						});
 						review.buttonEl.addClass('kb-v3-script-review');controls.push(review);
 					}
-				} else if(check.id===portabilityCheck.id)row.createSpan({cls:'kb-v3-muted',text:tr('检查离开此 Vault 后可能失效的引用。仅手动选择时运行。','Look for references that may break outside this vault. Select to run.')});
+				} else if(check.id===portabilityCheck.id){
+					row.createSpan({cls:'kb-v3-muted',text:tr('检查移动或克隆本库时可能失效的引用。默认在当前库及已登记库中查找同名候选。','Check for references that may break when moving or cloning this library. By default, look for same-name candidates in the current and registered libraries.')});
+					candidateScope=choices.createDiv();
+					const scopeRow=candidateScope.createEl('label',{cls:'kb-v3-check-choice'});
+					const scopeInput=scopeRow.createEl('input',{type:'checkbox'});
+					scopeInput.checked=allVaultCandidates;
+					scopeInput.addEventListener('change',()=>{allVaultCandidates=scopeInput.checked;});
+					scopeRow.createSpan({text:tr('在整个 Vault 查找同名候选','Look for same-name candidates across the vault')});
+				}
 			}
 		}
 		update();
@@ -280,7 +323,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			const registry=await readVaultRegistry(plugin.disk).catch(()=>undefined);
 			const report=await runDiagnostics({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,
 				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,
-				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin)});
+				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin,lib.location,registry?.paths ?? [],allVaultCandidates)});
 			display(report);
 		} catch(error) {
 			output.empty();

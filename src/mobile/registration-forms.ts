@@ -1,7 +1,8 @@
-import {AbstractInputSuggest,Setting} from 'obsidian';
+import {Setting} from 'obsidian';
 import {tr} from '../i18n.ts';
 import {identityFile,readManifest,withManifestIgnore,writeIdentity} from '../kb/identity-core.ts';
 import {Dialog} from '../ui/dialog.ts';
+import {registryPathField} from '../ui/registry-path-field.ts';
 import {registryIgnoreRule,withIgnoreRule} from '../registry/paths.ts';
 import {applyLibraryBindings,bindingLines,previewBindings,resumeLibraryBindings} from './bindings.ts';
 import {newIdentity} from './catalog.ts';
@@ -10,22 +11,6 @@ import {confirm} from './forms.ts';
 import type MobilePlugin from './plugin.ts';
 import {assignMobileCopyId,discoverMobile,previewMobileRegistryIgnore,registerMobile,registryIgnoreLines,scanMobile,selectMobileManifest,updateMobileRegistry} from './registration.ts';
 import type {Library} from './registration.ts';
-
-function pathField(dialog:Dialog,plugin:MobilePlugin,mode:'manifest'|'folder',change:(value:string)=>void){
-	const vault=plugin.app.vault,root=tr('Vault 根目录','Vault root');
-	new Setting(dialog.contentEl).setName(mode==='manifest'?identityFile:tr('扫描目录','Folder to scan')).addText(input=>{
-		input.setPlaceholder(mode==='manifest'?'knowledge-base/example/kb.toml':root).onChange(v=>change(v.trim()));
-		class SuggestPath extends AbstractInputSuggest<string>{
-			getSuggestions(query:string){
-				const paths=mode==='manifest'?vault.getFiles().filter(file=>file.name===identityFile):vault.getAllFolders(false);
-				return paths.map(file=>file.path).filter(path=>path.toLowerCase().includes(query.toLowerCase())).sort();
-			}
-			renderSuggestion(value:string,el:HTMLElement){el.setText(value);}
-		}
-		const suggestions=new SuggestPath(plugin.app,input.inputEl);
-		suggestions.onSelect(value=>{input.setValue(value);change(value);suggestions.close();});
-	});
-}
 
 function manifestLines(lib:Library){
 	const identity=lib.identity,entry=identity?.entry??lib.mapping?.index;
@@ -51,10 +36,9 @@ export async function registryIgnoreForm(plugin:MobilePlugin){
 export function manifestForm(plugin:MobilePlugin,replace?:string){
 	const dlg=new Dialog(plugin.app,replace?tr('重新定位知识库','Locate a library'):tr('登记知识库清单','Register a library manifest'));
 	if(replace)dlg.lines([replace]);
-	let path='';
-	pathField(dlg,plugin,'manifest',value=>{path=value;});
+	const getPath=registryPathField(dlg,plugin.app,'manifest');
 	dlg.action(tr('预览登记','Preview registration'),async()=>{
-		const lib=await selectMobileManifest(plugin.ctx,path);
+		const lib=await selectMobileManifest(plugin.ctx,getPath());
 		const existing=await discoverMobile(plugin.ctx);
 		const ignore=await previewMobileRegistryIgnore(plugin.ctx);
 		const related=existing.filter(entry=>lib.identity && entry.identity?.id===lib.identity.id && entry.location!==lib.location);
@@ -73,9 +57,8 @@ export function manifestForm(plugin:MobilePlugin,replace?:string){
 
 export function scanForm(plugin:MobilePlugin){
 	const dlg=new Dialog(plugin.app,tr('扫描目录并登记知识库','Scan a folder and register knowledge bases'));
-	let folder='';
-	pathField(dlg,plugin,'folder',value=>{folder=value;});
-	dlg.action(tr('扫描','Scan'),async()=>{
+	const getFolder=registryPathField(dlg,plugin.app,'folder');
+	async function scan(folder:string){
 		const libraries=await scanMobile(plugin.ctx,folder),found=libraries.filter(lib=>!lib.problem);
 		const review=new Dialog(plugin.app,tr('扫描结果','Scan results'));
 		const current=await discoverMobile(plugin.ctx);
@@ -103,7 +86,13 @@ export function scanForm(plugin:MobilePlugin){
 			review.close();dlg.close();await plugin.refresh();
 		});
 		review.open();
+	}
+	dlg.action(tr('扫描所选目录','Scan selected folder'),async()=>{
+		const folder=getFolder();
+		if(!folder)throw new Error(tr('请选择目录','Select a folder'));
+		await scan(folder);
 	});
+	dlg.action(tr('扫描整个 Vault','Scan entire vault'),()=>scan(''));
 	dlg.open();
 }
 

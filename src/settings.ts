@@ -10,7 +10,7 @@ import type { GitPreferences, Language } from './preferences.ts';
 import { gitDefaults, renderCommitMessage } from './preferences.ts';
 import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
 import { editRepositoryIdentity } from './ui/repository-identity.ts';
-import { Dialog } from './ui/dialog.ts';
+import { Dialog, showJsonPreview } from './ui/dialog.ts';
 import { addTextField } from './ui/text-field.ts';
 import { makeTemplateWizard } from './ui/v3-template-author.ts';
 
@@ -195,12 +195,9 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 					['Windows 可运行 where.exe git 查看已安装的位置。','On Windows, use where.exe git to find the installed executable.']);
 			}
 			note('操作限定在当前知识库和库内 .git。自定义 shell 脚本、任意命令和仓库路径覆盖已禁用。','Operations use the library and its own .git directory. Custom shell scripts, raw commands and repository path overrides are disabled.');
-			add(['调试信息','Debug information'],setting => setting.addButton(button => button.setButtonText(t('复制','Copy')).onClick(async() => {
-					try {
-						await navigator.clipboard.writeText(JSON.stringify(diagnostics(plugin),null,2));
-						new Notice(t('已复制调试信息','Debug information copied'));
-					} catch(error) { new Notice(String(error)); }
-				})), ['复制版本、平台、后端和库数量。','Copy the version, platform, backend and library counts.']);
+			add(['调试信息','Debug information'],setting => setting.addButton(button => button.setButtonText(t('查看','View')).onClick(() => {
+				showJsonPreview(plugin.app,t('调试信息','Debug information'),diagnostics(plugin));
+			})), ['查看版本、平台、后端和库数量。','View the version, platform, backend and library counts.']);
 			note('查看运行日志可打开 Obsidian 开发者工具的 Console。','Open Console in Obsidian Developer Tools to inspect runtime logs.');
 			break;
 	}

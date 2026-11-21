@@ -48,19 +48,21 @@ test('Canvas reports cross-library file, group and text references once for eith
 	]}));
 	const targets = new Map([[file,file], [background,background], ['notes/Topic',foreignText], ['folder/Local',localOther], ['./folder/Local.md',localOther]]);
 	const reported = [];
+	let candidateScans = 0;
 	const resolveLink = request => {
 		reported.push(request);
 		return {status:'resolved',path:targets.get(request.target)};
 	};
 	const run = async selected => {
 		reported.length = 0;
-		const report = await runDiagnostics({...options,selected,resolveLink,linkCandidates:linkCandidateIndex(() => paths)});
+		const report = await runDiagnostics({...options,selected,resolveLink,linkCandidates:linkCandidateIndex(() => {candidateScans++;return paths;})});
 		assert.deepEqual(reported.map(request => request.target), [...targets.keys()]);
 		assert.ok(reported.every(request => request.source === `${library}/sample.canvas`));
 		assert.deepEqual(reported.map(request => !!request.canvasPath), [true,true,false,false,false]);
 		return report;
 	};
 	const onlyCanvas = check(await run(['canvas']), 'canvas');
+	assert.equal(candidateScans, 0);
 	assert.deepEqual(onlyCanvas.diagnostics.map(row => [row.code,row.severity,row.file]),
 		Array.from({length:3}, () => ['cross-library-link','info','sample.canvas']));
 	assert.ok(onlyCanvas.diagnostics[0].evidence.includes(`${file} · 所属库 ${nested} · 节点 file-node`));
@@ -68,6 +70,7 @@ test('Canvas reports cross-library file, group and text references once for eith
 	assert.ok(onlyCanvas.diagnostics[2].evidence.includes(`${foreignText} · 所属库 ${neighbor} · 节点 text-node · 文本行 2`));
 
 	const onlyPortability = check(await run(['portability']), 'portability');
+	assert.equal(candidateScans, 1);
 	assert.equal(onlyPortability.coverage.checked, 5);
 	assert.deepEqual(onlyPortability.diagnostics.map(row => row.code), [
 		'external-library-dependency','external-library-dependency','external-library-dependency','same-name-candidates',
@@ -131,4 +134,63 @@ test('Markdown links use the same path suffix matching for candidate evidence', 
 	assert.equal(line, 1);
 	assert.ok(evidence.includes(`同名候选 ${local}、${foreign}`));
 	assert.deepEqual(rest, []);
+});
+
+test('Scoped portability keeps the actual target outside the candidate search', async t => {
+	const {put, options} = await fixture(t);
+	const local = `${library}/notes/Topic.md`;
+	const registered = `${neighbor}/notes/Topic.md`;
+	const actual = 'Inbox/notes/Topic.md';
+	const unregistered = 'Archive/notes/Topic.md';
+	for (const file of [local, registered, actual, unregistered]) await put(file, 'Topic');
+	await put(`${library}/source.md`, '[[notes/Topic]]');
+	const run = async (scope, paths) => check(await runDiagnostics({...options,selected:['portability'],
+		resolveLink:() => ({status:'resolved',path:actual}),linkCandidateScope:scope,linkCandidates:linkCandidateIndex(() => paths)}), 'portability');
+	const scoped = await run('registered', [registered]);
+	assert.match(scoped.reason, /当前库和已登记库/u);
+	assert.equal(scoped.diagnostics.length, 1);
+	assert.equal(scoped.diagnostics[0].code, 'external-library-dependency');
+	assert.ok(scoped.diagnostics[0].evidence.startsWith(actual));
+	assert.ok(scoped.diagnostics[0].evidence.includes(`同名候选 ${[actual,local,registered].sort().join('、')}`));
+	const fullVault = await run('vault', [actual, registered, unregistered]);
+	assert.match(fullVault.reason, /整个 Vault/u);
+	assert.ok(fullVault.diagnostics[0].evidence.includes(`同名候选 ${[actual,local,registered,unregistered].sort().join('、')}`));
+});
+
+test('Portability reports unavailable candidate coverage separately from missing directories', async t => {
+	const {put, options} = await fixture(t);
+	const target = `${library}/Topic.md`;
+	await put(target, 'Topic');
+	await put(`${library}/source.md`, '[[Topic]]\n[[Topic]]');
+	const run = async overrides => check(await runDiagnostics({...options,selected:['portability'],linkCandidateScope:'registered',
+		resolveLink:() => ({status:'resolved',path:target}),...overrides}), 'portability');
+
+	const missing = await run({linkCandidates:() => ({paths:[],missingLibraries:[neighbor],unavailableLibraries:[]})});
+	assert.equal(missing.status, 'passed');
+	assert.match(missing.reason, /已跳过不存在的登记目录 · libraries\/other/u);
+	assert.equal(missing.coverage.unknown, 0);
+
+	const unavailable = await run({linkCandidates:() => ({paths:[],missingLibraries:[],unavailableLibraries:[neighbor]})});
+	assert.equal(unavailable.status, 'partial');
+	assert.match(unavailable.reason, /无法从 Obsidian 索引核实登记目录的候选 · libraries\/other/u);
+	assert.equal(unavailable.coverage.unknown, 1);
+	assert.equal(unavailable.coverage.checked, 2);
+
+	const registryUnavailable = await run({registeredPaths:undefined});
+	assert.equal(registryUnavailable.status, 'partial');
+	assert.match(registryUnavailable.reason, /知识库登记不可用/u);
+	assert.equal(registryUnavailable.coverage.unknown, 1);
+
+	let scans = 0;
+	const lookupFailed = await run({linkCandidateScope:'vault',linkCandidates:linkCandidateIndex(function* () {
+		scans++;
+		yield `${neighbor}/Topic.md`;
+		throw new Error('Candidate index unavailable');
+	})});
+	assert.equal(scans, 1);
+	assert.equal(lookupFailed.status, 'partial');
+	assert.match(lookupFailed.reason, /无法读取 Obsidian 的同名候选/u);
+	assert.equal(lookupFailed.coverage.unknown, 1);
+	assert.equal(lookupFailed.coverage.checked, 2);
+	assert.deepEqual(lookupFailed.diagnostics, []);
 });

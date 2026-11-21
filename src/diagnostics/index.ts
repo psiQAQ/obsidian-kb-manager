@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
+import {addReason} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, templateSnapshot} from './snapshot.ts';
@@ -62,6 +63,15 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const checks = new Map(active.map(id => [id, result({id,name:available.get(id)?.name ?? specials.get(id)?.name ?? tr('专项检查','Template check')})]));
 		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
 		const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
+		if (links.portability && options.linkCandidateScope) {
+			const scope = options.linkCandidateScope === 'vault'
+				? tr('同名候选范围为整个 Vault。','Same-name candidates are checked across the vault.')
+				: options.registeredPaths
+					? tr('同名候选范围为当前库和已登记库。','Same-name candidates are checked in the current and registered libraries.')
+					: tr('知识库登记不可用，同名候选只检查当前库。','The library registry is unavailable. Same-name candidates are checked in the current library.');
+			addReason(links.portability, scope);
+			if (options.linkCandidateScope === 'registered' && !options.registeredPaths) links.portability.coverage.unknown++;
+		}
 		if (Object.values(links).some(Boolean)) {
 			try {await inspectLinks(linkOptions, found, root, relative, links);}
 			catch {for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));}

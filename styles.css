@@ -44,6 +44,15 @@
 	min-block-size: 4.5em;
 	resize: vertical;
 }
+.kb-dialog .kb-json-preview {
+	display: block;
+	inline-size: 100%;
+	max-block-size: 45vh;
+	font-family: var(--font-monospace);
+	resize: vertical;
+	-webkit-user-select: text;
+	user-select: text;
+}
 .kb-dialog .kb-action-error {
 	order: 1;
 	color: var(--text-error);
