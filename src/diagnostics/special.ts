@@ -1,10 +1,9 @@
 import {spawn} from 'node:child_process';
 import type {ChildProcessByStdio} from 'node:child_process';
-import {constants} from 'node:fs';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type {Readable, Writable} from 'node:stream';
 import {clearTimeout, setTimeout} from 'node:timers';
+import {findLocalExecutable} from '../fs/local-executable.ts';
 import {tr} from '../i18n.ts';
 import {addReason, reportUnreadableDirectories, reportUnreadableNotes} from './coverage.ts';
 import {relativePath} from './snapshot.ts';
@@ -28,27 +27,6 @@ try {
 `;
 const outputLimit = 512 * 1024;
 const inputLimit = 32 * 1024 * 1024;
-
-function inside(folder: string, filename: string) {
-	const relative = path.relative(folder, filename);
-	return !relative || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
-}
-
-async function findNode(vault: string, override?: string): Promise<string | undefined> {
-	const name = process.platform === 'win32' ? 'node.exe' : 'node';
-	const search = override ? [override] : (process.env.PATH ?? '').split(path.delimiter)
-		.map(dir => dir.replace(/^"|"$/gu, '')).filter(dir => path.isAbsolute(dir)).map(dir => path.join(dir, name));
-	for (const candidate of search) {
-		if (!path.isAbsolute(candidate) || inside(vault, candidate)) continue;
-		try {
-			const real = await fs.realpath(candidate);
-			if (inside(vault, real) || !(await fs.stat(real)).isFile()) continue;
-			await fs.access(real, constants.X_OK);
-			return real;
-		} catch {/* Try the next absolute executable path. */}
-	}
-	return undefined;
-}
 
 type ChildResult = {error: string} | {data: unknown};
 function execute(node: string, input: string, timeout: number): Promise<ChildResult> {
@@ -144,7 +122,7 @@ export async function runSpecial(check: DeclaredCheck, options: DiagnosticOption
 	if (!check.source || !check.digest) return fail('checker-unavailable');
 	if (!context) return fail('checker-config');
 	if (![...options.officialDigests ?? [], ...options.trustedDigests ?? []].includes(check.digest)) return fail('checker-untrusted');
-	const node = await findNode(vault, options.nodeExecutable);
+	const node = await findLocalExecutable('node', [options.vaultRoot, vault], options.nodeExecutable);
 	if (!node) return fail('checker-node');
 	const input = JSON.stringify({source: check.source.toString('base64'), context: check.linkEvidence ? {...context, links: await readLinks()} : context});
 	if (Buffer.byteLength(input) > inputLimit) return fail('checker-input-limit');

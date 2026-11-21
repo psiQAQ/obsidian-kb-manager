@@ -8,11 +8,49 @@ import {createServer as createTlsServer} from 'node:https';
 import {address,endpoint} from '../src/git/network-http.ts';
 import {initializeRepository} from '../src/git/repository.ts';
 import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,transfer} from '../src/git/network.ts';
-import {blameLine} from '../src/git/network-native.ts';
+import {blameLine,configureGitExecutable,gitResult,probeGitExecutable,sshRoute} from '../src/git/network-native.ts';
 import {clearUndo,finishMerge,inspectMerge,markResolved,undoInfo} from '../src/git/network-merge.ts';
 import {readGrants,AutomationClock,selectPaths} from '../src/git/network-automation.ts';
 import {deletionPlan,removeBranch,remoteRemoval,removeRemote,serverBranches,trackBranch} from '../src/git/network-refs.ts';
 import {previewVersion,saveVersion} from '../src/git/versions.ts';
+
+test('desktop native launches exclude vault paths and keep device Git configuration', async t => {
+	const workspace=path.resolve('.tmp');
+	await fs.mkdir(workspace,{recursive:true});
+	const root=await fs.mkdtemp(path.join(workspace,'native-executables-'));
+	const originalPath=process.env.PATH,originalConfig=process.env.GIT_CONFIG_GLOBAL;
+	t.after(async()=>{
+		configureGitExecutable('');
+		if(originalPath===undefined)delete process.env.PATH;else process.env.PATH=originalPath;
+		if(originalConfig===undefined)delete process.env.GIT_CONFIG_GLOBAL;else process.env.GIT_CONFIG_GLOBAL=originalConfig;
+		assert.equal(path.dirname(root),workspace);
+		await fs.rm(root,{recursive:true,force:true});
+	});
+	const vault=path.join(root,'vault'),runtime=path.join(vault,'runtime');
+	await fs.mkdir(runtime,{recursive:true});
+	const alias=path.join(vault,'external-runtime');
+	await fs.symlink(path.dirname(process.execPath),alias,'junction');
+	const override=path.join(alias,path.basename(process.execPath));
+	const gitUnavailable=/找不到可用的系统 Git|System Git was not found/u;
+	configureGitExecutable(override,vault);
+	await assert.rejects(probeGitExecutable(),gitUnavailable);
+	await assert.rejects(gitResult(undefined,['--version']),gitUnavailable);
+
+	configureGitExecutable('',vault);
+	assert.match(await probeGitExecutable(),/^git version /u);
+	const config=path.join(root,'device.gitconfig');
+	await fs.writeFile(config,'[user]\n\tname = Device Git User\n');
+	process.env.GIT_CONFIG_GLOBAL=config;
+	assert.equal((await gitResult(undefined,['config','--global','--get','user.name'])).stdout.toString().trim(),'Device Git User');
+
+	const suffix=process.platform==='win32'?'.exe':'';
+	for(const name of ['git','ssh'])await fs.writeFile(path.join(runtime,name+suffix),'fixture',{mode:0o700});
+	const external=path.join(root,'linked-runtime');
+	await fs.symlink(runtime,external,'junction');
+	process.env.PATH=external;
+	await assert.rejects(gitResult(undefined,['--version']),gitUnavailable);
+	await assert.rejects(sshRoute(new URL('ssh://git@fixture.invalid/repo')),/Vault 外可用的 OpenSSH|OpenSSH executable outside the vault/u);
+});
 
 test('HTTPS uses system helpers or the explicitly supplied endpoint token, without leaking failures',async t=>{
  const {root,dir,target,requests,requireAuth}=await fixture(t,true);

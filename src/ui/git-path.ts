@@ -9,6 +9,6 @@ export function deviceGitPath(plugin:KnowledgeBaseManager):string {
 export async function saveDeviceGitPath(plugin:KnowledgeBaseManager, input:string) {
 	const path=input.trim();
 	if(path) await probeGitExecutable(path);
-	configureGitExecutable(path);
+	configureGitExecutable(path,plugin.disk.root);
 	plugin.app.saveLocalStorage(plugin.manifest.id+':gitPath',path || null);
 }

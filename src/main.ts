@@ -126,11 +126,11 @@ export default class KnowledgeBaseManager extends Plugin {
 		try{return await action();}finally{this.busy.delete(location);}
 	}
 	async onload(){
-		try { configureGitExecutable(deviceGitPath(this)); }
-		catch (error) { configureGitExecutable(''); new Notice(String(error)); }
 		const adapter=this.app.vault.adapter;
 		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir);
+		try { configureGitExecutable(deviceGitPath(this),this.disk.root); }
+		catch (error) { configureGitExecutable('',this.disk.root); new Notice(String(error)); }
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
 		migrateGitSettings(saved);
 		const device=this.app.loadLocalStorage(this.manifest.id+':device-v3') as (NonNullable<typeof saved> & {pendingLibraryPreferences?:unknown})|null;

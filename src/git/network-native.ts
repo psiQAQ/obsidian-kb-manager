@@ -2,27 +2,24 @@ import {execFile} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {createHash} from 'node:crypto';
+import {findLocalExecutable} from '../fs/local-executable.ts';
 import {guardGit} from './guard.ts';
 import {fromEnglish,tr} from '../i18n.ts';
 
 let configured='';
-export function configureGitExecutable(value:string){
+let configuredVault:string|undefined;
+export function configureGitExecutable(value:string,vaultRoot?:string){
 	if(value && (!path.isAbsolute(value)||/[\r\n\0]/u.test(value)))throw new Error(tr('请输入 Git 可执行文件的绝对路径','Enter an absolute Git executable path'));
 	configured=value;
+	configuredVault=vaultRoot;
 }
 
-async function program(name:'git'|'ssh',override='',dir?:string){
-	const nameOnDisk=process.platform==='win32'?name+'.exe':name;
-	const paths=override?[override]:(process.env.PATH??'').split(path.delimiter).map(folder=>folder.replace(/^"|"$/gu,''))
-		.filter(p=>path.isAbsolute(p)).map(p=>path.join(p,nameOnDisk));
-	for(const file of paths){
-		try{
-			const real=await fs.realpath(file);
-			if(dir && (real===dir || real.startsWith(dir+path.sep)))continue;
-			if((await fs.stat(real)).isFile()){await fs.access(real,fs.constants.X_OK);return real;}
-		}catch{/* Continue locating the selected program. */}
-	}
-	throw new Error(name==='git'?tr('找不到系统 Git。请安装 Git 或在插件高级设置中指定绝对路径。','System Git was not found. Install Git or set its absolute path in Advanced settings.'):tr('找不到 OpenSSH 客户端','OpenSSH executable was not found'));
+async function program(name:'git'|'ssh',override:string,roots:readonly (string|undefined)[]){
+	const binary=await findLocalExecutable(name,roots,override);
+	if(binary)return binary;
+	throw new Error(name==='git'
+		? tr('找不到可用的系统 Git。请在 Vault 外安装 Git，或在插件高级设置中指定其绝对路径。','System Git was not found. Install Git outside the vault or set its absolute path in Advanced settings.')
+		: tr('找不到 Vault 外可用的 OpenSSH 客户端','OpenSSH executable outside the vault was not found'));
 }
 
 function environment():NodeJS.ProcessEnv{
@@ -39,7 +36,7 @@ function environment():NodeJS.ProcessEnv{
 
 async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEnv,input?:Buffer|string,allowed=[0]){
 	return new Promise<{stdout:Buffer;code:number}>((resolve,reject)=>{
-		const child=execFile(file,args,{cwd,env,encoding:'buffer',windowsHide:true,timeout:120000,maxBuffer:64*1024*1024},(error,stdout,stderr)=>{
+		const child=execFile(file,args,{cwd,env,encoding:'buffer',windowsHide:true,shell:false,timeout:120000,maxBuffer:64*1024*1024},(error,stdout,stderr)=>{
 			const code=error ? error.code : 0;
 			if(typeof code==='number' && allowed.includes(code)){resolve({stdout,code});return;}
 			const reason=stderr.toString().toLowerCase();
@@ -58,7 +55,7 @@ async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEn
 
 export async function probeGitExecutable(value=configured){
 	if(value && !path.isAbsolute(value))throw new Error(tr('需要绝对路径','Absolute path required'));
-	const binary=await program('git',value);
+	const binary=await program('git',value,[configuredVault]);
 	const result=await execute(binary,['--version'],path.dirname(binary),environment());
 	const version=result.stdout.toString().trim();
 	if(!/^git version \d+\.\d+(?:\.[\w.-]+)?$/u.test(version))throw new Error(tr('程序未返回 Git 版本','Executable did not report a Git version'));
@@ -71,11 +68,13 @@ export interface RunOptions{
 	stdin?:Uint8Array|string; indexFile?:string; allowedExitCodes?:number[];
 	author?:{name:string;email:string;date:string};
 	network?:{url:string;basic?:string};
+	vaultRoot?:string;
 }
 const defaults=['-c','core.hooksPath=/dev/null','-c','http.followRedirects=false','-c','protocol.ext.allow=never',
 	'-c','gc.auto=0','-c','maintenance.auto=false','-c','core.fsmonitor=false','-c','submodule.recurse=false','-c','commit.gpgsign=false'];
 export async function gitResult(dir:string|undefined,args:string[],options:RunOptions={}){
-	const binary=await program('git',configured,dir);
+	const roots=[configuredVault,options.vaultRoot,dir];
+	const binary=await program('git',configured,roots);
 	const cwd=dir??path.dirname(binary),env=environment();
 	if(args.length===2 && args[0]==='var' && (args[1]==='GIT_AUTHOR_IDENT' || args[1]==='GIT_COMMITTER_IDENT')){
 		for(const key of ['GIT_AUTHOR_NAME','GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL']){
@@ -118,7 +117,7 @@ export async function gitResult(dir:string|undefined,args:string[],options:RunOp
 		}
 		if(/^https?:\/\//u.test(url))extra.push('-c','http.'+url+'.followRedirects=false');
 		else{
-			const ssh=await program('ssh','',dir);
+			const ssh=await program('ssh','',roots);
 			env.GIT_SSH_VARIANT='ssh';env.GIT_SSH_COMMAND="'"+ssh.replace(/\\/gu,'/').replace(/'/gu,"'\\''")+"' -o BatchMode=yes -o StrictHostKeyChecking=yes";
 		}
 	}
@@ -127,7 +126,7 @@ export async function gitResult(dir:string|undefined,args:string[],options:RunOp
 }
 
 export async function sshRoute(url:URL,dir?:string){
-	const binary=await program('ssh','',dir),host=(url.username?url.username+'@':'')+url.hostname;
+	const binary=await program('ssh','',[configuredVault,dir]),host=(url.username?url.username+'@':'')+url.hostname;
 	const result=await execute(binary,['-G','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',...(url.port?['-p',url.port]:[]),'--',host],
 		path.dirname(binary),environment());
 	const lines=result.stdout.toString().split(/\r?\n/u);

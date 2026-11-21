@@ -49,14 +49,14 @@ async function hasLogIgnore(root: string) {
 	} catch {return false;}
 }
 
-async function logIgnoreStatus(root: string, repo: string, logPath: string) {
+async function logIgnoreStatus(root: string, repo: string, vault: string, logPath: string) {
 	const prefix = path.relative(repo, root).split(path.sep).join('/');
 	const target = prefix ? `${prefix}/${logPath}` : logPath;
 	const folder = path.posix.dirname(target);
 	try {
-		const tracked = await gitResult(repo, ['ls-files','-z','--',folder]);
+		const tracked = await gitResult(repo, ['ls-files','-z','--',folder], {vaultRoot:vault});
 		if (tracked.stdout.length) return 'tracked';
-		const ignored = await gitResult(repo, ['check-ignore','--quiet','--',target], {allowedExitCodes:[0,1]});
+		const ignored = await gitResult(repo, ['check-ignore','--quiet','--',target], {vaultRoot:vault,allowedExitCodes:[0,1]});
 		return ignored.code === 0 ? 'ignored' : 'unknown';
 	} catch {
 		// When native Git is unavailable, the anchored rule protects this newly generated log name.
@@ -70,7 +70,7 @@ export async function saveDiagnosticReport(root: string, vault: string, report: 
 		const logPath = `${logDirectory}/${filename}`;
 		const repo = await gitAncestor(root, vault);
 		if (repo) {
-			const git = await logIgnoreStatus(root, repo, logPath);
+			const git = await logIgnoreStatus(root, repo, vault, logPath);
 			if (git !== 'ignored') {
 				report.logError = git === 'tracked'
 					? tr('Git 已跟踪 .log 中的文件，请先核对索引再保存日志。','Git tracks files in .log. Review the index before saving diagnostics.')
