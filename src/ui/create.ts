@@ -1,20 +1,21 @@
 import { TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
+import { requireIdentity } from '../git/identity.ts';
 import { initialIdentityDefaults } from '../git/initial.ts';
 import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
 import { defaultInitialBranch, defaultInitialMessage } from '../git/initial-options.ts';
 import { createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../kb/create.ts';
 import { kepanoSource } from '../kb/template.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
-import { registryDataPath } from '../registry/paths.ts';
+import { libraryDestination, registryDataPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
-import { Dialog, V3Dialog } from './dialog.ts';
+import { V3Dialog, dialogContents } from './dialog.ts';
 import { reviewCreationExclusions, showExclusionPlan } from './template-filter.ts';
 import type {ApprovedExclusions} from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
 import { destinationParentField } from './registry-path-field.ts';
-import { choiceForSource, pickTemplate, showTemplateDetails } from './v3-template-catalog.ts';
+import { choiceForSource, renderTemplatePicker, showTemplateDetails, templateChoices } from './v3-template-catalog.ts';
 import type { TemplateChoice } from './v3-template-catalog.ts';
 
 function identitySource(field:InitialIdentity['name']){
@@ -33,134 +34,234 @@ function signatureFacts(identity:InitialIdentity){
 	return [[tr('作者','Author'),signature],[tr('提交者','Committer'),signature]] as const;
 }
 
-function pathList(dialog:Dialog,title:string,paths:string[]){
+function pathList(parent:HTMLElement,title:string,paths:string[]){
 	if(!paths.length)return;
-	const detail=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+	const detail=parent.createEl('details',{cls:'kb-v3-detail'});
 	detail.createEl('summary',{text:`${title} (${paths.length})`});
 	const list=detail.createEl('ul');
 	for(const item of paths)list.createEl('li',{text:item});
 }
 
-function showInitialPlan(dialog:Dialog,git:InitialPreview,head=''){
-	dialog.facts([[tr('分支','Branch'),git.branch+(head?' · '+head.slice(0,7):'')],
+function showInitialPlan(parent:HTMLElement,git:InitialPreview,head=''){
+	if(git.identity.email.value.toLowerCase().endsWith('@users.invalid'))parent.createEl('p',{text:tr(
+		'首提交将使用占位邮箱 '+git.identity.email.value+'。如需关联到 GitHub 账号，请填写已验证邮箱或你自己的 GitHub noreply 地址。',
+		'The initial commit will use the placeholder email '+git.identity.email.value+'. To link it to your GitHub account, use a verified email or your own GitHub noreply address.')});
+	const detail=parent.createEl('details',{cls:'kb-v3-detail'});
+	detail.createEl('summary',{text:tr('Git 首提交详情','Initial Git commit details')});
+	dialogContents(detail).facts([[tr('分支','Branch'),git.branch+(head?' · '+head.slice(0,7):'')],
 		[tr('提交说明','Commit message'),git.message],...signatureFacts(git.identity),
 		[tr('姓名来源','Name source'),identitySource(git.identity.name)],
 		[tr('邮箱来源','Email source'),identitySource(git.identity.email)],['origin',git.origin||tr('未设置','Unset')]]);
-	if(git.origin)dialog.contentEl.createEl('p',{text:tr('仅保存远端地址。创建过程不会联网或设置上游分支。','Creation saves the remote address locally, without connecting or setting an upstream branch.')});
-	if(git.identity.email.value.toLowerCase().endsWith('@users.invalid'))dialog.contentEl.createEl('p',{text:tr(
-		'占位邮箱无法收信，也不会将首提交关联到 GitHub 账号。若需关联到你的账号，请填写已验证的邮箱或你自己的 GitHub noreply 地址。',
-		'The placeholder email cannot receive mail or link the initial commit to your GitHub account. Use a verified email or your own GitHub noreply address to link it to your account.')});
-	pathList(dialog,tr('首提交包含的文件','Files in the initial commit'),git.staged);
-	pathList(dialog,tr('复制到库内并由 Git 忽略','Copied into the library and ignored by Git'),git.ignored);
+	if(git.origin)detail.createEl('p',{text:tr('创建时将把远端地址保存在本地 Git 配置。','Creation saves the remote address in local Git configuration.')});
+	pathList(detail,tr('首提交包含的文件','Files in the initial commit'),git.staged);
+	pathList(detail,tr('复制到库内并由 Git 忽略','Copied into the library and ignored by Git'),git.ignored);
 }
 
 export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,source?:string){
 	assertGitEnabled(plugin);
-	if(source!==undefined){
-		const chosen=await choiceForSource(plugin,source);
-		if(chosen.invalid)throw new Error(chosen.invalid);
-		await createForm(plugin,refresh,chosen);
-		return;
-	}
-	await pickTemplate(plugin,template=>createForm(plugin,refresh,template));
-}
-
-async function createForm(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,initial:TemplateChoice){
 	const {config,disk}=plugin;
-	const defaults=await initialIdentityDefaults();
+	const [templates,defaults,initial]=await Promise.all([
+		templateChoices(plugin),initialIdentityDefaults(),source===undefined?undefined:choiceForSource(plugin,source),
+	]);
+	if(initial?.invalid)throw new Error(initial.invalid);
 	const values={name:defaults.name.value,email:defaults.email.value};
 	const gitOptions={branch:defaultInitialBranch,message:defaultInitialMessage};
 	let origin='';
-	let template=initial;
-	const input={name:'',displayName:'',description:'',source:template.source};
-	const form=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
-	const summary=form.contentEl.createEl('details',{cls:'kb-v3-detail'});
-	const chosen=summary.createEl('summary',{text:template.name});
-	const facts=summary.createDiv();
-	showTemplateDetails(facts,template);
-	form.action(tr('更换模板','Change template'),()=>pickTemplate(plugin,value=>{
-		template=value;
-		input.source=value.source;
-		chosen.setText(value.name);
-		facts.empty();
-		showTemplateDetails(facts,template);
+	let template=initial,parent:string|null=null;
+	let reviewedExclusions:{source:string; location:string; folders:readonly string[]}|undefined;
+	const input={name:'',displayName:'',description:''};
+	const wizard=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
+	wizard.modalEl.addClass('kb-create-wizard');
+	const frame=wizard.contentEl.createDiv();
+	const progress=frame.createEl('ol',{cls:'kb-wizard-steps',attr:{role:'list','aria-label':tr('创建步骤','Creation steps')}});
+	const steps=[tr('模板','Template'),tr('详情','Details'),tr('确认','Confirm')].map((label,index)=>{
+		const step=progress.createEl('li',{attr:{tabindex:'-1'}});
+		step.createSpan({cls:'kb-wizard-step-number',text:String(index+1)});
+		step.createSpan({text:label});
+		return step;
+	});
+	const pages=frame.createDiv();
+	const newPage=()=>wizard.contentEl.ownerDocument.createElement('fieldset');
+	const templatePage=newPage(),detailsPage=newPage();
+	detailsPage.addClass('kb-wizard-fields');
+	const details=dialogContents(detailsPage);
+	const templateSummary=detailsPage.createEl('p',{cls:'kb-v3-muted'});
+	const location=detailsPage.createEl('p',{cls:'kb-wizard-destination'});
+	const locationLabel=location.createSpan({text:tr('Vault 内位置','Location in vault')});
+	const destination=location.createEl('output',{attr:{'aria-label':locationLabel.textContent??''}});
+	const updateDestination=()=>{
+		if(parent===null || !input.name){
+			destination.setText(tr('选择父目录并填写目录名','Choose a parent and enter a folder name'));
+			return;
+		}
+		try { destination.setText(libraryDestination(parent,input.name)+'/'); }
+		catch { destination.setText(tr('请检查目录名','Check the folder name')); }
+	};
+	const getParent=destinationParentField(details,plugin.app,config,disk.registry,{
+		allowNew:true,compact:true,title:tr('选择新知识库的父目录','Choose the parent folder for the new library'),
+		onSelect:value=>{parent=value;updateDestination();},
+	});
+	details.text(tr('目录名（必填）','Folder name (required)'),'',v=>{input.name=v;updateDestination();},{example:'research-notes'});
+	details.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
+	details.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
+	let identityRequired=false;
+	try { requireIdentity(values); } catch { identityRequired=true; }
+	const advanced=detailsPage.ownerDocument.createElement('details');
+	advanced.addClass('kb-v3-detail');
+	const advancedSummary=advanced.createEl('summary');
+	advancedSummary.createSpan({text:tr('高级 Git 选项','Advanced Git options')});
+	const identitySummary=advancedSummary.createSpan({cls:'kb-wizard-git-identity kb-v3-muted'});
+	const effectiveIdentity=()=>({name:values.name.trim()||defaults.name.value,email:values.email.trim()||defaults.email.value});
+	const showIdentity=()=>{
+		try {
+			const {name,email}=requireIdentity(effectiveIdentity());
+			identitySummary.setText(name+' <'+email+'>');
+			identitySummary.hidden=false;
+		} catch { identitySummary.hidden=true; }
+	};
+	const addIdentityFields=(body:ReturnType<typeof dialogContents>)=>{
+		body.text(tr('Git 姓名','Git name'),values.name,v=>{values.name=v;showIdentity();});
+		body.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;showIdentity();});
+	};
+	if(identityRequired){
+		detailsPage.createEl('p',{text:tr('请为首提交填写有效的 Git 姓名和邮箱。','Enter a valid Git name and email for the initial commit.')});
+		addIdentityFields(details);
+	}
+	detailsPage.appendChild(advanced);
+	const gitFields=dialogContents(advanced);
+	if(!identityRequired)addIdentityFields(gitFields);
+	showIdentity();
+	gitFields.text(tr('初始分支','Initial branch'),gitOptions.branch,v=>{gitOptions.branch=v;});
+	gitFields.text(tr('首提交说明（单行）','Initial commit message (one line)'),gitOptions.message,v=>{gitOptions.message=v;});
+	gitFields.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
+
+	function showStep(index:number,page:HTMLElement,focus=true){
+		pages.replaceChildren(page);
+		for(const [position,step] of steps.entries()){
+			if(position===index)step.setAttribute('aria-current','step');
+			else step.removeAttribute('aria-current');
+		}
+		wizard.contentEl.scrollTop=0;
+		if(focus)steps[index]?.focus();
+	}
+	function showOutcome(title:string,page:HTMLElement){
+		if(!wizard.contentEl.contains(frame))wizard.contentEl.appendChild(frame);
+		wizard.setTitle(title);
+		progress.hidden=true;
+		pages.replaceChildren(page);
+		wizard.contentEl.scrollTop=0;
+		if(!wizard.containerEl.isConnected)wizard.open();
+		wizard.titleEl.tabIndex=-1;
+		wizard.titleEl.focus();
+	}
+	function setTemplate(choice:TemplateChoice){
+		template=choice;
+		templateSummary.setText(tr('模板','Template')+' · '+choice.name);
+	}
+	function actions(page:HTMLElement){ return dialogContents(page.createDiv({cls:'kb-wizard-actions'})); }
+	renderTemplatePicker(templatePage,templates,value=>{
+		setTemplate(value);
+		showStep(1,detailsPage);
 		return Promise.resolve();
-	},template));
-	const getParent=destinationParentField(form,plugin.app,config,disk.registry,true);
-	form.text(tr('物理目录名','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
-	form.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
-	form.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
-	form.text(tr('Git 姓名','Git name'),values.name,v=>{values.name=v;});
-	form.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;});
-	form.text(tr('初始分支','Initial branch'),gitOptions.branch,v=>{gitOptions.branch=v;});
-	form.text(tr('首提交说明（单行）','Initial commit message (one line)'),gitOptions.message,v=>{gitOptions.message=v;});
-	form.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
-	const run=async(dialog:Dialog,exclusions:ApprovedExclusions,action:()=>ReturnType<typeof createLibrary>)=>{
+	},initial);
+	updateDestination();
+
+	const run=async(chosen:TemplateChoice,exclusions:ApprovedExclusions,action:()=>ReturnType<typeof createLibrary>)=>{
 		let result:Awaited<ReturnType<typeof createLibrary>>;
 		try{result=await action();}
 		catch(error){
 			if(!(error instanceof CreationInterrupted))throw error;
-			dialog.close();form.close();
-			const recovery=new Dialog(plugin.app,tr('继续创建知识库','Continue library creation'));
+			const recoveryPage=newPage(), recovery=dialogContents(recoveryPage);
 			recovery.lines([error.receipt.path,error.message]);
-			recovery.action(tr('复核并继续','Review and continue'),async()=>{
+			actions(recoveryPage).action(tr('复核并继续','Review and continue'),async()=>{
 				const {receipt}=error,review=await reviewInterruptedCreation(disk,receipt);
-				const next=new Dialog(plugin.app,review.head?tr('确认现有首提交并登记','Confirm existing initial commit and register'):tr('确认目标目录中的首提交','Confirm initial commit at the destination'));
+				const recoveryReview=newPage(), next=dialogContents(recoveryReview);
 				next.lines([receipt.path]);
-				showInitialPlan(next,review.git,review.head);
+				showInitialPlan(recoveryReview,review.git,review.head);
 				const registry=await reviewRegistryProtection(plugin,next);
 				showExclusionPlan(next,exclusions.plan);
 				const protect=async()=>{await registry();await exclusions.apply(receipt.manifest.id);};
-				next.action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(next,exclusions,
-					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect))));
-				recovery.close();next.open();
-			});
-			recovery.open();return;
+				actions(recoveryReview).action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(chosen,exclusions,
+					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect)))).setCta();
+				showOutcome(review.head?tr('确认现有首提交并登记','Confirm existing initial commit and register'):
+					tr('确认目标目录中的首提交','Confirm initial commit at the destination'),recoveryReview);
+			}).setCta();
+			showOutcome(tr('继续创建知识库','Continue library creation'),recoveryPage);
+			return;
 		}
-		dialog.close();form.close();
-		const success=new Dialog(plugin.app,tr('知识库已创建','Library created'));
+		const completed=newPage(), success=dialogContents(completed);
 		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),result.branch+' · '+result.head.slice(0,7)],
 			[tr('提交说明','Commit message'),result.message],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
-		if(template.entry)success.action(tr('打开首页','Open home note'),async()=>{
-		const relative=result.location+'/'+template.entry;
+		const entry=chosen.entry,done=actions(completed);
+		if(entry)done.action(tr('打开首页','Open home note'),async()=>{
+			const relative=result.location+'/'+entry;
 			await disk.path(relative);
 			const file=plugin.app.vault.getAbstractFileByPath(relative);
 			if(!(file instanceof TFile))throw new Error(tr('Obsidian 正在索引首页，请稍后重试。','Obsidian is indexing the home note. Try again shortly.'));
 			await plugin.app.workspace.getLeaf(false).openFile(file);
-			success.close();
+			wizard.close();
 		}).setCta();
-		success.action(tr('完成','Done'),async()=>{success.close();});
-		success.open();
+		done.action(tr('完成','Done'),()=>{wizard.close();return Promise.resolve();});
+		showOutcome(tr('知识库已创建','Library created'),completed);
 		await refresh();
 	};
-	form.action(tr('预览','Preview'),async()=>{
+	const detailActions=actions(detailsPage);
+	detailActions.action(tr('返回模板','Back to template'),()=>{showStep(0,templatePage);return Promise.resolve();});
+	detailActions.action(tr('预览','Preview'),async()=>{
+		if(!template)return;
 		assertGitEnabled(plugin);
-		await readVaultRegistry(disk);
-		const skeleton=input.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
-		const preview=await previewCreate(disk,plugin.config,{...input,parent:getParent(),displayName:input.displayName||input.name,
-			git:{defaults,values:{...values},origin,...gitOptions}},skeleton);
-		const {git}=preview;
-		const confirm=new V3Dialog(plugin.app,tr('确认创建','Confirm creation'));
-		confirm.facts([[tr('知识库路径','Library path'),preview.location],[tr('模板','Template'),template.name+' · '+preview.template.version],
-			[tr('通用检验套件','Common check kit'),preview.checkKit.version]]);
-		showTemplateDetails(confirm.contentEl,template);
-		if(preview.warnings.length)confirm.lines(preview.warnings);
-		showInitialPlan(confirm,git);
-		if(preview.template.folders.length)pathList(confirm,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
-		if(preview.template.excluded.length)pathList(confirm,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
-		confirm.lines([tr('更新 Vault 知识库登记','Update the Vault library registry')+' · '+registryDataPath(disk.configDir)]);
-		const registry=await reviewRegistryProtection(plugin,confirm);
-		const selection=await reviewCreationExclusions(plugin.app,disk.registry,confirm,preview.location,preview.template.suggestedExcludedFolders??[]);
-		confirm.action(tr('创建','Create'),()=>{
-			const exclusions=selection.read();
-			return run(confirm,exclusions,()=>plugin.exclusiveGit(preview.location,async()=>{
-				await exclusions.check();
-				return createLibrary(disk,plugin.config,preview,skeleton,async manifest=>{
-					await registry();await exclusions.apply(manifest.id);
-				},exclusions.plan.folders);
-			}));
-		}).setCta();
-		confirm.open();
+		const chosen=template;
+		const requested={...input,source:chosen.source,parent:getParent(),displayName:input.displayName||input.name,
+			git:{defaults,values:{...values},origin,...gitOptions}};
+		try { requireIdentity(effectiveIdentity()); }
+		catch(error) { if(!identityRequired)advanced.open=true; throw error; }
+		detailsPage.disabled=true;
+		try {
+			await readVaultRegistry(disk);
+			const skeleton=chosen.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
+			const preview=await previewCreate(disk,plugin.config,requested,skeleton);
+			const confirmPage=newPage(),confirm=dialogContents(confirmPage);
+			confirm.facts([[tr('Vault 内位置','Location in vault'),preview.location+'/'],
+				[tr('模板','Template'),chosen.name+' · '+preview.template.version],
+				[tr('显示名','Display name'),preview.input.displayName]]);
+			confirmPage.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
+				'Create the folder, commit the template files to local Git, and register the library.')});
+			if(preview.warnings.length)confirm.lines(preview.warnings);
+			showInitialPlan(confirmPage,preview.git);
+			const details=confirmPage.createEl('details',{cls:'kb-v3-detail'});
+			details.createEl('summary',{text:tr('模板与登记详情','Template and registry details')});
+			showTemplateDetails(details,chosen);
+			dialogContents(details).facts([[tr('通用检验套件','Common check kit'),preview.checkKit.version],
+				[tr('Vault 知识库登记','Vault library registry'),registryDataPath(disk.configDir)]]);
+			pathList(details,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
+			pathList(details,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
+			const registry=await reviewRegistryProtection(plugin,confirm);
+			const previous=reviewedExclusions?.source===chosen.source && reviewedExclusions.location===preview.location?reviewedExclusions.folders:undefined;
+			const exclusionControls=dialogContents(confirmPage.createDiv({cls:'kb-wizard-exclusions'}));
+			const selection=await reviewCreationExclusions(plugin.app,disk.registry,exclusionControls,
+				preview.location,preview.template.suggestedExcludedFolders??[],previous);
+			const confirmActions=actions(confirmPage);
+			confirmActions.action(tr('返回详情','Back to details'),()=>{
+				reviewedExclusions={source:chosen.source,location:preview.location,folders:selection.read().plan.folders};
+				showStep(1,detailsPage);
+				return Promise.resolve();
+			});
+			confirmActions.action(tr('创建知识库','Create library'),async()=>{
+				const exclusions=selection.read();
+				confirmPage.disabled=true;
+				try {
+					await run(chosen,exclusions,()=>plugin.exclusiveGit(preview.location,async()=>{
+						await exclusions.check();
+						return createLibrary(disk,plugin.config,preview,skeleton,async manifest=>{
+							await registry();await exclusions.apply(manifest.id);
+						},exclusions.plan.folders);
+					}));
+				} finally { confirmPage.disabled=false; }
+			}).setCta();
+			if(detailsPage.isConnected)showStep(2,confirmPage);
+		} finally { detailsPage.disabled=false; }
 	}).setCta();
-	form.open();
+	if(initial)setTemplate(initial);
+	showStep(initial?1:0,initial?detailsPage:templatePage,false);
+	wizard.open();
 }

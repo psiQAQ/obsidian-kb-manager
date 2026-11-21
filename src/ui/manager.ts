@@ -8,33 +8,38 @@ import { discover } from '../kb/catalog.ts';
 import { adopt, legacyBinding, adoptionWarnings } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
 import { createWizard } from './create.ts';
-import { edit,maintainBindings,move,resumeMove,upgradeManifest } from './maintain.ts';
+import { edit,maintainBindings,move,reviewPendingMove,upgradeManifest } from './maintain.ts';
 import { sourcePanel } from './source.ts';
 import { networkPanel } from './network.ts';
 import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
 import { builtinPacks } from '../kb/template-pack.ts';
 import { checkLibrary } from './v3-health.ts';
+import { createPanelTabs } from './panel-tabs.ts';
 
 export const managerType='knowledge-base-manager-view';
+type WorkspaceTab='changes'|'remote';
+
 export class ManagerView extends ItemView {
 	readonly plugin: KnowledgeBaseManager;
 	private expanded?: string;
 	private readonly drafts = new Map<string,string>();
+	private readonly workspaceTabs = new Map<string,WorkspaceTab>();
 	private rendering?: AbortController;
 	private networkReady?: Promise<void>;
 	private networkActions=new Map<string,()=>Promise<void>>();
 	async runNetworkAction(id:string,action:string){
-		await this.showLibrary(id);
+		await this.showLibrary(id,'remote');
 		await this.networkReady;
 		const run=this.networkActions.get(action);
 		if(this.expanded!==id || !run)throw new Error(tr('此库当前无法执行该操作','This action is unavailable for the selected library'));
 		await run();
 	}
-	async showLibrary(id: string){
+	async showLibrary(id: string, tab:WorkspaceTab='changes'){
 		this.expanded=id;
+		this.workspaceTabs.set(id,tab);
 		await this.render();
 	}
 	async onClose(){
@@ -47,7 +52,7 @@ export class ManagerView extends ItemView {
 	getDisplayText(){return tr('知识库管理器',"Knowledge base manager");}
 	getIcon(){return 'library';}
 	async onOpen(){await this.render();}
-	async render(){
+	async render(focusToggle?:string){
 		this.rendering?.abort();
 		this.networkActions.clear();
 		this.networkReady=undefined;
@@ -56,26 +61,28 @@ export class ManagerView extends ItemView {
 		const el=this.contentEl;
 		el.addClass('kb-manager-sidebar');
 		el.empty();
-		new Setting(el).setName(tr('知识库',"Knowledge bases")).setHeading()
-			.addButton(b=>b.setButtonText(tr('新建',"New")).onClick(()=>this.create()))
-			.addExtraButton(b=>b.setIcon('download').setTooltip(tr('克隆知识库','Clone library')).onClick(()=>cloneWizard(this.plugin)))
-			.addButton(b=>b.setButtonText(tr('登记','Registry')).onClick(()=>manageRegistry(this.plugin)))
-			.addButton(b=>b.setButtonText(tr('刷新',"Refresh")).onClick(()=>this.render()));
+		new Setting(el).setClass('kb-manager-heading').setName(tr('知识库',"Knowledge bases")).setHeading()
+			.addExtraButton(b=>b.setIcon('refresh-cw').setTooltip(tr('刷新知识库列表','Refresh library list')).onClick(()=>this.render()));
+		new Setting(el).setClass('kb-controls-only').setClass('kb-manager-entry-actions')
+			.addButton(b=>b.setButtonText(tr('新建',"Create")).setCta().onClick(()=>this.create()))
+			.addButton(b=>b.setButtonText(tr('克隆','Clone')).setDisabled(gitDisabled(this.plugin)).onClick(()=>cloneWizard(this.plugin)))
+			.addButton(b=>b.setButtonText(tr('登记已有库','Register existing library')).onClick(()=>manageRegistry(this.plugin)));
 		try {
 			for(const record of Object.values(this.plugin.moves)){
-				const row=new Setting(el).setName(record.source+' → '+record.destination).setDesc(tr('移动阶段：',"Move phase: ")+record.phase);
-				if(record.phase!=='complete')row.addButton(b=>b.setButtonText(tr('复核并继续',"Review and continue")).onClick(async()=>{
-					try{await resumeMove(this.plugin,record);}catch(error){new Notice(String(error),8000);}
-				}));
+				if(record.phase==='complete')continue;
+				new Setting(el).setName(tr('目录移动待完成','Pending library move'))
+					.setDesc(record.source+' → '+record.destination)
+					.addButton(b=>b.setButtonText(tr('复核并继续',"Review and continue")).onClick(()=>reviewPendingMove(this.plugin,record)));
 			}
 			const libraries=await discover(this.plugin.disk,this.plugin.config);
 			if(signal.aborted)return;
-			if (!libraries.length) el.createEl('p',{text:tr('尚未登记知识库。可以新建，或选择现有 kb.toml 登记。',"No libraries registered. Create a library or register an existing kb.toml.")});
+			if (!libraries.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有库可选择 kb.toml 或扫描目录。',
+				'No libraries are registered. Create from a template, clone from a Git remote, or register existing libraries by selecting kb.toml or scanning a folder.')});
 			this.plugin.observeLibraries(libraries);
-			for(const lib of libraries)this.row(lib,signal);
-		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
+			for(const lib of libraries)this.row(lib,signal,focusToggle);
+		} catch(error) { if(!signal.aborted)el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
 	}
-	row(lib: Library,signal:AbortSignal){
+	row(lib: Library,signal:AbortSignal,focusToggle?:string){
 		if(lib.missing){
 			new Setting(this.contentEl).setName(lib.location).setDesc(tr('登记路径下找不到 kb.toml','The registered path has no kb.toml'))
 				.addButton(b=>b.setButtonText(tr('重新定位','Relocate')).onClick(()=>relocateRegistryEntry(this.plugin,lib.location)))
@@ -89,12 +96,13 @@ export class ManagerView extends ItemView {
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(this.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
-		if(!gitDisabled(this.plugin))row.addExtraButton(button=>{
-			button.extraSettingsEl.setAttribute('aria-expanded',String(this.expanded===key));
-			button.setIcon('git-branch').setTooltip(tr('Git 状态','Git status')).onClick(()=>{
+		if(!gitDisabled(this.plugin))row.addButton(button=>{
+			button.buttonEl.setAttribute('aria-expanded',String(this.expanded===key));
+			button.setButtonText(tr('Git 工作区','Git workspace')).onClick(()=>{
 				this.expanded=this.expanded===key ? undefined : key;
-				void this.render();
+				void this.render(key);
 			});
+			if(focusToggle===key)button.buttonEl.focus();
 		});
 		if(this.expanded===key && (!lib.identity || lib.problem || lib.duplicate) && !gitDisabled(this.plugin)){
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
@@ -116,18 +124,30 @@ export class ManagerView extends ItemView {
 			row.addButton(b=>b.setButtonText(tr('预览接管',"Preview adoption")).onClick(async ()=>{
 				try {
 					const warnings=await adoptionWarnings(this.plugin.disk,lib);
-					const dialog=new Dialog(this.app,tr('接管旧知识库',"Adopt legacy library"));
-					dialog.lines([lib.location,tr('在 kb.toml 中新增 [manager]',"Add [manager] to kb.toml"),'Git · '+lib.git,...Object.entries(lib.mapping ?? {}).map(([k,v])=>k+' → '+String(v)),...warnings]);
+					const dialog=new V3Dialog(this.app,tr('预览接管旧知识库',"Preview legacy library adoption"));
+					dialog.facts([[tr('清单','Manifest'),lib.location+'/kb.toml'],[tr('清单修改','Manifest change'),
+						tr('新增 [manager] 和知识库 ID','Add [manager] and a library ID')]]);
+					const mapping=Object.entries(lib.mapping ?? {});
+					if(mapping.length){
+						const paths=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+						paths.createEl('summary',{text:tr('现有路径映射','Existing path mappings')});
+						dialogContents(paths).facts(mapping.map(([key,value])=>[key,String(value)]));
+					}
+					if(warnings.length){
+						dialog.contentEl.createEl('h3',{text:tr('需人工核对','Manual review required')});
+						dialog.lines(warnings);
+					}
 					const candidate=await legacyBinding(this.plugin.disk,lib);
 					const confirm=async(hash?:string)=>{
 						await this.plugin.exclusive(lib.location,()=>adopt(this.plugin.disk,this.plugin.config,lib,warnings,hash));
 						dialog.close();await this.render();
 					};
-					dialog.action(tr('仅添加身份',"Add identity only"),()=>confirm());
 					if(candidate){
-						dialog.lines([tr('可领管 knowledge.base 的库根、wiki 和 Notes 过滤条件。其他字段由原作者维护。',"The manager can maintain matching root, wiki and Notes filters in knowledge.base. Other fields remain user-managed.")]);
-						dialog.action(tr('添加身份并领管已匹配的绑定',"Add identity and manage matched bindings"),()=>confirm(candidate));
+						dialog.contentEl.createEl('p',{text:tr('可同时领管 knowledge.base 中匹配的库根、wiki 和 Notes 过滤条件。',
+							'You can also let the manager maintain the matching root, wiki and Notes filters in knowledge.base.')});
 					}
+					dialog.action(tr('仅添加身份',"Add identity only"),()=>confirm()).setCta();
+					if(candidate)dialog.action(tr('添加身份并领管已匹配的绑定',"Add identity and manage matched bindings"),()=>confirm(candidate));
 					dialog.open();
 				} catch(error){new Notice(String(error));}
 			})); return;
@@ -139,7 +159,7 @@ export class ManagerView extends ItemView {
 			const action=(title:string,icon:string,run:()=>void|Promise<void>)=>menu.addItem(item=>item.setTitle(title).setIcon(icon).onClick(async()=>{
 				try{await run();}catch(error){new Notice(String(error));}
 			}));
-			if(!gitDisabled(this.plugin))action(tr('Git 状态','Git status'),'git-branch',()=>this.showLibrary(id));
+			if(!gitDisabled(this.plugin))action(tr('Git 工作区','Git workspace'),'git-branch',()=>this.showLibrary(id));
 			action(tr('本库 Git 设置','Library Git settings'),'settings',()=>librarySettings(this.plugin,lib));
 			action(tr('编辑','Edit'),'pencil',()=>edit(this.plugin,lib));
 			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib));
@@ -176,18 +196,27 @@ export class ManagerView extends ItemView {
 		if(this.expanded===id && !gitDisabled(this.plugin)){
 			const panel=this.contentEl.createDiv({cls:'kb-library-git'});
 			watchLibraryChanges(this.plugin,lib,panel,signal,()=>this.render());
-			const local=panel.createDiv();
-			void Promise.resolve(sourcePanel(this.plugin,lib,local,this.drafts,signal)).catch(error=>{
-				if(!signal.aborted)local.createEl('p',{cls:'kb-git-error',text:String(error)});
-			});
-			if(!lib.identity.archived && lib.git==='local'){
-				const remote=panel.createDiv();
-				this.networkReady=networkPanel(this.plugin,lib,remote,(icon,action)=>{
-					if(!signal.aborted)this.networkActions.set(icon,action);
-				}).catch(error=>{
-					if(!signal.aborted)remote.createEl('p',{cls:'kb-git-error',text:String(error)});
-				});
-			}
+			panel.createEl('h3',{text:tr('Git 工作区','Git workspace')+' · '+lib.identity.displayName});
+			const tabs: {id:WorkspaceTab;label:string}[]=[{id:'changes',label:tr('更改','Changes')}];
+			if(!lib.identity.archived && lib.git==='local')tabs.push({id:'remote',label:tr('远端与分支','Remote and branches')});
+			const preferred=this.workspaceTabs.get(id);
+			const initial=tabs.some(tab=>tab.id===preferred)?preferred:'changes';
+			const rendered=new Set<WorkspaceTab>();
+			const load=(tab:WorkspaceTab)=>{
+				this.workspaceTabs.set(id,tab);
+				if(rendered.has(tab))return;
+				rendered.add(tab);
+				const content=panels[tab];
+				const loading=content.createEl('p',{cls:'kb-workspace-meta',text:tr('正在读取 Git 状态…','Reading Git status…'),attr:{role:'status'}});
+				const work=tab==='changes'?sourcePanel(this.plugin,lib,content,this.drafts,signal):
+					networkPanel(this.plugin,lib,content,(icon,action)=>{if(!signal.aborted)this.networkActions.set(icon,action);});
+				const done=work.catch(error=>{
+					if(!signal.aborted)content.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});
+				}).finally(()=>loading.remove());
+				if(tab==='remote')this.networkReady=done;
+			};
+			const {panels,getActive}=createPanelTabs(panel,tr('Git 工作区','Git workspace'),tabs,initial,tab=>load(tab));
+			load(getActive());
 		}
 
 	}

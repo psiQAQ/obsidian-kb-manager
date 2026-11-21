@@ -10,19 +10,23 @@ import type { CommitMode } from '../git/versions.ts';
 import { candidates } from '../git/index-actions.ts';
 import { initializeRepository,readCommit } from '../git/repository.ts';
 import { showSourceHistory } from './source-history.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { assertGitEnabled } from './device.ts';
 import { editRepositoryIdentity, identitySourceText } from './repository-identity.ts';
 
-export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:'save'|'history', draft?: string, onCommitted?:()=>void|Promise<void>, commitMode:CommitMode='smart') {
+export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:'save'|'history', draft?: string,
+	onCommitted?:(message:string)=>void|Promise<void>, commitMode:CommitMode='smart', onDraft?:(message:string)=>void) {
 	assertGitEnabled(plugin);
 	await recheck(plugin.disk,plugin.config,lib);
 	const dir=await plugin.disk.path(lib.location);
 	const prefs=plugin.preferences(lib.identity?.id);
 	if(commitMode==='smart' && !prefs.autoStageOnEmptyIndex)commitMode='staged';
-	const dialog=new Dialog(plugin.app,mode==='save'?(lib.git==='missing'?tr('初始化本库 Git','Initialize library Git'):tr('预览提交','Preview commit')):tr('本库历史','Library history'));
-	dialog.facts([[tr('知识库','Knowledge base'),lib.identity?.displayName ?? lib.location],[tr('路径','Path'),lib.location]]);
+	const dialog=new V3Dialog(plugin.app,mode==='save'?(lib.git==='missing'?tr('初始化本库 Git','Initialize library Git'):tr('预览提交','Preview commit')):tr('本库历史','Library history'));
+	const name=lib.identity?.displayName ?? lib.location;
+	const libraryFacts: [string,string][]=[[tr('知识库','Library'),name]];
+	if(name!==lib.location)libraryFacts.push([tr('路径','Path'),lib.location]);
 	if(lib.git==='missing'){
+		dialog.facts(libraryFacts);
 		dialog.lines([tr('此库没有 Git 历史。初始化将创建 .git/ 和 main 分支。',"This library has no Git history. Initialization creates .git/ and a main branch.")]);
 		if(!lib.identity?.archived)dialog.action(tr('初始化本地 Git',"Initialize local Git"),async()=>{
 			await plugin.exclusiveGit(lib.location,async()=>{
@@ -40,7 +44,8 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 		if(commitMode!=='smart' && !preview.staged)throw new Error(tr('请先暂存要提交的内容','Stage changes first'));
 		if(commitMode==='amend' && !preview.head)throw new Error(tr('没有可修订的提交','No commit to amend'));
 		const original=commitMode==='amend'?(await readCommit(dir,preview.head)).commit:undefined;
-		dialog.facts([[tr('分支','Branch'),preview.branch],[tr('当前提交','Current commit'),preview.head||tr('无提交','No commits')]]);
+		dialog.modalEl.addClass('kb-commit-preview');
+		dialog.facts([...libraryFacts,[tr('分支','Branch'),preview.branch+' · '+(preview.head.slice(0,10)||tr('无提交','No commits'))]]);
 		if(original)dialog.contentEl.createEl('p',{text:tr('修订将替换上一次提交，并保留原作者。','Amending replaces the previous commit and keeps its author.')});
 		const previous=lib.identity && plugin.saves[lib.identity.id];
 		if(previous && !previous.committed)dialog.lines([
@@ -52,25 +57,34 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			const included=preview.staged?staged:working;
 			const files=included.map(c=>c.file);
 			let message=draft ?? renderCommitMessage(prefs,moment.utc().local().format(prefs.commitDateFormat),hostname(),files);
-			dialog.multiline(tr('提交说明','Commit message'),message,v=>{message=v;},{example:tr('更新知识库笔记','Update knowledge base notes')});
-			if(prefs.listChangedFilesInMessageBody)dialog.contentEl.createEl('p',{text:tr('提交正文将附上本次提交的文件名。','Filenames included in this commit are appended to the commit body.')});
-			const signature=(name:string,email:string)=>(name||'—')+' <'+(email||'—')+'>';
-			const currentSignature=signature(preview.identity.name,preview.identity.email);
-			dialog.contentEl.createEl('h3',{text:tr('提交身份','Commit identity')});
-			dialog.facts([[tr('作者','Author'),original?signature(original.author.name,original.author.email):currentSignature],
-				[tr('提交者','Committer'),currentSignature],...(['name','email'] as const).map(key=>
-					['user.'+key,identitySourceText(preview.identitySources[key])] as const)]);
-			if(!preview.identity.name || !preview.identity.email)dialog.action(tr('设置本库 Git 身份','Set library Git identity'),async()=>{
-				await editRepositoryIdentity(plugin,lib);dialog.close();
-			});
 			const partial=new Set(staged.filter(c=>c.work!==c.stage).map(c=>c.file));
-			const mark=(file:string)=>partial.has(file)?' · '+tr('部分暂存','Partially staged'):'';
-			dialog.contentEl.createEl('h3',{text:(preview.staged?tr('本次提交的暂存内容','Staged changes in this commit'):tr('将暂存并提交','Changes to stage and commit'))+' ('+included.length+')'});
-			dialog.lines(included.map(c=>c.file+' · '+state(preview.staged?c.head:c.stage,preview.staged?c.stage:c.work)+mark(c.file)));
+			const fileList=(title:string,items:typeof staged,compareStaged:boolean)=>{
+				dialog.contentEl.createEl('h3',{text:title+' ('+items.length+')'});
+				const list=dialog.contentEl.createEl('ul',{cls:'kb-commit-file-list'});
+				for(const change of items){
+					const row=list.createEl('li');
+					row.createSpan({text:change.file});
+					row.createSpan({cls:'kb-workspace-meta',text:state(compareStaged?change.head:change.stage,compareStaged?change.stage:change.work)});
+					if(partial.has(change.file))row.createSpan({cls:'kb-partially-staged',text:tr('部分暂存','Partially staged')});
+				}
+			};
+			fileList(original?tr('用于修订的暂存更改','Staged changes to apply in the amendment'):
+				preview.staged?tr('本次提交的文件','Files in this commit'):tr('将暂存并提交的文件','Files to stage and commit'),included,preview.staged);
 			if(preview.staged && working.length){
-				dialog.contentEl.createEl('h3',{text:tr('留在工作区的更改','Changes kept in the working tree')+' ('+working.length+')'});
-				dialog.lines(working.map(c=>c.file+' · '+state(c.stage,c.work)+mark(c.file)));
+				if(partial.size)dialog.contentEl.createEl('p',{cls:'kb-commit-hint',text:tr('部分暂存文件将提交暂存区中的版本，后续修改留在工作区。',
+					'The staged version of each partially staged file will be committed. Later edits stay in the working tree.')});
+				fileList(tr('留在工作区的更改','Changes kept in the working tree'),working,false);
 			}
+			dialog.multiline(tr('提交说明','Commit message'),message,v=>{message=v;onDraft?.(v);},{example:tr('更新知识库笔记','Update knowledge base notes')});
+			if(prefs.listChangedFilesInMessageBody)dialog.contentEl.createEl('p',{cls:'kb-commit-hint',text:tr('提交正文将附上本次提交的文件名。','Filenames included in this commit are appended to the commit body.')});
+			const signature=(name:string,email:string)=>(name||'—')+' <'+(email||'—')+'>';
+			const committer=signature(preview.identity.name,preview.identity.email);
+			const author=original?signature(original.author.name,original.author.email):committer;
+			dialog.facts(author===committer?[[tr('作者与提交者','Author and committer'),committer]]:
+				[[tr('作者','Author'),author],[tr('提交者','Committer'),committer]]);
+			if(!preview.identity.name || !preview.identity.email)dialog.action(tr('设置本库 Git 身份','Set library Git identity'),async()=>{
+				onDraft?.(message);await editRepositoryIdentity(plugin,lib);dialog.close();
+			});
 			const label=commitMode==='amend'?tr('修订上一次提交','Amend previous commit'):preview.staged?tr('提交已暂存内容','Commit staged changes'):tr('暂存并提交','Stage and commit');
 			dialog.action(label,async()=>{
 				const oid=await plugin.exclusiveGit(lib.location,async()=>{
@@ -83,12 +97,16 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 					},commitMode);
 				});
 				dialog.contentEl.empty();dialog.lines([lib.location,tr('已提交 ',"Committed ")+oid]);
-				await onCommitted?.();await plugin.refresh();
-			});
+				await onCommitted?.(message);await plugin.refresh();
+			}).setCta();
 		}else dialog.lines([tr('没有待提交内容',"No changes to commit")]);
-		const scan=dialog.contentEl.createEl('details');
-		scan.createEl('summary',{text:tr('扫描详情','Scan details')});
-		scan.createEl('p',{text:preview.platform+tr(' · 已扫描 ',' · Scanned ')+preview.files+tr(' 个文件，读取 ',' files and ')+preview.bytes+tr(' 字节，用时 ',' bytes in ')+preview.elapsed+' ms'});
+		const details=dialog.contentEl.createEl('details',{cls:'kb-commit-details'});
+		details.createEl('summary',{text:tr('Git 详情','Git details')});
+		dialogContents(details).facts([
+			[tr('完整 HEAD','Full HEAD'),preview.head||tr('无提交','No commits')],
+			...(['name','email'] as const).map(key=>['user.'+key,identitySourceText(preview.identitySources[key])] as const),
+			[tr('扫描','Scan'),preview.platform+tr(' · 已扫描 ',' · Scanned ')+preview.files+tr(' 个文件，读取 ',' files and ')+preview.bytes+tr(' 字节，用时 ',' bytes in ')+preview.elapsed+' ms'],
+		]);
 	}
 	dialog.open();
 }

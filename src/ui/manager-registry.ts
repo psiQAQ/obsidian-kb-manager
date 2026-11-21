@@ -6,52 +6,65 @@ import { applyIgnoreRule, previewIgnoreRule, previewRegistryIgnore, readRegistry
 import { registryCandidate, scanVaultFolder } from '../registry/discovery.ts';
 import { confirmImport, previewImport } from '../registry/import.ts';
 import type { ImportMode } from '../registry/import.ts';
-import { amendRegistry, parseRegistry, registryDataPath } from '../registry/paths.ts';
-import { Dialog } from './dialog.ts';
+import { amendRegistry, parseRegistry, registryDataPath, vaultParent } from '../registry/paths.ts';
+import { V3Dialog as Dialog, dialogContents } from './dialog.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
 import { registryPathField } from './registry-path-field.ts';
 import { gitDisabled } from './device.ts';
 import { visible } from './maintain.ts';
 import { gitResult } from '../git/network-native.ts';
+import { createPanelTabs } from './panel-tabs.ts';
 
-function descriptions(plugin:KnowledgeBaseManager, lib:Library) {
+function libraryFacts(plugin:KnowledgeBaseManager, lib:Library) {
 	const {t} = plugin;
 	const entry = lib.identity?.entry ?? lib.mapping?.index;
 	return [
-		lib.location + '/' + identityFile,
-		'ID · ' + (lib.identity?.id ?? t('旧库，尚未分配','Legacy library, unassigned')),
-		t('首页','Homepage') + ' · ' + (entry ? lib.location + '/' + entry : t('未设置','None')),
-		t('Git 偏好覆盖','Git preferences overrides') + ' · ' + (Object.entries(lib.preferences ?? {}).map(([key,value])=>key + '=' + JSON.stringify(value)).join(', ') || t('无','None')),
-	];
+		[t('清单','Manifest'),lib.location + '/' + identityFile],
+		[t('知识库 ID','Library ID'),lib.identity?.id ?? t('旧版清单，尚未接管','Legacy manifest, awaiting adoption')],
+		[t('首页','Homepage'),entry ? lib.location + '/' + entry : t('未设置','None')],
+		[t('本库 Git 设置覆盖','Library Git overrides'),Object.entries(lib.preferences ?? {}).map(([key,value])=>key + '=' + JSON.stringify(value)).join(', ') || t('无','None')],
+	] as const;
 }
 
-function pickManifest(plugin:KnowledgeBaseManager, run:(location:string)=>Promise<void>) {
-	const {app,t} = plugin;
-	const dialog = new Dialog(app,t('选择知识库的 kb.toml','Select the library kb.toml'));
-	const getPath = registryPathField(dialog,app,'manifest');
-	dialog.action(t('预览','Preview'),async()=>{
-		const file = app.vault.getFileByPath(getPath());
-		if (file?.name !== identityFile || !file.parent || file.parent.isRoot())
-			throw new Error(t('请选择知识库根目录中的 kb.toml','Select kb.toml at the library root'));
-		dialog.close();
-		await run(file.parent.path);
-	});
-	dialog.open();
+function manifestField(plugin:KnowledgeBaseManager, content:HTMLElement) {
+	const getPath = registryPathField({contentEl:content},plugin.app,'manifest');
+	return ()=>vaultParent(getPath());
 }
 
-export async function showImportPreview(plugin:KnowledgeBaseManager, location:string, missing?:{location:string;id?:string}) {
+export async function showImportPreview(plugin:KnowledgeBaseManager, location:string, missing?:{location:string;id?:string}, complete?:()=>void) {
 	const {t,disk,config} = plugin;
 	const assets = (lib:Library)=>plugin.templateAssets(lib);
 	const preview = await previewImport(disk,config,location,assets,missing);
-	const dialog = new Dialog(plugin.app,missing ? t('重新定位已登记知识库','Relocate registered library') : t('预览知识库导入','Preview library import'));
-	const protect=await reviewRegistryProtection(plugin,dialog);
-	dialog.lines([
-		...descriptions(plugin,preview.library), registryDataPath(disk.configDir),
-		...(missing ? [missing.location + ' → ' + location,...(missing.id ? [] : [t('此前没有记录该库的 ID，请核对所选库的身份。','The previous ID is unavailable. Verify the selected library identity.')])] : []),
-		...preview.clashes.map(lib=>t('登记中已有同 ID','Same ID already registered') + ' · ' + lib.location),
-		...preview.rebinding.changes.flatMap(change=>[change.file,...change.fields]),
-		...preview.rebinding.manual,
+	const dialog = new Dialog(plugin.app,missing ? t('预览重新定位','Preview relocation') : t('预览知识库登记','Preview library registration'));
+	const existing = preview.registry.paths.includes(location);
+	dialog.facts([
+		...libraryFacts(plugin,preview.library),
+		[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)],
+		[t('登记状态','Registration'),existing ? t('此路径已登记','This path is registered') : t('此路径尚未登记','This path is unregistered')],
+		...(missing ? [[t('失联路径','Missing path'),missing.location],[t('找到的路径','Located path'),location]] as const : []),
 	]);
+	if(missing && !missing.id)dialog.lines([t('此前没有记录该库的 ID，请核对所选库的身份。','The previous ID is unavailable. Verify the selected library identity.')]);
+	if(!preview.library.identity)dialog.lines([t('登记现有路径后，可在侧栏预览接管并给旧库分配身份。','After registering this path, use Preview adoption in the sidebar to assign the legacy library an identity.')]);
+	const protect=await reviewRegistryProtection(plugin,dialog);
+	if(preview.clashes.length){
+		dialog.contentEl.createEl('h3',{text:t('已登记的同 ID 路径','Registered paths with this ID')});
+		dialog.lines(preview.clashes.map(lib=>lib.location));
+	}
+	const hasChanges = preview.rebinding.changes.length > 0;
+	if(hasChanges){
+		dialog.contentEl.createEl('h3',{text:t('重绑后的受管文件','Managed files after rebinding')});
+		dialog.lines([t('重绑会更新下方受管文件和 kb.toml 中记录的绑定路径。','Rebinding updates the following managed files and the binding paths recorded in kb.toml.')]);
+		for(const change of preview.rebinding.changes){
+			const item=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+			item.createEl('summary',{text:location+'/'+change.file});
+			dialogContents(item).lines(change.fields);
+			item.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:change.after});
+		}
+	}
+	if(preview.rebinding.manual.length){
+		dialog.contentEl.createEl('h3',{text:t('需人工核对','Manual review required')});
+		dialog.lines(preview.rebinding.manual);
+	}
 	if (preview.library.identity) {
 		try {
 			const rule = await previewIgnoreRule(disk,location,'/' + identityFile);
@@ -60,7 +73,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 				dialog.action(t('确认写入本库忽略规则','Write library ignore rule'),async()=>{
 					await plugin.exclusive(location,()=>applyIgnoreRule(disk,rule));
 					dialog.close();
-					await showImportPreview(plugin,location,missing);
+					await showImportPreview(plugin,location,missing,complete);
 				});
 			}
 		} catch (error) { dialog.lines([String(error)]); }
@@ -74,26 +87,30 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 	const apply = (mode:ImportMode)=>async()=>{
 		await plugin.exclusive(location,()=>confirmImport(disk,plugin.config,preview,mode,assets,visible(plugin),protect));
 		dialog.close();
+		complete?.();
 		await plugin.refresh();
 	};
-	const hasChanges = preview.rebinding.changes.length > 0;
 	if (preview.clashes.length || missing) {
-		if (!missing) dialog.action(t('登记并保留重复 ID','Register and retain duplicate ID'),apply('register'));
+		if (!missing && !existing) dialog.action(t('登记并保留重复 ID','Register and retain duplicate ID'),apply('register'));
+		dialog.lines([t('作为副本会在所选目录的 kb.toml 写入新 ID。','Registering as a copy writes a new ID to kb.toml in the selected folder.')]);
 		dialog.action(t('作为副本登记并分配新 ID','Register as a copy and assign a new ID'),apply('copy'));
-		if (hasChanges) dialog.action(t('分配新 ID 并重绑','Assign a new ID and rebind'),apply('copy-rebind'));
+		if (hasChanges) dialog.action(t('登记副本并重绑','Register copy and rebind'),apply('copy-rebind'));
 	}
 	if (!preview.clashes.length) {
-		const existing = preview.registry.paths.includes(location);
-		if (!existing || missing) dialog.action(missing ? t('确认重新定位','Confirm relocation') : t('登记到列表','Register library'),apply('register'));
-		if (hasChanges) dialog.action(t('确认登记及重绑','Register and rebind'),apply('rebind'));
-		if (existing && !hasChanges && !missing) dialog.lines([t('此库已登记。','This library is registered.')]);
+		if (!existing || missing) dialog.action(missing ? t('仅更新登记路径','Update registered path only') : t('仅登记路径','Register path only'),apply('register')).setCta();
+		if (hasChanges) dialog.action(missing ? t('更新路径并重绑','Update path and rebind') : existing ? t('重绑受管文件','Rebind managed files') : t('登记路径并重绑','Register path and rebind'),apply('rebind'));
 	}
 	dialog.open();
 }
 
 export function relocateRegistryEntry(plugin:KnowledgeBaseManager, location:string) {
 	const id = Object.entries(plugin.known).find(([,previous])=>location === previous)?.[0];
-	pickManifest(plugin,next=>showImportPreview(plugin,next,{location,id}));
+	const {t,app} = plugin;
+	const dialog = new Dialog(app,t('重新定位已登记知识库','Relocate registered library'));
+	dialog.facts([[t('失联路径','Missing path'),location],[t('原知识库 ID','Previous library ID'),id ?? t('暂无记录','Unavailable')]]);
+	const selected = manifestField(plugin,dialog.contentEl);
+	dialog.action(t('预览重新定位','Preview relocation'),()=>showImportPreview(plugin,selected(),{location,id},()=>dialog.close())).setCta();
+	dialog.open();
 }
 
 export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:string) {
@@ -101,7 +118,8 @@ export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:
 	const {raw,paths} = await readVaultRegistry(disk);
 	if (!paths.includes(location)) throw new Error(t('登记已变化，请刷新','Registration changed. Refresh the manager.'));
 	const dialog = new Dialog(plugin.app,t('移除登记','Remove registration'));
-	dialog.lines([registryDataPath(disk.configDir),location,t('此操作更新 Vault 的登记列表，保留目录和文件。','This updates the Vault registry and preserves the folder and files.')]);
+	dialog.facts([[t('登记路径','Registered path'),location],[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
+	dialog.lines([t('此操作从列表移除此知识库，保留目录和文件。','This removes the library from the list and preserves the folder and files.')]);
 	dialog.action(t('移除登记','Remove registration'),async()=>{
 		await plugin.exclusive(location,()=>writeVaultRegistry(disk,raw,amendRegistry(paths,{remove:[location]},disk.configDir)));
 		dialog.close();
@@ -110,7 +128,7 @@ export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:
 	dialog.open();
 }
 
-async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
+async function showScanPreview(plugin:KnowledgeBaseManager, location:string, complete:()=>void) {
 	const {t,disk,config} = plugin;
 	const raw = await readRegistryRaw(disk);
 	let paths:string[] = [];
@@ -123,18 +141,25 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 	const seen = [...libraries,...existing.filter(lib=>lib!==undefined)];
 	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'));
 	const protect=await reviewRegistryProtection(plugin,dialog);
-	dialog.lines([location || t('Vault 根目录','Vault root'),registryDataPath(disk.configDir),...(problem ? [problem] : []),...skipped]);
+	dialog.facts([[t('扫描目录','Scanned folder'),location || t('Vault 根目录','Vault root')],
+		[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
+	if(problem)dialog.lines([problem]);
+	if(skipped.length){
+		const details=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+		details.createEl('summary',{text:t('已跳过的路径','Skipped paths')+' ('+skipped.length+')'});
+		dialogContents(details).lines(skipped);
+	}
 	const selected = new Set<string>();
 	for (const lib of libraries) {
 		const duplicates = lib.identity ? seen.filter(other=>other.location!==lib.location && other.identity?.id===lib.identity?.id) : [];
 		const row = new Setting(dialog.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc([
-			...descriptions(plugin,lib), ...(lib.problem ? [lib.problem] : []),
+			...libraryFacts(plugin,lib).map(([label,value])=>label+' · '+value), ...(lib.problem ? [lib.problem] : []),
 			...duplicates.map(other=>t('ID 重复','Duplicate ID') + ' · ' + other.location),
 		].join('\n'));
 		if (lib.problem || (!lib.identity && !lib.mapping)) continue;
 		if (paths.includes(lib.location)) { row.descEl.createDiv({text:t('已登记','Registered')}); continue; }
 		if (!duplicates.length) selected.add(lib.location);
-		row.addToggle(toggle=>toggle.setValue(selected.has(lib.location)).setTooltip(t('登记此知识库','Register this library')).onChange(include=>{
+		row.addToggle(toggle=>toggle.setValue(selected.has(lib.location)).setTooltip(t('登记此知识库','Register this library')+' · '+lib.location).onChange(include=>{
 			if (include) selected.add(lib.location);
 			else selected.delete(lib.location);
 		}));
@@ -155,8 +180,9 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string) {
 				await protect();
 			});
 			dialog.close();
+			complete();
 			await plugin.refresh();
-		});
+		}).setCta();
 	}
 	dialog.open();
 }
@@ -173,24 +199,19 @@ export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager) {
 
 export function manageRegistry(plugin:KnowledgeBaseManager) {
 	const {t} = plugin;
-	const dialog = new Dialog(plugin.app,t('Vault 知识库登记','Vault library registry'));
-	dialog.lines([registryDataPath(plugin.disk.configDir)]);
-	dialog.action(t('选择 kb.toml 并预览导入','Select kb.toml and preview import'),()=>{
-		dialog.close();
-		pickManifest(plugin,location=>showImportPreview(plugin,location));
-		return Promise.resolve();
-	});
-	dialog.action(t('选择目录并扫描','Choose a folder to scan'),()=>{
-		dialog.close();
-		const scan = new Dialog(plugin.app,t('选择需要扫描的目录','Choose the folder to scan'));
-		const getFolder = registryPathField(scan,plugin.app,'folder',{favorites:plugin.config.parents});
-		scan.action(t('扫描所选目录','Scan selected folder'),async()=>{
-			await showScanPreview(plugin,getFolder());
-			scan.close();
-		});
-		scan.open();
-		return Promise.resolve();
-	});
-	dialog.action(t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'),async()=>{await showRegistryIgnorePreview(plugin);dialog.close();});
+	const dialog = new Dialog(plugin.app,t('登记已有知识库','Register existing libraries'));
+	const {panels}=createPanelTabs(dialog.contentEl,t('登记方式','Registration method'),[
+		{id:'manifest',label:t('选择单个清单','Select one manifest')},
+		{id:'scan',label:t('扫描目录','Scan a folder')},
+	]);
+	const selected=manifestField(plugin,panels.manifest);
+	dialogContents(panels.manifest).action(t('预览登记','Preview registration'),()=>showImportPreview(plugin,selected(),undefined,()=>dialog.close())).setCta();
+	const folder=registryPathField({contentEl:panels.scan},plugin.app,'folder',{favorites:plugin.config.parents});
+	dialogContents(panels.scan).action(t('扫描并查看结果','Scan and review results'),()=>showScanPreview(plugin,folder(),()=>dialog.close())).setCta();
+	const options=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+	options.createEl('summary',{text:t('Vault Git 忽略规则','Vault Git ignore rule')});
+	options.createEl('p',{text:t('登记列表保存在 '+registryDataPath(plugin.disk.configDir)+'。可将它加入 Vault 的 .gitignore。',
+		'The registry is stored in '+registryDataPath(plugin.disk.configDir)+'. You can add it to the Vault .gitignore.')});
+	dialogContents(options).action(t('预览忽略规则','Preview ignore rule'),()=>showRegistryIgnorePreview(plugin));
 	dialog.open();
 }

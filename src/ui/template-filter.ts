@@ -39,7 +39,7 @@ export function vaultExclusions(app:App,registry:PluginDataRegistry):ExclusionSt
 	};
 }
 
-export function showExclusionPlan(dialog:Dialog,plan:ExclusionPlan){
+export function showExclusionPlan(dialog:Pick<Dialog,'lines'>,plan:ExclusionPlan){
 	const lines=[
 		...plan.remove.map(rule=>tr('移除插件添加的规则 ','Remove a rule added by this plugin ')+rule),
 		...plan.add.map(rule=>tr('添加排除规则 ','Add exclusion ')+rule),
@@ -54,19 +54,22 @@ export interface ApprovedExclusions {
 	apply(id:string):Promise<void>;
 }
 
-export async function reviewCreationExclusions(app:App,registry:PluginDataRegistry,dialog:Dialog,location:string,suggestions:readonly string[]){
+export async function reviewCreationExclusions(app:App,registry:PluginDataRegistry,dialog:Pick<Dialog,'contentEl'|'lines'>,
+	location:string,suggestions:readonly string[],initialSelection:readonly string[]=suggestions){
 	const store=vaultExclusions(app,registry),rules=await store.readRules();
-	const selected=new Set(suggestions);
+	const selected=new Set(initialSelection);
 	const controls=new Map<string,ToggleComponent>();
 	if(suggestions.length){
 		dialog.contentEl.createEl('h3',{text:tr('从 Obsidian 搜索和关系图谱中排除','Exclude from Obsidian search and graph')});
 		for(const folder of suggestions){
 			const rule=templateFolderRule(location,folder);
-			new Setting(dialog.contentEl).setName(location+'/'+folder)
+			const folderPath=location+'/'+folder;
+			new Setting(dialog.contentEl).setName(folderPath)
 				.setDesc(rules.includes(rule)?tr('保留现有规则','Keep the existing rule'):rule)
 				.addToggle(toggle=>{
 					controls.set(folder,toggle);
-					toggle.setValue(true).onChange(enabled=>{
+					toggle.toggleEl.setAttribute('aria-label',tr('排除目录','Exclude folder')+' · '+folderPath);
+					toggle.setValue(selected.has(folder)).onChange(enabled=>{
 						if(enabled)selected.add(folder);
 						else selected.delete(folder);
 					});

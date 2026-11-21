@@ -12,14 +12,15 @@ import { credential, pullReview, recordPull } from './network.ts';
 import { versions } from './versions.ts';
 import { commitRoles } from './repository-identity.ts';
 
-export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draft?:string,onCommitted?:()=>void,mode:CommitMode='smart',onComplete?:()=>void){
+export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draft?:string,onCommitted?:(message:string)=>void,
+	mode:CommitMode='smart',onComplete?:()=>void,onDraft?:(message:string)=>void){
 	const id=lib.identity?.id,t=plugin.t;
 	if(!id || lib.identity?.archived)throw new Error(t('请选择活动知识库','Select an active library'));
 	await recheck(plugin.disk,plugin.config,lib);
 	const dir=await plugin.disk.path(lib.location);
 	const first=await remoteState(dir),prefs=plugin.preferences(id),target=first.target;
 	if(!prefs.pullBeforePush && prefs.disablePush){
-		if(first.preview.changes.length)await versions(plugin,lib,'save',draft,()=>{onCommitted?.();onComplete?.();},mode);
+		if(first.preview.changes.length)await versions(plugin,lib,'save',draft,message=>{onCommitted?.(message);onComplete?.();},mode,onDraft);
 		else {pluginNotice(plugin,'unchanged',t('没有待同步的更改','No changes to sync'),id);onComplete?.();}
 		return;
 	}
@@ -95,6 +96,6 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 		});fetch.open();
 	}
 	if(first.preview.changes.length){
-		await versions(plugin,lib,'save',draft,async()=>{onCommitted?.();await synchronize();},mode);
+		await versions(plugin,lib,'save',draft,async message=>{onCommitted?.(message);await synchronize();},mode,onDraft);
 	}else await synchronize();
 }

@@ -9,11 +9,10 @@ import {AutomationClock,selectPaths} from '../git/network-automation.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import {discover,recheck} from '../kb/catalog.ts';
 import type {Library} from '../kb/catalog.ts';
-import {Dialog} from './dialog.ts';
+import {Dialog,dialogContents} from './dialog.ts';
 import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,secretKey,transfer} from '../git/network.ts';
 import type {AutomationGrant,RemoteTarget,Credentials} from '../git/network.ts';
 import {history,saveVersion} from '../git/versions.ts';
-import {mergePanel} from './network-merge.ts';
 import {commitRoles} from './repository-identity.ts';
 import {deletionPlan,removeBranch,remoteRemoval,removeRemote,serverBranches,trackBranch} from '../git/network-refs.ts';
 
@@ -70,7 +69,16 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	if(!lib.identity || lib.duplicate || lib.problem || lib.git!=='local'||lib.identity.archived)return;
 	const id=lib.identity.id,t=(zh:string,en:string)=>plugin.t(zh,en);
 	await recheck(plugin.disk,plugin.config,lib);
-	if(await mergePanel(plugin,lib,el,await plugin.disk.path(lib.location)))return;
+	const dir=await plugin.disk.path(lib.location);
+	const current=await remoteState(dir).catch(error=>{
+		el.createEl('p',{text:t('远端操作当前不可用。若仓库正在合并，请在「更改」中复核。',
+			'Remote actions are currently unavailable. To review a merge in progress, open Changes.')});
+		throw error;
+	});
+	const destination=current.target;
+	dialogContents(el).facts([[t('本地分支','Local branch'),current.preview.branch],
+		[t('同步目标','Sync target'),destination?destination.remote+'/'+destination.remoteBranch:t('未配置','Unconfigured')],
+		...(destination?[[t('获取地址','Fetch URL'),destination.fetchDisplay],[t('推送地址','Push URL'),destination.pushDisplay]] as const:[])]);
 	const write=async<T>(action:(dir:string)=>Promise<T>)=>plugin.exclusiveGit(lib.location,async()=>{
 		await recheck(plugin.disk,plugin.config,lib);
 		return action(await plugin.disk.path(lib.location));
@@ -94,10 +102,10 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 		};
 		return {dir,state,dialog,confirm};
 	};
-	const row=new Setting(el).setName(t('远端同步','Remote sync'));
-	function button(icon:string,label:string,open:()=>Promise<void>){
+	const row=new Setting(el).setClass('kb-controls-only').setClass('kb-workspace-remote-actions');
+	function button(icon:string,label:string,open:()=>Promise<void>,disabled=false){
 		register?.(icon,open);
-		row.addExtraButton(b=>b.setIcon(icon).setTooltip(label).onClick(()=>{
+		row.addButton(b=>b.setButtonText(label).setDisabled(disabled).onClick(()=>{
 			void open().catch((e:unknown)=>pluginNotice(plugin,'error',String(e),id,8000));
 		}));
 	}
@@ -112,6 +120,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 			dialog.facts([[t('远端地址','Remote URL'),op==='push'?target.pushDisplay:target.fetchDisplay],
 				[t('远端分支','Remote branch'),target.remote+'/'+target.remoteBranch],
 				[t('认证方式','Authentication'),authentication==='fallback'?t('备用凭据','Fallback credential'):t('系统认证','System authentication')]]);
+			if(op==='push')dialog.lines([t('推送会发送此分支上尚未发布的提交。','Push sends unpublished commits on this branch.')]);
 			confirm(op==='pull'?t('获取并预览','Fetch and preview'):title,async dir=>{
 				await transfer(dir,op==='push'?'push':'fetch',target,credential(plugin,id,target,op==='push'));
 				if(op==='pull'){
@@ -127,7 +136,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 					});next.open();
 				}
 			});dialog.open();
-		});
+		},!destination || op==='push' && !current.preview.head);
 	}
 	button('git-branch',t('分支','Branches'),async()=>{
 		const {dir,state,dialog,confirm}=await preview(t('本库分支','Library branches'));
@@ -154,10 +163,10 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 			});
 		}
 		const target=state.target;
-		if(target)dialog.action(t('获取远端分支列表','List branches on remote')+' · '+target.url,async()=>{
+		if(target)dialog.action(t('获取远端分支列表','List branches on remote')+' · '+target.fetchDisplay,async()=>{
 			const branches=await serverBranches(dir,target,credential(plugin,id,target));
 			const list=new Dialog(plugin.app,t('选择要跟踪的分支','Choose a branch to track'));
-			list.lines([lib.location,target.url]);
+			list.lines([lib.location,target.fetchDisplay]);
 			for(const branch of branches)list.action(branch.name,async()=>{
 				const next=new Dialog(plugin.app,t('创建本地跟踪分支','Create tracking branch'));
 				let localName=branch.name;
@@ -174,7 +183,8 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	button('settings-2',t('本库远端与凭据','Library remote and credentials'),async()=>{
 		const {dir,state,dialog}=await preview(t('本库远端与凭据','Library remote and credentials'));
 		let remote=state.target?.remote??'origin',url=state.target?.url??'',branch=state.target?.remoteBranch??state.preview.branch;
-		dialog.lines(state.remotes.map(r=>r.remote));
+		dialog.facts([[t('远端与上游配置','Remote and upstream config'),lib.location+'/.git/config']]);
+		if(state.remotes.length)dialog.facts([[t('已有的远端','Existing remotes'),state.remotes.map(r=>r.remote).join(', ')]]);
 		dialog.text(t('远端名称','Remote name'),remote,v=>{remote=v;});
 		dialog.text('URL',url,v=>{url=v;});
 		dialog.text(t('上游分支','Upstream branch'),branch,v=>{branch=v;});
@@ -196,13 +206,20 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 			});next.open();
 		});
 		const urls=new Set(state.target?[state.target.url,state.target.pushUrl]:[]);
+		if([...urls].some(url=>url.startsWith('https://'))){
+			dialog.contentEl.createEl('h3',{text:t('本设备的 HTTPS 凭据','HTTPS credentials on this device')});
+			dialog.contentEl.createEl('p',{text:t('Git 默认使用系统凭据助手。可为此库的 HTTPS 地址设置备用令牌。',
+				'Git uses the system credential helper by default. You can set a fallback token for this library’s HTTPS endpoint.')});
+		}
 		for(const endpoint of urls){
 			if(!endpoint.startsWith('https://'))continue;
 			dialog.action(t('认证方式','Authentication')+' · '+endpoint,async()=>{
 				const form=new Dialog(plugin.app,t('本库 HTTPS 认证','Library HTTPS authentication'));
 				const key=secretKey(id,endpoint);
 				let enabled=mode(plugin,id,endpoint)==='fallback',user='',token='';
-				form.lines([lib.location,endpoint,t('默认使用系统 Git 凭据助手。备用令牌只用于此库和此 HTTPS 地址。','System Git credential helpers are the default. The fallback applies only to this library and HTTPS endpoint.')]);
+				form.facts([[t('知识库','Library'),lib.location],[t('HTTPS 地址','HTTPS endpoint'),endpoint],
+					[t('凭据存储','Credential storage'),t('此设备的 Obsidian 密钥存储','Obsidian SecretStorage on this device')]]);
+				form.lines([t('备用令牌仅用于此库的这个 HTTPS 地址。','The fallback token applies to this HTTPS endpoint in this library.')]);
 				new Setting(form.contentEl).setName(t('使用备用凭据','Use fallback credentials')).addToggle(b=>b.setValue(enabled).onChange(v=>{enabled=v;}));
 				form.text(t('备用用户名','Fallback username'),'',v=>{user=v;});
 				new Setting(form.contentEl).setName(t('备用令牌（留空保留）','Fallback token (leave empty to keep)')).addText(field=>{
@@ -239,6 +256,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	button('timer',t('授权本库自动操作','Authorize library automation'),async()=>{
 		const {state,dialog,confirm}=await preview(t('本库自动操作','Library automation'));
 		const grant=grantFor(plugin,lib,state),previous=plugin.grants[id];
+		dialog.facts([[t('授权范围','Authorization scope'),t('仅本设备、此知识库与分支','This device, library and branch')]]);
 		dialog.lines([...(state.target?[state.target.fetchDisplay,state.target.pushDisplay,mode(plugin,id,state.target.url)+' / '+mode(plugin,id,state.target.pushUrl)]:[]),grant.remoteBranch,t('自动暂存的文件规则','Automatic staging rules')+' · '+grant.autoGlobMode+' · '+grant.autoGlobs,
 			t('当前匹配的变更','Currently matching changes')+': '+selectPaths(grant.autoGlobMode,grant.autoGlobs,state.preview.changes.map(c=>c.file)).join(', '),
 			t('推送会发送此分支的待推送提交','Push sends all unpublished commits on this branch.'),

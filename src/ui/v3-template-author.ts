@@ -9,7 +9,7 @@ import { builtinPacks } from '../kb/template-pack.ts';
 import { declaration, folderTemplate } from '../kb/template.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { createWizard } from './create.ts';
-import { Dialog, V3Dialog } from './dialog.ts';
+import { V3Dialog, dialogContents } from './dialog.ts';
 import { purposeLabels } from './v3-template-catalog.ts';
 
 const exampleCheck=`export default async function check({notes}) {
@@ -39,7 +39,9 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 	const dialog=new V3Dialog(plugin.app,tr('制作模板','Make a template'));
 	const labels=purposeLabels();
 	const draft={source:'',id:'',name:'',description:'',purpose:'starter',example:false};
-	dialog.text(tr('新目录（Vault 相对路径）','New folder (vault-relative)'),'',v=>{draft.source=v;},{example:'my-template'});
+	dialog.contentEl.createEl('p',{text:tr('创建一个可编辑的模板目录，登记后可从“我的模板”新建知识库。',
+		'Create an editable template folder that appears under My templates when you create a library.')});
+	dialog.text(tr('模板目录（Vault 相对路径）','Template folder (vault-relative)'),'',v=>{draft.source=v;},{example:'my-template'});
 	dialog.text(tr('模板 ID（小写英文及连字符）','Template ID (lowercase and hyphens)'),'',v=>{draft.id=v;},{example:'my-template'});
 	dialog.text(tr('显示名','Display name'),'',v=>{draft.name=v;},{example:tr('我的模板','My template')});
 	dialog.multiline(tr('简介','Description'),'',v=>{draft.description=v;});
@@ -64,14 +66,20 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 			'Templates/Note.md':'# {{title}}\n\n'+tr('创建日期','Created')+' · {{date}}\n',
 			...(example?{'checks/home-section.mjs':exampleCheck}:{}),
 		};
-		const preview=new V3Dialog(plugin.app,tr('预览模板文件','Preview template files'));
-		preview.facts([[tr('模板目录','Template folder'),source],[tr('模板 ID','Template ID'),id],[tr('用途','Use case'),labels[purpose as keyof typeof labels]]]);
+		const preview=new V3Dialog(plugin.app,tr('确认制作模板','Confirm template creation'));
+		preview.facts([[tr('模板目录','Template folder'),source+'/'],[tr('显示名','Display name'),name],
+			[tr('模板 ID','Template ID'),id],[tr('用途','Use case'),labels[purpose as keyof typeof labels]]]);
+		preview.contentEl.createEl('p',{text:tr('将以下文件写入模板目录，并将它加入“我的模板”。',
+			'Write these files to the template folder and add it to My templates.')});
 		preview.lines(Object.keys(files));
 		if(example)preview.contentEl.createEl('p',{text:tr('运行示例检查时须单独信任其代码。','Trust the sample check separately before running it.')});
 		const config=preview.contentEl.createEl('details',{cls:'kb-v3-detail'});
 		config.createEl('summary',{text:'kb-template.json'});
 		config.createEl('pre').createEl('code',{text:raw});
-		preview.action(tr('制作并登记','Make and register'),async()=>{
+		const actions=dialogContents(preview.contentEl.createDiv({cls:'kb-wizard-actions'}));
+		const back=actions.action(tr('返回编辑','Back to editing'),()=>{preview.close();return Promise.resolve();});
+		actions.action(tr('制作并登记','Make and register'),async()=>{
+			back.setDisabled(true);
 			await plugin.exclusive(source,async()=>{
 				if(await targetFor(plugin,source)!==target)throw new Error(tr('模板目标已变化，请重新预检。','The template destination changed. Validate again.'));
 				const staged=await mkdtemp(join(dirname(target),'.kb-template-'));
@@ -89,13 +97,17 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 				try { await plugin.persist(); }
 				catch(error) {
 					plugin.config.templates=plugin.config.templates.filter(value=>value!==source);
-				throw new Error(tr('模板文件已保存。请从设置登记模板目录。','Template files are saved. Register the folder in settings.')+' · '+source+' · '+String(error));
+					throw new Error(tr('模板文件已保存。请从设置登记模板目录。','Template files are saved. Register the folder in settings.')+' · '+source+' · '+String(error));
 				}
-			});
+			}).finally(()=>back.setDisabled(false));
 			preview.close();dialog.close();
-			const done=new Dialog(plugin.app,tr('模板已登记','Template registered'));
+			const done=new V3Dialog(plugin.app,tr('模板已登记','Template registered'));
 			done.facts([[tr('模板目录','Template folder'),source]]);
-			done.action(tr('试建知识库','Create a trial library'),async()=>{await createWizard(plugin,()=>plugin.refresh(),source);done.close();}).setCta();
+			done.contentEl.createEl('p',{text:tr('可用此模板预览新库，确认后会在 Vault 中创建知识库。',
+				'Preview a library from this template. Confirming creates a library in the vault.')});
+			const doneActions=dialogContents(done.contentEl.createDiv({cls:'kb-wizard-actions'}));
+			doneActions.action(tr('完成','Done'),()=>{done.close();return Promise.resolve();});
+			doneActions.action(tr('用此模板新建知识库','Create a library from this template'),async()=>{await createWizard(plugin,()=>plugin.refresh(),source);done.close();}).setCta();
 			done.open();
 			onRegistered(source);
 			try {await plugin.refresh();} catch(error) {new Notice(String(error));}

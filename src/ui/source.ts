@@ -17,6 +17,7 @@ import { versions } from './versions.ts';
 import { showDiff } from './source-diff.ts';
 import { showSourceHistory } from './source-history.ts';
 import { conflictFiles } from '../git/index-history.ts';
+import { mergePanel } from './network-merge.ts';
 import { commitAndSync } from './sync.ts';
 import type { CommitMode } from '../git/versions.ts';
 import FileRow from './source-components/FileRow.svelte';
@@ -40,10 +41,12 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	const readonly=lib.identity.archived || Object.values(plugin.moves).some(m=>m.phase!=='complete' && (m.source===lib.location || m.destination===lib.location));
 	const active=()=>!signal?.aborted && el.isConnected;
 	const run=(action:()=>Promise<void>)=>()=>{if(active())void action().catch(error=>pluginNotice(plugin,'error',String(error),id,8000));};
-	const toolbar=el.createDiv({cls:'nav-buttons-container'});
-	function button(icon:string,label:string,action:()=>Promise<void>,disabled=false) {
-		const btn=toolbar.createEl('button',{cls:'clickable-icon nav-action-button',attr:{type:'button','aria-label':label,title:label}});
-		setIcon(btn,icon);btn.disabled=disabled;
+	const toolbar=el.createDiv({cls:'kb-workspace-actions'});
+	function button(icon:string,label:string,action:()=>Promise<void>,disabled=false,group=toolbar,primary=false) {
+		const btn=group.createEl('button',{cls:primary?'mod-cta':'',attr:{type:'button'}});
+		setIcon(btn.createSpan({attr:{'aria-hidden':'true'}}),icon);
+		btn.createSpan({text:label});
+		btn.disabled=disabled;
 		btn.onclick=run(action);
 		return btn;
 	}
@@ -59,49 +62,59 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	let preview:VersionPreview;
 	try {preview=await previewVersion(dir);}
 	catch(error) {
-		const conflicts=await conflictFiles(dir);
+		const conflicts=await conflictFiles(dir).catch(()=>[]);
 		if(!active())return;
-		if(conflicts.length) {
-			const section=group(el,t('冲突','Conflicts')+' ('+conflicts.length+')',true);
+		const section=group(el,conflicts.length?t('冲突','Conflicts')+' ('+conflicts.length+')':t('仓库状态','Repository state'),true);
+		if(await mergePanel(plugin,lib,section,dir,readonly))return;
+		if(!active())return;
+		if(conflicts.length){
 			for(const file of conflicts)section.createEl('p',{text:file});
 		}
-		el.createEl('p',{cls:'kb-git-error',text:String(error)});
+		section.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});
 		return;
 	}
 	if(!active())return;
-	el.createEl('p',{text:preview.branch+' · '+(preview.head.slice(0,10)||t('尚无提交','No commits yet'))});
+	const meta=el.createEl('p',{cls:'kb-workspace-meta',text:t('分支','Branch')+' · '+preview.branch+' · '+(preview.head.slice(0,10)||t('尚无提交','No commits yet'))});
+	el.prepend(meta);
 	if(readonly)el.createEl('p',{text:t('此知识库当前只读','This library is currently read-only')});
-	const commitFiles=preview.staged ? candidates(preview,'unstage') : preview.changes;
-	let message=drafts.get(id) ?? renderCommitMessage(pref,moment.utc().local().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
-	if(!readonly)addTextField(new Setting(el).setName(t('提交说明','Commit message')),message,value=>{message=value;drafts.set(id,value);},
-		{example:t('更新知识库笔记','Update knowledge base notes')},true);
-	const committed=(submitted:string)=>()=>{if(drafts.get(id)===submitted)drafts.delete(id);};
-	const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message,committed(message),mode);
-	const smart=pref.autoStageOnEmptyIndex?'smart':'staged';
-	button('arrow-up-circle',t('提交并同步','Commit and sync'),()=>commitAndSync(plugin,lib,message,committed(message),smart),readonly);
-	button('check',t('预览提交','Preview commit'),()=>commit(smart),readonly || !(pref.autoStageOnEmptyIndex?preview.changes.length:preview.staged));
-	const more=button('chevron-down',t('更多提交操作','More commit actions'),()=>{
-		const menu=new Menu();
-		const item=(title:string,icon:string,enabled:boolean,action:()=>Promise<void>)=>
-			menu.addItem(entry=>entry.setTitle(title).setIcon(icon).setDisabled(!enabled).onClick(run(action)));
-		item(t('提交已暂存内容','Commit staged'),'git-commit',preview.staged,()=>commit('staged'));
-		item(t('暂存全部并提交','Stage all and commit'),'list-plus',!!preview.changes.length,()=>{
-			const files=candidates(preview,'stage').map(c=>c.file);
-			return files.length ? editIndex('stage',files,()=>commit('staged')) : commit('staged');
-		});
-		item(t('用暂存内容修订上次提交','Amend staged'),'git-commit',!!preview.head && preview.staged,()=>commit('amend'));
-		menu.addSeparator();
-		item(t('提交已暂存内容并同步','Commit staged and sync'),'arrow-up-circle',preview.staged,
-			()=>commitAndSync(plugin,lib,message,committed(message),'staged'));
-		const rect=more.getBoundingClientRect();
-		menu.showAtPosition({x:rect.left,y:rect.bottom});
-		return Promise.resolve();
-	},readonly);
+	const compose=el.createDiv({cls:'kb-workspace-commit'});
+	if(!readonly){
+		const commitFiles=preview.staged ? candidates(preview,'unstage') : preview.changes;
+		let message=drafts.get(id) ?? renderCommitMessage(pref,moment.utc().local().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
+		const remember=(value:string)=>{message=value;drafts.set(id,value);};
+		const input=addTextField(new Setting(compose).setName(t('提交说明','Commit message')),message,remember,
+			{example:t('更新知识库笔记','Update knowledge base notes')},true).controlEl.querySelector('textarea');
+		const fromPreview=(value:string)=>{remember(value);if(input)input.value=value;};
+		const committed=(submitted:string)=>{if(drafts.get(id)===submitted)drafts.delete(id);};
+		const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message,committed,mode,fromPreview);
+		const sync=(mode:CommitMode)=>commitAndSync(plugin,lib,message,committed,mode,undefined,fromPreview);
+		const smart=pref.autoStageOnEmptyIndex?'smart':'staged';
+		const actions=compose.createDiv({cls:'kb-workspace-actions'});
+		button('check',t('预览提交','Preview commit'),()=>commit(smart),!(pref.autoStageOnEmptyIndex?preview.changes.length:preview.staged),actions,true);
+		button('arrow-up-circle',t('提交并同步','Commit and sync'),()=>sync(smart),false,actions);
+		const more=button('chevron-down',t('更多提交操作','More commit actions'),()=>{
+			const menu=new Menu();
+			const item=(title:string,icon:string,enabled:boolean,action:()=>Promise<void>)=>
+				menu.addItem(entry=>entry.setTitle(title).setIcon(icon).setDisabled(!enabled).onClick(run(action)));
+			item(t('提交已暂存内容','Commit staged'), 'git-commit',preview.staged,()=>commit('staged'));
+			item(t('暂存全部并提交','Stage all and commit'),'list-plus',!!preview.changes.length,()=>{
+				const files=candidates(preview,'stage').map(c=>c.file);
+				return files.length ? editIndex('stage',files,()=>commit('staged')) : commit('staged');
+			});
+			item(t('用暂存内容修订上次提交','Amend staged'),'git-commit',!!preview.head && preview.staged,()=>commit('amend'));
+			menu.addSeparator();
+			item(t('提交已暂存内容并同步','Commit staged and sync'),'arrow-up-circle',preview.staged,()=>sync('staged'));
+			const rect=more.getBoundingClientRect();
+			menu.showAtPosition({x:rect.left,y:rect.bottom});
+			return Promise.resolve();
+		},false,actions);
+		more.setAttribute('aria-haspopup','menu');
+	}
 	const refreshLayout=async()=>{
 		await plugin.saveLibraryPreferences(lib,{...plugin.prefs.libraries[id],tree:!pref.tree});
 		await plugin.refresh();
 	};
-	button(pref.tree?'list':'folder',t('切换列表或文件树','Switch list or tree'),refreshLayout,readonly);
+	if(!readonly)button(pref.tree?'list':'folder',pref.tree?t('显示列表','Show list'):t('显示文件树','Show file tree'),refreshLayout);
 	function editIndex(action:IndexAction,files:string[],after?:()=>Promise<void>){
 		const label=action==='stage'?t('暂存完整文件','Stage whole files'):t('取消暂存','Unstage');
 		const modal=new Dialog(plugin.app,label);
@@ -146,13 +159,19 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	}
 	const rows:ReturnType<typeof mount>[]=[];
 	signal?.addEventListener('abort',()=>{for(const row of rows)void unmount(row);},{once:true});
+	const noConflicts=group(el,t('冲突','Conflicts')+' (0)',true);
+	noConflicts.createEl('p',{cls:'kb-workspace-meta',text:t('没有合并冲突','No merge conflicts')});
+	const emptyConflicts=noConflicts.closest('details');
+	if(emptyConflicts)emptyConflicts.open=false;
 	for(const action of ['unstage','stage'] as const){
 		const staged=action==='unstage';
 		const list=candidates(preview,action);
 		const label=staged?t('已暂存的更改','Staged changes'):t('工作区更改','Working tree changes');
 		const actionLabel=staged?t('取消暂存','Unstage'):t('暂存','Stage');
-		button(staged?'minus-circle':'plus-circle',staged?t('全部取消暂存','Unstage all'):t('全部暂存','Stage all'),()=>editIndex(action,list.map(c=>c.file)),readonly || !list.length);
 		const section=group(el,label+' ('+list.length+')',true);
+		if(!list.length)section.createEl('p',{cls:'kb-workspace-meta',text:staged?t('没有暂存内容','No staged changes'):t('工作区没有未暂存的更改','No unstaged changes')});
+		if(!readonly && list.length)button(staged?'minus-circle':'plus-circle',staged?t('全部取消暂存','Unstage all'):t('全部暂存','Stage all'),
+			()=>editIndex(action,list.map(c=>c.file)),false,section.createDiv({cls:'kb-workspace-actions'}));
 		const folders=new Map([['',section]]);
 		for (const change of list){
 			const {file}=change, relative=lib.location+'/'+file;
@@ -182,6 +201,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 			rows.push(mount(FileRow,{target:container,props:{path:file,label:title,actions,
 				partial:change.head!==change.stage && change.stage!==change.work?t('部分暂存','Partially staged'):undefined,
 				status:!after?'D':!before?'A':'M',description:!after?t('删除','Deleted'):!before?t('新增','Added'):t('修改','Modified'),
+				diffLabel:t('查看差异','View diff'),
 				showDiff:run(()=>showDiff(plugin,{id,file,staged}))}}));
 		}
 	}

@@ -10,7 +10,7 @@ import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { changeIdentity } from './identity.ts';
-import { Dialog } from './dialog.ts';
+import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
 
@@ -113,17 +113,60 @@ export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library) 
 	dialog.open();
 }
 
-export async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
+async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
 	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v),plugin.kepanoSkeleton,vaultExclusions(plugin.app,plugin.disk.registry)),true);
 	await plugin.refresh();
 }
 
+function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string){
+	const dialog=new V3Dialog(plugin.app,title);
+	dialog.facts([[tr('源目录','Source folder'),record.source],[tr('目标目录','Destination folder'),record.destination]]);
+	dialog.contentEl.createEl('p',{text:tr('移动整个知识库目录，包括目录内的 Git 数据。成功后登记列表指向目标路径。',
+		'Move the entire library folder, including its Git data. After the move, the registry points to the destination.')});
+	if(record.changes.length){
+		dialog.contentEl.createEl('h3',{text:tr('移动后更新的文件','Files updated after the move')});
+		for(const change of record.changes){
+			const file=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+			file.createEl('summary',{text:record.destination+'/'+change.file});
+			dialogContents(file).lines(change.fields);
+			file.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:change.after});
+		}
+	}
+	if(record.warnings.length){
+		dialog.contentEl.createEl('h3',{text:tr('需人工核对','Manual review required')});
+		dialog.lines(record.warnings);
+	}
+	if(record.exclusions)showExclusionPlan(dialog,record.exclusions);
+	return dialog;
+}
+
+export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord){
+	const dialog=moveReview(plugin,record,tr('继续待完成的目录移动','Resume pending library move'));
+	dialog.facts([[tr('恢复记录','Recovery state'),record.phase==='prepared' ?
+		tr('已记录计划，待核对实际位置','Plan saved. Verify the current folder location.') :
+		tr('已移动目录，待核对受管文件和登记','Folder moved. Verify the managed files and registration.')]]);
+	dialog.action(tr('继续移动','Resume move'),async()=>{
+		await resumeMove(plugin,record);
+		dialog.close();
+	}).setCta();
+	dialog.open();
+}
+
 export function move(plugin:KnowledgeBaseManager,lib:Library){
 	let name=lib.location.split('/').at(-1)!;
-	const dialog=new Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"));
-	dialog.facts([[tr('源目录','Source folder'),lib.location]]);
-	const getParent=destinationParentField(dialog,plugin.app,plugin.config,plugin.disk.registry);
-	dialog.text(tr('目标目录名',"Destination folder name"),name,v=>{name=v;});
+	const dialog=new V3Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"));
+	const selectedTarget=dialog.contentEl.createDiv({cls:'kb-move-locations'});
+	let parent:string|null=null;
+	const showPaths=()=>{
+		selectedTarget.empty();
+		dialogContents(selectedTarget).facts([[tr('源目录','Source folder'),lib.location],
+			[tr('目标目录','Destination folder'),parent!==null && name ? [parent,name].filter(Boolean).join('/') : tr('待填写','Pending')]]);
+	};
+	showPaths();
+	const getParent=destinationParentField(dialog,plugin.app,plugin.config,plugin.disk.registry,{
+		title:tr('选择目标父目录','Choose destination parent folder'),onSelect:path=>{parent=path;showPaths();},
+	});
+	dialog.text(tr('目标目录名',"Destination folder name"),name,v=>{name=v;showPaths();});
 	dialog.action(tr('预览',"Preview"),async()=>{
 		const target=getParent(), targetName=name;
 		const skeleton=plugin.templateAssets(lib);
@@ -133,10 +176,11 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
 			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
 		}
-		const confirm=new Dialog(plugin.app,tr('确认目录移动',"Confirm directory move"));
-		confirm.lines([plan.source+' → '+plan.destination,...plan.changes.flatMap(c=>[c.file,...c.fields]),...plan.warnings,
-			tr('以下已解析的链接可能失效。外部剪藏、脚本与动态查询需人工核对。',"These links may break. Review external clippings, scripts and dynamic queries."),...links]);
-		if(plan.exclusions)showExclusionPlan(confirm,plan.exclusions);
+		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"));
+		const refs=confirm.contentEl.createEl('details',{cls:'kb-v3-detail'});
+		refs.createEl('summary',{text:tr('可能受影响的链接','Links that may be affected')+' ('+links.size+')'});
+		refs.createEl('p',{text:tr('外部剪藏、脚本与动态查询需人工核对。',"Review external clippings, scripts and dynamic queries manually.")});
+		if(links.size)dialogContents(refs).lines([...links]);
 		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
 			const fresh=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error(tr('预览已变化',"Preview has changed"));
@@ -144,6 +188,6 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 			await plugin.recordMove(plan);
 			confirm.close();dialog.close();
 			try{await resumeMove(plugin,plan);}finally{await plugin.refresh();}
-		});confirm.open();
-	});dialog.open();
+		}).setCta();confirm.open();
+	}).setCta();dialog.open();
 }

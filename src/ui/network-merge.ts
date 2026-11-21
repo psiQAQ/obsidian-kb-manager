@@ -8,7 +8,7 @@ import type {Library} from '../kb/catalog.ts';
 import {clearUndo,finishMerge,inspectMerge,markResolved,undoInfo} from '../git/network-merge.ts';
 import {Dialog} from './dialog.ts';
 
-export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTMLElement,dir:string){
+export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTMLElement,dir:string,readonly=false){
 	const t=plugin.t,metadata=path.join(dir,'.git');
 	if(await statIfPresent(path.join(metadata,'rebase-merge'))||await statIfPresent(path.join(metadata,'rebase-apply'))){
 		el.createEl('p',{text:t('变基正在进行。请在该知识库中完成或中止变基，然后刷新。','Rebase in progress. Complete or abort it in this library, then refresh.')});return true;
@@ -18,9 +18,9 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 		if(!((await statIfPresent(index))?.isFile()) || !(await fs.readFile(index)).includes('REUC'))return false;
 		const preview=await undoInfo(dir);
 		if(!preview.entries.length)return false;
-		new Setting(el).setName(t('Git 已保留冲突撤销记录','Git retained resolve-undo entries'))
-			.setDesc(t('保留时可用原生 Git 重建冲突。清除记录后可继续在面板暂存。','Native Git can use these records to recreate conflicts. Clear them to resume staging from this panel.'))
-			.addButton(b=>b.setButtonText(t('查看记录','Review entries')).onClick(()=>{
+		const row=new Setting(el).setName(t('Git 已保留冲突撤销记录','Git retained resolve-undo entries'))
+			.setDesc(t('保留时可用原生 Git 重建冲突。清除记录后可继续在面板暂存。','Native Git can use these records to recreate conflicts. Clear them to resume staging from this panel.'));
+		if(!readonly)row.addButton(b=>b.setButtonText(t('查看记录','Review entries')).onClick(()=>{
 				const modal=new Dialog(plugin.app,t('清除冲突撤销记录','Clear resolve-undo entries'));
 				modal.lines([lib.location,...preview.entries]);
 				modal.action(t('清除列出的撤销记录','Clear listed records'),async()=>{
@@ -32,7 +32,8 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 	}
 	const inspect=async()=>{await recheck(plugin.disk,plugin.config,lib);return inspectMerge(dir);};
 	const plan=await inspect();
-	el.createEl('p',{text:plan.branch+' · '+plan.head.slice(0,10)+' + '+plan.other.slice(0,10)});
+	el.createEl('p',{text:t('正在合并','Merge in progress')+' · '+plan.branch+' · '+plan.head.slice(0,10)+' + '+plan.other.slice(0,10)});
+	if(readonly)el.createEl('p',{text:t('此知识库当前只读','This library is currently read-only')});
 	const run=(f:()=>Promise<void>)=>()=>{void f().catch((e:unknown)=>new Notice(String(e),8000));};
 	for(const conflict of plan.conflicts){
 		const row=new Setting(el).setName(conflict.file).setDesc(conflict.stages.map(s=>s.stage+': '+s.oid.slice(0,10)).join(' · '));
@@ -42,7 +43,7 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 			await recheck(plugin.disk,plugin.config,lib);
 			if(item.path===source)await plugin.app.workspace.getLeaf('tab').openFile(item);
 		})));
-		row.addButton(b=>b.setButtonText(t('预览解决结果','Preview resolution')).onClick(run(async()=>{
+		if(!readonly)row.addButton(b=>b.setButtonText(t('预览解决结果','Preview resolution')).onClick(run(async()=>{
 			const fresh=await inspect(),file=fresh.conflicts.find(c=>c.file===conflict.file);
 			if(!file)throw new Error(t('冲突状态已变化，请刷新','Conflict changed. Refresh the panel.'));
 			const modal=new Dialog(plugin.app,t('标记文件已解决','Mark file resolved'));
@@ -61,7 +62,7 @@ export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTML
 			});modal.open();
 		})));
 	}
-	if(!plan.conflicts.length)new Setting(el).setClass('kb-controls-only').addButton(b=>b.setButtonText(t('预览合并提交','Preview merge commit')).onClick(run(async()=>{
+	if(!readonly && !plan.conflicts.length)new Setting(el).setClass('kb-controls-only').addButton(b=>b.setButtonText(t('预览合并提交','Preview merge commit')).onClick(run(async()=>{
 		const fresh=await inspect();
 		const modal=new Dialog(plugin.app,t('完成本库合并','Finish library merge'));
 		modal.lines([lib.location,fresh.head+' + '+fresh.other,...fresh.stagedPaths]);

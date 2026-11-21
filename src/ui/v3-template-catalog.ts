@@ -1,5 +1,4 @@
-import { Setting } from 'obsidian';
-import type { ButtonComponent } from 'obsidian';
+import { Setting, setIcon } from 'obsidian';
 import { readFile } from 'node:fs/promises';
 import { statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
@@ -7,7 +6,7 @@ import { declaration } from '../kb/template.ts';
 import { builtinPacks, builtinSource } from '../kb/template-pack.ts';
 import type { PackDescriptor } from '../kb/template-pack.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { V3Dialog } from './dialog.ts';
+import { dialogContents } from './dialog.ts';
 
 export function purposeLabels() {
 	return {
@@ -55,6 +54,10 @@ export async function choiceForSource(plugin:KnowledgeBaseManager,source:string)
 	return builtinTemplates().find(template=>template.source===source) ?? await personalTemplate(plugin,source);
 }
 
+export async function templateChoices(plugin:KnowledgeBaseManager):Promise<TemplateChoice[]> {
+	return [...builtinTemplates(),...await Promise.all(plugin.config.templates.map(source=>personalTemplate(plugin,source)))];
+}
+
 export function showTemplateDetails(parent:HTMLElement,template:TemplateChoice) {
 	const labels:Record<string,string>=purposeLabels();
 	const details=parent.createEl('dl',{cls:'kb-v3-template-details'});
@@ -82,9 +85,7 @@ export function showTemplateDetails(parent:HTMLElement,template:TemplateChoice) 
 	if(template.invalid)parent.createEl('p',{cls:'kb-git-error',text:template.invalid});
 }
 
-export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:TemplateChoice)=>Promise<void>,initial?:TemplateChoice) {
-	const templates=[...builtinTemplates(),...await Promise.all(plugin.config.templates.map(source=>personalTemplate(plugin,source)))];
-	const dialog=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
+export function renderTemplatePicker(parent:HTMLElement,templates:TemplateChoice[],onPick:(template:TemplateChoice)=>Promise<void>,initial?:TemplateChoice) {
 	const labels:Record<string,string>=purposeLabels();
 	const purposes=new Set(templates.flatMap(template=>[template.purpose,...(template.purposes ?? [])]).filter(Boolean));
 	const order=[...new Set([...Object.keys(labels).filter(id=>purposes.has(id)),...purposes])];
@@ -93,7 +94,7 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 	let purpose=initial?(initial.personal?personal:initial.purpose):'';
 	let selected=initial;
 	const prompt=tr('选择用途','Select a use case');
-	new Setting(dialog.contentEl).setName(tr('用途','Use case')).addDropdown(input=>{
+	new Setting(parent).setName(tr('用途','Use case')).addDropdown(input=>{
 		input.selectEl.setAttribute('aria-label',tr('用途','Use case'));
 		input.addOptions({'':prompt,...options,[personal]:tr('我的模板','My templates')}).setValue(purpose).onChange(value=>{
 			purpose=value;
@@ -101,12 +102,12 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 			render();
 		});
 	});
-	const cards=dialog.contentEl.createDiv({cls:'kb-v3-template-list'});
-	const details=dialog.contentEl.createDiv({cls:'kb-v3-template-selection',attr:{'aria-live':'polite'}});
-	const next:ButtonComponent=dialog.action(tr('填写知识库信息','Enter library details'),async()=>{
+	const cards=parent.createDiv({cls:'kb-v3-template-list'});
+	const details=parent.createDiv({cls:'kb-v3-template-selection',attr:{'aria-live':'polite'}});
+	const actions=dialogContents(parent.createDiv({cls:'kb-wizard-actions'}));
+	const next=actions.action(tr('填写知识库信息','Enter library details'),async()=>{
 		if(!selected || selected.invalid)return;
 		await onPick(selected);
-		dialog.close();
 	}).setCta();
 	function renderDetails(){
 		details.empty();
@@ -120,7 +121,11 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 			if(!matched.length)cards.createEl('p',{cls:'kb-v3-muted',text:tr('尚无目录模板。可在知识库目录与模板设置中制作或登记。','Create or register a folder template in the library folders and templates settings.')});
 			for(const template of matched){
 				const card=cards.createEl('button',{cls:'kb-v3-template-card',attr:{type:'button','data-template-source':template.source,'aria-pressed':String(template.source===selected?.source)}});
-				card.createSpan({cls:'kb-v3-template-name',text:template.name});
+				const heading=card.createSpan({cls:'kb-wizard-card-heading'});
+				heading.createSpan({cls:'kb-v3-template-name',text:template.name});
+				const indicator=heading.createSpan({cls:'kb-wizard-card-selected',attr:{'aria-hidden':'true'}});
+				setIcon(indicator.createSpan(),'check');
+				indicator.createSpan({text:tr('已选','Selected')});
 				if(template.description)card.createSpan({cls:'kb-v3-muted',text:template.description});
 				card.addEventListener('click',()=>{
 					selected=template;
@@ -132,5 +137,4 @@ export async function pickTemplate(plugin:KnowledgeBaseManager,onPick:(template:
 		renderDetails();
 	}
 	render();
-	dialog.open();
 }

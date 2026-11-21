@@ -1,4 +1,4 @@
-import { Modal, Notice, PluginSettingTab, Setting, SettingGroup, moment } from 'obsidian';
+import { Notice, PluginSettingTab, Setting, SettingGroup, moment } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionRender, SettingGroupItem } from 'obsidian';
 import { deviceGitPath, saveDeviceGitPath } from './ui/git-path.ts';
 import { hostname } from 'node:os';
@@ -10,7 +10,7 @@ import type { GitPreferences, Language } from './preferences.ts';
 import { gitDefaults, renderCommitMessage } from './preferences.ts';
 import { diagnostics, gitDisabled, setDeviceGitDisabled } from './ui/device.ts';
 import { editRepositoryIdentity } from './ui/repository-identity.ts';
-import { Dialog, showJsonPreview } from './ui/dialog.ts';
+import { Dialog, V3Dialog, showJsonPreview } from './ui/dialog.ts';
 import { addTextField } from './ui/text-field.ts';
 import { makeTemplateWizard } from './ui/v3-template-author.ts';
 
@@ -22,7 +22,7 @@ const categories = {
 	editor: ['编辑器', 'Editor'],
 	views: ['视图', 'Views'],
 	interface: ['界面', 'Interface'],
-	identity: ['身份与凭据', 'Identity and credentials'],
+	identity: ['提交身份', 'Commit identity'],
 	advanced: ['高级', 'Advanced'],
 } as const;
 type Category = keyof typeof categories;
@@ -75,7 +75,7 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 		add(label,(setting,state) => {
 			const draw = () => {
 				if (id) {
-					const inherited = state.draft[key] === undefined ? t('继承全局设置','Inherited') : t('本库覆盖','Library override');
+					const inherited = state.draft[key] === undefined ? t('继承全局默认值','Inherits global default') : t('本库覆盖值','Library override');
 					setting.setDesc(description ? inherited+' · '+t(...description) : inherited);
 					if (key in state.draft) setting.addExtraButton(button => button.setIcon('reset')
 						.setTooltip(t('恢复继承','Use global default')).onClick(() => {
@@ -105,7 +105,8 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 
 	switch (page) {
 		case 'automatic':
-			note('0 表示关闭。在本库的 Git 状态面板确认范围后，才会开始自动操作。','Zero disables a timer. Authorize the scope in the library’s Git status panel to start automation.');
+			note('0 表示关闭。在本库的 Git 工作区 → 远端与分支确认授权后，此设备才会执行自动操作。',
+				'Zero disables a timer. This device starts automation after you authorize it under Git workspace → Remote and branches.');
 			text('autoCommitMessage',['自动提交说明模板','Auto commit message template'],t('知识库备份 · {{date}}','Knowledge base backup · {{date}}'),
 				['支持与手动提交相同的占位符。','Accepts the same placeholders as a manual commit.'],true);
 			toggle('autoAfterEdits',['等停止编辑后提交','Wait for editing to stop before committing']);
@@ -141,7 +142,8 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 			toggle('disablePush',['提交并同步时跳过推送','Skip push on commit and sync']);
 			choice('syncMethod',['拉取策略','Pull strategy'],{
 				'ff-only':t('仅快进','Fast-forward only'),merge:t('合并','Merge'),rebase:t('变基','Rebase'),
-			},['合并和变基需要原生后端。远端与上游分支在本库的 Git 状态面板配置。','Merge and rebase require native Git. Configure the remote and upstream in the library’s Git status panel.']);
+			},['合并和变基需要原生 Git。远端与上游分支在本库的 Git 工作区 → 远端与分支设置。',
+				'Merge and rebase require native Git. Configure the remote and upstream under Git workspace → Remote and branches.']);
 			choice('mergeStrategy',['合并冲突时的偏好','Merge conflict strategy'],{none:t('Git 默认','Git default'),ours:t('倾向本地一方','Favor our changes'),theirs:t('倾向远端一方','Favor their changes')},
 				['用于原生后端的手动合并。变基要求干净工作区，已有暂存和修改请先自行处理。','Used for manual merges with native Git. Rebase requires a clean worktree and index.']);
 			break;
@@ -360,7 +362,10 @@ export class ManagerSettings extends PluginSettingTab {
 			if (key === 'identity') continue;
 			const rows = key === 'folders' ? folderSettings(plugin,refresh) : preferenceSettings(plugin,key,refresh);
 			const [zh,en] = categories[key];
-			items.push({type:'page',name:t(zh,en),items:[{type:'group',cls:'kb-settings',items:rows}]});
+			const desc = key === 'folders' ? t('保存在此设备','Stored on this device') : key === 'advanced' ?
+				t('管理当前设备的 Git、查看调试信息','Manage Git on this device and view debug information') :
+				t('适用于继承全局默认值的知识库','Defaults for libraries that inherit these settings');
+			items.push({type:'page',name:t(zh,en),desc,items:[{type:'group',cls:'kb-settings',items:rows}]});
 		}
 		return [{type:'group',cls:'kb-settings',items}];
 	}
@@ -368,40 +373,48 @@ export class ManagerSettings extends PluginSettingTab {
 
 export function librarySettings(plugin: KnowledgeBaseManager, lib: Library) {
 	if (!lib.identity || lib.duplicate || lib.problem) return;
-	const modal = new Modal(plugin.app);
 	const t = plugin.t;
-	modal.setTitle(t('本库 Git 设置','Library Git settings') + ' · ' + lib.identity.displayName);
+	const modal = new V3Dialog(plugin.app,t('本库 Git 设置','Library Git settings') + ' · ' + lib.identity.displayName);
 	const el = modal.contentEl;
 	el.addClass('kb-settings');
-	const render = (page?: Exclude<Category,'folders'>) => {
-		el.empty();
-		if (!page) {
-			for (const key of Object.keys(categories) as Category[]) {
-				if (key === 'folders') continue;
-				const [zh,en] = categories[key];
-				const name = t(zh,en);
-				new Setting(el).setName(name).addButton(button => button.setButtonText(t('打开','Open'))
-					.setTooltip(name).onClick(() => render(key)));
-			}
-			return;
-		}
+	modal.facts([[t('知识库路径','Library path'),lib.location]]);
+	type LibraryCategory = Exclude<Category,'folders'>;
+	const menu = el.createDiv({cls:'kb-library-settings-menu'});
+	const pages = new Map<LibraryCategory,HTMLElement>();
+	const goTo = (page?: LibraryCategory, rebuild = false) => {
+		if (page && rebuild) { pages.get(page)?.remove(); pages.delete(page); }
+		menu.hidden = page !== undefined;
+		for (const [key,container] of pages) container.hidden = key !== page;
+		if (!page || pages.has(page)) return;
+		const container = el.createDiv();
+		pages.set(page,container);
 		const [zh,en] = categories[page];
-		new Setting(el).setName(t(zh,en)).setHeading()
-			.addButton(button => button.setButtonText(t('返回分类','Back to categories')).onClick(() => render()));
+		new Setting(container).setName(t(zh,en)).setHeading()
+			.addButton(button => button.setButtonText(t('返回分类','Back to categories')).onClick(() => goTo()));
 		if (page === 'identity') {
-			new Setting(el).setName(t('本库 Git 提交身份','Library Git commit identity')).setDesc(lib.location+'/.git/config')
+			new Setting(container).setName(t('本库 Git 提交身份','Library Git commit identity')).setDesc(lib.location+'/.git/config')
 				.addButton(button=>button.setButtonText(t('查看或修改','View or edit')).onClick(async()=>{
 					try { await editRepositoryIdentity(plugin,lib); } catch (error) { new Notice(String(error)); }
 				}));
-			el.createEl('p',{text:t('远端凭据在本库的 Git 状态面板设置。','Configure remote credentials in this library’s Git status panel.')});
 			return;
 		}
-		const group = new SettingGroup(el);
-		for (const item of preferenceSettings(plugin,page,() => render(page),lib)) group.addSetting(setting => {
+		container.createEl('p',{cls:'kb-workspace-meta',text:t('本库覆盖值写入 kb.toml 的 [preferences]。其余设置继承全局默认值。',
+			'Library overrides are saved in [preferences] in kb.toml. Other values inherit the global defaults.')});
+		const group = new SettingGroup(container);
+		for (const item of preferenceSettings(plugin,page,() => goTo(page,true),lib)) group.addSetting(setting => {
 			setting.setName(item.name).setDesc(item.desc ?? '');
 			item.render(setting,group);
 		});
 	};
-	render();
+	for (const page of Object.keys(categories) as Category[]) {
+		if (page === 'folders') continue;
+		const [zh,en] = categories[page];
+		const name = t(zh,en);
+		new Setting(menu).setName(name).addButton(button => {
+			const open=t('打开','Open');
+			button.buttonEl.setAttribute('aria-label',open+' · '+name);
+			button.setButtonText(open).onClick(() => goTo(page));
+		});
+	}
 	modal.open();
 }

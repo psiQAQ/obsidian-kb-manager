@@ -10,7 +10,7 @@ import { kepanoBinding, sharedTemplateKind } from '../kb/template-core.ts';
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder, previewTemplateRestore, restoreTemplateFile } from '../kb/template-files.ts';
 import type { Preset, TemplateAccess } from '../kb/template-files.ts';
 import { compareRegistryPaths } from '../registry/paths.ts';
-import { Dialog } from './dialog.ts';
+import { V3Dialog, dialogContents } from './dialog.ts';
 
 interface InsertionScope {
 	location: string;
@@ -80,14 +80,16 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 			.map(name => ({ path: legacy.folder + '/' + name, name, shared: true })),
 	].filter(file => /\.md$/iu.test(file.name) && file.path !== targetPath);
 
-	const dialog = new Dialog(app, tr('插入本库页面模板', 'Insert library template'));
-	dialog.lines([targetPath, ...[local, localWarning, legacy.warning].filter(Boolean)]);
+	const dialog = new V3Dialog(app, tr('插入本库页面模板', 'Insert library template'));
+	dialog.facts([[tr('目标笔记','Target note'),targetPath],...(local?[[tr('本库模板目录','Library template folder'),local] as const]:[])]);
+	const warnings=[localWarning,legacy.warning].filter(Boolean);
+	if(warnings.length)dialog.lines(warnings);
 	if (kind && local) {
 		let missing: Preset[] = [];
 		try { missing = await previewTemplateRestore(access, kind, location, local, assets, legacy.files); }
 		catch (error) { dialog.lines([tr('无法预览本库模板恢复：', 'Cannot review library template restoration: ') + String(error)]); }
 		if (missing.length) dialog.action(tr('预览恢复缺失模板', 'Review restoration of missing templates'), () => {
-			const review = new Dialog(app, tr('恢复模板到本库', 'Restore templates to this library'));
+			const review = new V3Dialog(app, tr('恢复模板到本库', 'Restore templates to this library'));
 			const bindings = kind === 'kepano' && missing.some(file =>
 				file.path === location + '/' + file.bundledPath && kepanoBinding(assets, file.bundledPath));
 			review.lines([...missing.map(file => file.path), ...(bindings ?
@@ -105,7 +107,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 				review.close();
 				dialog.close();
 				if (currentView()) await scope.reopen();
-			});
+			}).setCta();
 			review.open();
 			return Promise.resolve();
 		});
@@ -132,21 +134,31 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		const editor = view.editor, note = editor.getValue(), now = moment.utc().local();
 		const result = insertTemplate(note, source, editor.posToOffset(editor.getCursor()), target.basename,
 			(kind, pattern) => now.format(pattern || (kind === 'date' ? 'YYYY-MM-DD' : 'HH:mm')));
-		const preview = new Dialog(app, tr('预览插入', 'Preview insertion'));
-		preview.lines([targetPath, file.path, ...result.conflicts.map(key => tr('保留现有属性：', 'Keep existing property: ') + key)]);
-		preview.contentEl.createEl('pre', { text: result.text });
-		preview.action(tr('插入', 'Insert'), async () => {
+		const preview = new V3Dialog(app, tr('预览插入', 'Preview insertion'));
+		preview.facts([[tr('目标笔记','Target note'),targetPath],[tr('模板来源','Template source'),file.path]]);
+		if(result.conflicts.length){
+			preview.contentEl.createEl('p',{text:tr('保留笔记中的这些现有属性。','Keep the current values of these note properties.')});
+			preview.lines(result.conflicts);
+		}
+		const rendered=tr('插入后的笔记','Note after insertion');
+		preview.contentEl.createEl('h3',{text:rendered});
+		preview.contentEl.createEl('pre',{cls:'kb-template-insertion-preview',text:result.text,
+			attr:{tabindex:'0',role:'region','aria-label':rendered}});
+		const actions=dialogContents(preview.contentEl.createDiv({cls:'kb-wizard-actions'}));
+		const back=actions.action(tr('返回选择模板','Back to template selection'),()=>{preview.close();return Promise.resolve();});
+		actions.action(tr('插入模板','Insert template'),async()=>{
+			back.setDisabled(true);
 			await scope.confirm(async () => {
 				await checkTemplateFile(access, targetPath, location);
 				await checkSource();
 				if (await disk.read(file.path) !== sourceText || !currentView() || view.editor !== editor || editor.getValue() !== note) throw changed();
 				editor.transaction({ changes: [{ from: { line: 0, ch: 0 }, to: editor.offsetToPos(note.length), text: result.text }] });
 				editor.setCursor(editor.offsetToPos(result.cursor));
-			});
+			}).finally(()=>back.setDisabled(false));
 			preview.close();
 			dialog.close();
-		});
+		}).setCta();
 		preview.open();
-	});
+	}).setCta();
 	dialog.open();
 }
