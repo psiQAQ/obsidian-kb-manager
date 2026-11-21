@@ -1,7 +1,7 @@
 {
 	"id": "knowledge-base-manager",
 	"name": "Knowledge Base Manager",
-	"version": "3.3.0",
+	"version": "3.3.1",
 	"minAppVersion": "1.15.1",
 	"description": "Manage knowledge bases, review changes and sync each Git repository from the sidebar.",
 	"author": "psiQAQ",
