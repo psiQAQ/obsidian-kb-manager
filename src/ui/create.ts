@@ -81,7 +81,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		return step;
 	});
 	const pages=frame.createDiv();
-	const newPage=()=>pages.ownerDocument.createDocumentFragment().createEl('fieldset');
+	const newPage=()=>createEl('fieldset');
 	const templatePage=newPage(),detailsPage=newPage();
 	detailsPage.addClass('kb-wizard-fields');
 	const details=dialogContents(detailsPage);
