@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import {parse} from 'smol-toml';
 import {isScalar, parseDocument, visit} from 'yaml';
 import {tr} from '../i18n.ts';
-import {segments} from '../fs/segments.ts';
+import {defaultConfigDir, segments} from '../fs/segments.ts';
 import {key, statIfPresent} from '../fs/vault.ts';
 import {readManifest} from '../kb/identity-core.ts';
 import {declaration} from '../kb/template-declaration.ts';
@@ -20,8 +20,6 @@ const bytesPerFile = 2 * 1024 * 1024;
 const bytesPerLibrary = 24 * 1024 * 1024;
 const templateFile = 'kb-template.json';
 export const checkIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
-// Obsidian callers supply Vault.configDir. Only the standalone CLI defaults to this conventional name.
-export const defaultConfigDir = '.obsidian';
 const decoder = new TextDecoder('utf-8', {fatal: true});
 export const decode = (data: Uint8Array) => decoder.decode(data);
 export const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');

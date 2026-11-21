@@ -1,5 +1,8 @@
 import { fromEnglish } from '../i18n.ts';
 
+// Used by the standalone CLI and to exclude settings imported from other vaults.
+export const defaultConfigDir = '.obsidian';
+
 export function segments(relative: string): string[] {
  const parts = relative.split('/');
  for (const part of parts) {

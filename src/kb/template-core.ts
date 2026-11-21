@@ -1,3 +1,4 @@
+import {defaultConfigDir} from '../fs/segments.ts';
 import {builtinAttributesFile} from '../git/markdown-attributes.ts';
 import { fromEnglish } from '../i18n.ts';
 import {declaration} from './template-declaration.ts';
@@ -78,4 +79,4 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 	return { id:'llm-wiki', version:wikiVersion, paths, entry:'wiki/index.md', files, folders:[], excluded:[] };
 }
 
-export const excludedNames = new Set(['.git','.obsidian','.log','.cache','.venv','__pycache__','node_modules']);
+export const excludedNames = new Set(['.git',defaultConfigDir,'.log','.cache','.venv','__pycache__','node_modules']);

@@ -4,7 +4,8 @@ import {tr} from '../i18n.ts';
 import {officialCheckDigests} from '../kb/template-pack.ts';
 import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from './index.ts';
 import type {DiagnosticOptions} from './index.ts';
-import {checkIdPattern, defaultConfigDir, libraryLocation, validConfigDir} from './snapshot.ts';
+import {defaultConfigDir} from '../fs/segments.ts';
+import {checkIdPattern, libraryLocation, validConfigDir} from './snapshot.ts';
 
 const usage = 'node kb-check.cjs --library <path> [--vault-root <path>] [--config-dir <name>] [--checks all|id,id,...] [--trust-digest <sha256>] [--list|--history]';
 
