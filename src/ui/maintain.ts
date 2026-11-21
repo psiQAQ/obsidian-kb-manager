@@ -1,54 +1,35 @@
 import { tr } from '../i18n.ts';
 import { Setting, TFile } from 'obsidian';
-import { mkdir, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import type KnowledgeBaseManager from '../main.ts';
-import { digest, key, statIfPresent } from '../fs/vault.ts';
-import { identityFile, inspect, parseIdentity, recheck, writeIdentity } from '../kb/catalog.ts';
+import { digest } from '../fs/vault.ts';
+import { inspect, recheck } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
-import { readManifestFile, replaceLibraryManifest } from '../kb/manifest-disk.ts';
+import { applyManifestUpgrade, previewManifestUpgrade } from '../kb/manifest-upgrade.ts';
 import { applyRepair, examineBindings } from '../kb/maintenance.ts';
 import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
 import type { MoveRecord } from '../kb/move.ts';
-import { applyUpgradeChecks, previewUpgradeChecks } from '../kb/upgrade-checks.ts';
 import { changeIdentity } from './identity.ts';
 import { Dialog } from './dialog.ts';
-import { applyLibraryIgnores, previewLibraryIgnores } from '../registry/desktop.ts';
-
-async function logLocation(plugin:KnowledgeBaseManager,location:string) {
-	const root=await plugin.disk.path(location);
-	if((await readdir(root)).some(name=>name!=='.log' && key(name)==='.log'))throw new Error(tr('已有同名日志位置。','A conflicting log path already exists.'));
-	const path=join(root,'.log'),stat=await statIfPresent(path);
-	if(stat && !stat.isDirectory())throw new Error(tr('日志位置须为普通目录。','The log location must be a regular directory.'));
-	return {path,exists:!!stat};
-}
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library) {
-	if(lib.identity?.schemaVersion!==1 || lib.identity.archived || lib.duplicate || lib.problem)return;
-	const relative=lib.location+'/'+identityFile;
-	const {raw,signature}=await readManifestFile(await plugin.disk.path(relative));
-	const current=parseIdentity(raw);
-	if(signature!==lib.signature || current.schemaVersion!==1)throw new Error(tr('清单已变化，请刷新。','The manifest changed. Refresh the library list.'));
-	const updated=writeIdentity(raw,{...current,schemaVersion:2});
-	if(parseIdentity(updated).schemaVersion!==2)throw new Error(tr('无法预览清单升级。','Could not preview the manifest upgrade.'));
-	const ignores=await previewLibraryIgnores(plugin.disk,lib.location);
-	const log=await logLocation(plugin,lib.location);
-	const checkUpgrade=await previewUpgradeChecks(plugin.disk,lib);
+	const preview=await previewManifestUpgrade(plugin.disk,lib);
+	if(!preview)return;
+	const {relative,id,ignores,log,checks}=preview;
 	const dialog=new Dialog(plugin.app,tr('升级知识库清单','Upgrade library manifest'));
-	dialog.facts([[tr('文件','File'),relative],[tr('清单格式','Manifest schema'),'1 → 2'],[tr('知识库 ID','Library ID'),current.id]]);
+	dialog.facts([[tr('文件','File'),relative],[tr('清单格式','Manifest schema'),'1 → 2'],[tr('知识库 ID','Library ID'),id]]);
 	dialog.contentEl.createEl('p',{text:log.exists?tr('使用现有的 .log/ 目录保存检验日志。','Use the existing .log/ directory for check logs.'):tr('创建 .log/ 目录以保存检验日志。','Create .log/ for check logs.')});
 	if(ignores.before!==ignores.after){
 		dialog.contentEl.createEl('p',{text:tr('在本库 .gitignore 末尾追加规则','Append rules to this library’s .gitignore')});
 		dialog.contentEl.createEl('pre').createEl('code',{text:ignores.after.slice(ignores.before?.length ?? 0).trim()});
 	}
-	if(checkUpgrade.manual.length){
+	if(checks.manual.length){
 		dialog.contentEl.createEl('p',{text:tr('专项文件需人工核对。本次升级会更新清单格式和日志位置。','Review the check files manually. This upgrade updates the manifest format and log location.')});
-		dialog.lines(checkUpgrade.manual);
-	} else if(!checkUpgrade.files.length){
+		dialog.lines(checks.manual);
+	} else if(!checks.files.length){
 		dialog.contentEl.createEl('p',{text:tr('当前版本提供通用体检和日志。','General checks and logs are available for this template version.')});
 	} else {
-		for(const file of checkUpgrade.files){
+		for(const file of checks.files){
 			const item=dialog.contentEl.createEl('details');
 			item.createEl('summary',{text:(file.existing?tr('已匹配 ','Matched '):tr('创建 ','Create '))+lib.location+'/'+file.path});
 			item.createEl('p',{text:'SHA-256 '+file.fingerprint});
@@ -56,15 +37,7 @@ export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library) {
 		}
 	}
 	dialog.action(tr('应用清单升级','Apply manifest upgrade'),async()=>{
-		await plugin.exclusive(lib.location,async()=>{
-			const library=await recheck(plugin.disk,plugin.config,lib);
-			const target=await logLocation(plugin,lib.location);
-			if(target.path!==log.path || target.exists!==log.exists)throw new Error(tr('日志位置已变化，请重新预览。','The log location changed. Preview again.'));
-			await applyUpgradeChecks(plugin.disk,library,checkUpgrade);
-			await applyLibraryIgnores(plugin.disk,ignores);
-			if(!target.exists)await mkdir(target.path);
-			await replaceLibraryManifest(plugin.disk,lib.location,signature,updated);
-		});
+		await plugin.exclusive(lib.location,()=>applyManifestUpgrade(plugin.disk,plugin.config,preview));
 		dialog.close();await plugin.refresh();
 	}).setCta();
 	dialog.open();

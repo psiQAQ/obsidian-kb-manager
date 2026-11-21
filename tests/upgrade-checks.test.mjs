@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { templateCatalog } from '../scripts/template-catalog.mjs';
 import { digest, VaultDisk } from '../src/fs/vault.ts';
-import { parseIdentity, writeIdentity } from '../src/kb/identity-core.ts';
+import { discover } from '../src/kb/catalog.ts';
+import { parseIdentity, readManifest, writeIdentity } from '../src/kb/identity-core.ts';
 import { declaration } from '../src/kb/template-declaration.ts';
+import { registerVaultLibrary } from '../src/registry/discovery.ts';
 
 const { packs, digests } = templateCatalog(resolve('assets/templates'));
 global.KB_TEMPLATE_PACKS = packs;
 global.KB_CHECK_DIGESTS = digests;
 const { applyUpgradeChecks, previewUpgradeChecks } = await import('../src/kb/upgrade-checks.ts');
+const { applyManifestUpgrade, previewManifestUpgrade } = await import('../src/kb/manifest-upgrade.ts');
 
 async function fixture(t, initial = {}) {
 	const scratch = resolve('.tmp');
@@ -121,4 +126,88 @@ test('case-ambiguous checks directory is left for manual handling', async t => {
 	assert.deepEqual(plan.files,[]);
 	assert.ok(plan.manual.some(line=>line.includes('checks/category-links.mjs')));
 	assert.ok(!(await readdir(root)).includes('kb-template.json'));
+});
+
+async function registeredUpgrade(t) {
+	const {root,disk,library,manifest} = await fixture(t);
+	const original = manifest.replace('version = 1 # preserve\n', 'version = 1 # preserve\nowner = "社区"\n')
+		.replace('tree = false\n', 'tree = false\ncustom-preference = "保留"\n');
+	const manifestPath = await disk.path(library.location + '/kb.toml');
+	await writeFile(manifestPath,original);
+	const ignorePath = join(root,'.gitignore');
+	const originalIgnore = '# 旧规则\r\n/local-notes/\r\n';
+	await writeFile(ignorePath,originalIgnore);
+	const config = {parents:['Knowledge'],templates:[]};
+	await registerVaultLibrary(disk,config,library.location);
+	const [registered] = await discover(disk,config);
+	const preview = await previewManifestUpgrade(disk,registered);
+	assert.ok(preview);
+	assert.equal(preview.log.exists,false);
+	assert.equal(preview.ignores.before,originalIgnore);
+	assert.deepEqual(preview.checks.files.map(file => file.path),['checks/category-links.mjs','kb-template.json']);
+	assert.deepEqual((await readdir(root)).sort(),['.gitignore','README.md','kb.toml']);
+	return {root,manifestPath,original,ignorePath,originalIgnore,preview,apply:() => applyManifestUpgrade(disk,config,preview)};
+}
+
+async function failManifestRename(t, {manifestPath,apply}, beforeFailure = async () => {}) {
+	const failure = new Error('Injected failure replacing kb.toml');
+	const rename = fs.rename;
+	const stub = t.mock.method(fs,'rename',async (from,to) => {
+		if (to !== manifestPath) return rename(from,to);
+		await beforeFailure(from);
+		throw failure;
+	});
+	syncBuiltinESMExports();
+	try { await assert.rejects(apply(), failure); }
+	finally { stub.mock.restore(); syncBuiltinESMExports(); }
+}
+
+test('the same confirmed upgrade retries a failed final manifest replacement', async t => {
+	const upgrade = await registeredUpgrade(t);
+	const {root,manifestPath,original,ignorePath,originalIgnore,preview,apply} = upgrade;
+	const expectedIgnore = originalIgnore + '/.log/\r\n/kb.toml\r\n';
+	const expectedManifest = original.replace('version = 1 # preserve','version = 2 # preserve')
+		.replace(/^schemaVersion = 1$/mu,'schemaVersion = 2');
+	await failManifestRename(t,upgrade,async temporary => {
+		assert.equal(await readFile(temporary,'utf8'),expectedManifest);
+		assert.equal(await readFile(manifestPath,'utf8'),original);
+		assert.equal(await readFile(ignorePath,'utf8'),expectedIgnore);
+		assert.deepEqual(await readdir(join(root,'.log')),[]);
+		for (const file of preview.checks.files) assert.equal(await readFile(join(root,file.path),'utf8'),file.content);
+	});
+	assert.equal(await readFile(manifestPath,'utf8'),original);
+	assert.ok(!(await readdir(root)).some(name => name.startsWith('.kb-manifest-')));
+	const userLog = join(root,'.log','my-notes.log');
+	await writeFile(userLog,'用户笔记\n');
+
+	await apply();
+	const manifest = await readFile(manifestPath,'utf8');
+	assert.equal(manifest,expectedManifest);
+	assert.equal(parseIdentity(manifest).schemaVersion,2);
+	assert.equal(parseIdentity(manifest).id,parseIdentity(original).id);
+	assert.deepEqual(readManifest(manifest).preferences,{tree:false});
+	assert.equal(await readFile(ignorePath,'utf8'),expectedIgnore);
+	assert.equal(await readFile(userLog,'utf8'),'用户笔记\n');
+	assert.equal(await readFile(join(root,'README.md'),'utf8'),'# 原有首页\n');
+	for (const file of preview.checks.files) assert.equal(await readFile(join(root,file.path),'utf8'),file.content);
+});
+
+test('retry preserves user edits and rejects a stale confirmation', async t => {
+	const edits = [
+		['.gitignore', before => before + '/my-notes/\r\n', /忽略规则已变化|Ignore rules changed/u],
+		['checks/category-links.mjs', before => before + '// User code\n', /专项文件预览已变化|A check file changed/u],
+		['kb-template.json', before => JSON.stringify({...JSON.parse(before),name:'用户模板'},null,2) + '\n', /专项文件预览已变化|A check file changed/u],
+		['kb.toml', before => before + '# User edit\n', /知识库已变化|Library changed/u],
+	];
+	for (const [name,edit,error] of edits) await t.test(name,async subtest => {
+		const upgrade = await registeredUpgrade(subtest);
+		await failManifestRename(subtest,upgrade);
+		const path = join(upgrade.root,name);
+		const after = edit(await readFile(path,'utf8'));
+		await writeFile(path,after);
+
+		await assert.rejects(upgrade.apply(),error);
+		assert.equal(await readFile(path,'utf8'),after);
+		assert.equal(await readFile(upgrade.manifestPath,'utf8'),name === 'kb.toml' ? after : upgrade.original);
+	});
 });
