@@ -36,7 +36,7 @@ class ConflictButtons extends WidgetType {
 	constructor(private plugin:KnowledgeBaseManager,private lib:Library,private path:string,private block:ConflictBlock,private raw:string){super();}
 	toDOM(view:EditorView){
 		const {plugin,lib,path,block}=this;
-		const el=view.dom.doc.createDocumentFragment().createSpan({cls:'kb-conflict-controls'});
+		const el=(view.dom.ownerDocument.defaultView ?? window).createSpan({cls:'kb-conflict-controls'});
 		const choices:ConflictChoice[]=block.base===undefined?['ours','theirs','both']:['ours','base','theirs','both'];
 		for(const choice of choices){
 			const label=plugin.t(...labels[choice]);

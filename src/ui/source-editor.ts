@@ -73,10 +73,12 @@ async function act(plugin:KnowledgeBaseManager,action:HunkCommand,editor:Editor,
 			} else {
 				const fresh=await fileComparison(dir,preview,file,false);
 				await verifyWorkingFile(dir,file);
-				const restored=reverseWorkHunk(fresh.before ?? new Uint8Array(),fresh.after!,index,prefs.diffTimeout);
+				const fileChanged=t('文件内容已变化，请重新预览','File contents changed. Reopen the preview.');
+				if(!fresh.after)throw new Error(fileChanged);
+				const restored=reverseWorkHunk(fresh.before ?? new Uint8Array(),fresh.after,index,prefs.diffTimeout);
 				await plugin.app.vault.process(item,current=>{
 					assertSaved();
-					if(current!==text)throw new Error(t('文件内容已变化，请重新预览','File contents changed. Reopen the preview.'));
+					if(current!==text)throw new Error(fileChanged);
 					return restored;
 				});
 			}
@@ -90,7 +92,7 @@ class Sign extends GutterMarker {
 	private symbol:string;
 	constructor(symbol:string){super();this.symbol=symbol;}
 	eq(other:Sign){return this.symbol===other.symbol;}
-	toDOM(view:EditorView){return view.dom.doc.createDocumentFragment().createSpan({text:this.symbol});}
+	toDOM(view:EditorView){return (view.dom.ownerDocument.defaultView ?? window).createSpan({text:this.symbol});}
 }
 const marks=StateEffect.define<RangeSet<GutterMarker>>();
 const state=StateField.define<RangeSet<GutterMarker>>({
