@@ -20,7 +20,7 @@ async function checkRefContents(file:string,packed:boolean) {
 	for(const line of value.split(/\r?\n/u)){
 		if(!line || line.startsWith('#') || /^\^[0-9a-f]{40}$/u.test(line))continue;
 		const fields=line.match(/^([0-9a-f]{40}) (.+)$/u);
-		if(!fields || !safeRef(fields[2]!))throw invalid();
+		if(!fields?.[2] || !safeRef(fields[2]))throw invalid();
 	}
 }
 

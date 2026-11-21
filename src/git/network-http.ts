@@ -34,7 +34,8 @@ export async function address(dir:string|undefined,raw:string,remote?:string,pus
 	const values=(await gitResult(dir,args)).stdout.toString().trimEnd().split(/\r?\n/u);
 	// Git applies pushInsteadOf / insteadOf before invoking a transport. A
 	// reviewed URL must never become another destination between UI and network.
-	if(values.length!==1 || endpoint(values[0]!)!==url)throw new Error(tr('Git 地址重写或多个目标改变了预览地址，请在原仓核对。','Git rewrites or multiple destinations change the reviewed address. Review the repository configuration.'));
+	const [destination]=values;
+	if(values.length!==1 || !destination || endpoint(destination)!==url)throw new Error(tr('Git 地址重写或多个目标改变了预览地址，请在原仓核对。','Git rewrites or multiple destinations change the reviewed address. Review the repository configuration.'));
 	let display=url,route=url;
 	if(isSsh(url)){
 		const scp=url.includes('://')?null:url.match(sshAddress);

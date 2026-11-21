@@ -11,10 +11,12 @@ export async function commitFiles(dir:string,oid:string){
 	const args=['diff-tree','--no-commit-id','--no-renames','--no-abbrev','--raw','-r','-z',...(parent?[parent,oid]:['--root',oid])];
 	const tokens=fields((await gitResult(dir,args)).stdout),files:FileDelta[]=[];
 	for(let i=0;i<tokens.length;i+=2){
-		const match=/^:(\d+) (\d+) ([a-f0-9]{40}) ([a-f0-9]{40}) [ADMT]$/u.exec(tokens[i]!);
+		const entry=tokens[i],file=tokens[i+1];
+		if(!entry || !file)throw new Error('Incomplete Git tree change');
+		const match=/^:(\d+) (\d+) ([a-f0-9]{40}) ([a-f0-9]{40}) [ADMT]$/u.exec(entry);
 		if(!match)throw new Error('Invalid Git tree change');
 		const before=match[1]!.startsWith('100')?match[3]:undefined,after=match[2]!.startsWith('100')?match[4]:undefined;
-		if(before || after)files.push({file:tokens[i+1]!,before,after});
+		if(before || after)files.push({file,before,after});
 	}
 	return {parent,files};
 }

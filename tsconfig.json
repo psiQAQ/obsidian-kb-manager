@@ -16,6 +16,7 @@
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowSyntheticDefaultImports": true,
+		"types": ["node"],
 		"lib": ["ES2021", "DOM"]
 	},
 	"include": ["src/**/*.ts", "tests/*.mjs", "scripts/*.mjs", "assets/templates/**/*.mjs", "assets/templates/**/Integrations/*.js"]

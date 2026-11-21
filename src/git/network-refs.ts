@@ -57,8 +57,8 @@ export async function serverBranches(dir:string,target:RemoteTarget,credentials?
  const result=await gitResult(dir,['ls-remote','--heads','--',target.remote],authOptions(target.url,credentials));
  return result.stdout.toString().trimEnd().split('\n').filter(Boolean).map(row=>{
   const parts=row.match(/^([0-9a-f]{40,64})\trefs\/heads\/(.+)$/u);
-  if(!parts)throw new Error(tr('服务端分支信息无效','Invalid advertised branch'));
-  return {name:refName(parts[2]!),oid:parts[1]!};
+  if(!parts?.[1] || !parts[2])throw new Error(tr('服务端分支信息无效','Invalid advertised branch'));
+  return {name:refName(parts[2]),oid:parts[1]};
  });
 }
 export async function trackBranch(dir:string,target:RemoteTarget,selected:{name:string;oid:string},localName:string,credentials?:Credentials){
