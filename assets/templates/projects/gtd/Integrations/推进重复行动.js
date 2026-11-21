@@ -1,12 +1,16 @@
-/* QuickAdd User Script */
+// @ts-check
+
+/** @param {{ app: import('obsidian').App }} params */
 module.exports = async ({ app }) => {
 	const file = app.workspace.getActiveFile();
 	const root = file?.parent?.parent?.path;
-	if (!root || file.parent.name !== "Actions" || !app.vault.getAbstractFileByPath(root + "/Views/Actions.base")) throw new Error("请打开本库 Actions 下的一条重复行动。");
-	await app.fileManager.processFrontMatter(file, properties => {
+	if (!root || file?.parent?.name !== "Actions" || !app.vault.getAbstractFileByPath(root + "/Views/Actions.base")) throw new Error("请打开本库 Actions 下的一条重复行动。");
+	await app.fileManager.processFrontMatter(file, /** @param {Record<string, unknown>} properties */ properties => {
 		if (properties.type !== "gtd-action" || properties.status !== "next") throw new Error("行动的状态应为 next。");
-		const interval = /^([1-9]\d{0,2})([dwmy])$/u.exec(properties.every ?? "");
+		const every = properties.every;
 		const previous = properties.next;
+		if (typeof every !== "string" || typeof previous !== "string") throw new Error("需要有效的 every 间隔和 next 日期。");
+		const interval = /^([1-9]\d{0,2})([dwmy])$/u.exec(every);
 		const date = new Date(previous + "T00:00:00Z");
 		if (!interval || Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== previous) throw new Error("需要有效的 every 间隔和 next 日期。");
 		const count = Number(interval[1]);

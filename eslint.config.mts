@@ -1,6 +1,7 @@
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { globalIgnores, defineConfig } from 'eslint/config';
+import tseslint from 'typescript-eslint';
 
 export default defineConfig(
 	globalIgnores([
@@ -31,4 +32,9 @@ export default defineConfig(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		// QuickAdd loads these scripts as JavaScript. Their JSDoc also supports type-aware linting.
+		files: ['assets/templates/**/Integrations/*.js'],
+		extends: [tseslint.configs.recommendedTypeChecked],
+	},
 );

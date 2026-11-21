@@ -194,6 +194,10 @@ function workspace(activeFile, assets) {
 	const app = {
 		vault:{
 			getAbstractFileByPath:path => files.get(path),
+			getFileByPath:path => {
+				const file = files.get(path);
+				return file?.extension ? file : null;
+			},
 			createFolder:async path => { files.set(path, { path, children:[] }); },
 			create:async (path, content) => {
 				assert.ok(!files.has(path), 'Existing file would be overwritten');
@@ -229,7 +233,10 @@ test('media capture creates a typed work inside the active library and rejects a
 	assert.match(files.get(path).content, /medium: podcast/u);
 	assert.match(files.get(path).content, /# 新作品/u);
 	assert.deepEqual(opened, [path]);
+	await create({ app, quickAddApi:{ suggester:async () => '合集', inputPrompt:async () => '新合集' } });
+	assert.match(files.get(`${root}/Collections/新合集.md`).content, /# 新合集/u);
 	await assert.rejects(create({ app, quickAddApi:{ suggester:async () => '合集', inputPrompt:async () => '../越界' } }), /文件名/u);
+	await create({ app, quickAddApi:{ suggester:async () => 'toString', inputPrompt:async () => assert.fail('Unexpected choice reached the title prompt') } });
 	assert.ok(!files.has(`${other}/Media/新作品.md`));
 });
 
@@ -242,6 +249,9 @@ test('GTD recurring action advances its interval and clamps a leap-year month', 
 	await advance({ app });
 	assert.equal(properties.next, '2028-02-29');
 	assert.equal(properties.status, 'next');
+	properties.every = ['1m'];
+	await assert.rejects(advance({ app }), /every/u);
+	assert.equal(properties.next, '2028-02-29');
 });
 
 test('explicit Templater actions respect their instance, preserve existing course files, and generate a scoped weekly query', async () => {
