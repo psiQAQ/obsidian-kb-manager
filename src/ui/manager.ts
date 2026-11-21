@@ -1,7 +1,7 @@
 import { gitDisabled } from './device.ts';
 import { watchLibraryChanges } from './refresh.ts';
 import { cloneWizard } from './clone.ts';
-import { ItemView, Menu, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Menu, Notice, Setting, TFile, Vault, WorkspaceLeaf } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
 import { discover } from '../kb/catalog.ts';
@@ -155,7 +155,11 @@ export class ManagerView extends ItemView {
 			const entry=lib.identity?.entry ?? lib.mapping?.index;
 			if(!entry){
 				const choices=new Dialog(this.app,lib.location);
-				const files=this.app.vault.getMarkdownFiles().filter(f=>f.path.startsWith(lib.location+'/'));
+				const files:TFile[]=[];
+				const folder=this.app.vault.getFolderByPath(lib.location);
+				if(folder)Vault.recurseChildren(folder,file=>{
+					if(file instanceof TFile && file.extension.toLowerCase()==='md')files.push(file);
+				});
 				if(!files.length)choices.lines([tr('目录中没有 Markdown 文件。',"This directory has no Markdown files.")]);
 				for(const file of files)choices.action(file.path.slice(lib.location.length+1),async()=>{
 					await this.plugin.disk.path(file.path);await this.app.workspace.getLeaf(false).openFile(file);choices.close();
