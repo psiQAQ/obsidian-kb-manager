@@ -55,7 +55,7 @@ The CLI writes JSON to standard output. Read `status`, each check’s `coverage`
 
 Use Node.js 24 and npm in the repository root. Run `npm ci`, then `npm run build` to generate `main.js` and `dist/kb-check.cjs`. To make a local ZIP with the plugin, CLI, and license notices, run `python scripts/package_plugin.py`. The archive is written to `dist/knowledge-base-manager.zip`.
 
-The Chinese guides cover the [Git workflow](docs/library-git.md), [library lifecycle](docs/library-lifecycle.md), [diagnostic report format](docs/diagnostics.md), [template authoring](docs/template-authoring.md), and [build and verification commands](docs/development.md).
+The Chinese guides cover the [Git workflow](docs/library-git.md), [desktop history graph and Git Graph feature comparison](docs/git-graph-compatibility.md), [library lifecycle](docs/library-lifecycle.md), [diagnostic report format](docs/diagnostics.md), [template authoring](docs/template-authoring.md), and [build and verification commands](docs/development.md).
 
 ## License and credits
 
