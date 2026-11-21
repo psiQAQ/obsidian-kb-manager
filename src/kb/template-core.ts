@@ -15,8 +15,8 @@ export interface Variables { displayName: string; description: string; destinati
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
-const wikiVersion = '5';
-const builtinVersions = { 'llm-wiki': ['1','2','3','4',wikiVersion], kepano: ['1','2','3','4'] };
+const wikiVersion = '6';
+const builtinVersions = { 'llm-wiki': ['1','2','3','4','5',wikiVersion], kepano: ['1','2','3','4'] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
 	return template?.id === id && builtinVersions[id].includes(template.version);
 }
