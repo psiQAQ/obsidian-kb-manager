@@ -3,7 +3,7 @@ import esbuild from 'esbuild';
 import esbuildSvelte from 'esbuild-svelte';
 import process from 'process';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const upstreamLicense = readFileSync(new URL('./assets/licenses/obsidian-git.txt', import.meta.url), 'utf8');
@@ -36,6 +36,23 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 	conditions: ['browser', prod ? 'production' : 'development'],
 	plugins: [
 		esbuildSvelte({compilerOptions: {css: 'injected'}}),
+		{name:'offline-diagnostics',setup(build) {
+			build.onResolve({filter:/^kb-manager:offline-cli$/}, () => ({path:'cli',namespace:'offline-diagnostics'}));
+			build.onLoad({filter:/^cli$/,namespace:'offline-diagnostics'}, async () => {
+				const cli = await esbuild.build({
+					entryPoints:['src/diagnostics/cli.ts'], bundle:true, platform:'node', target:'node20',
+					format:'cjs', outfile:'dist/kb-check.cjs', write:false, metafile:true, minify:true,
+					define:{KB_CHECK_DIGESTS:JSON.stringify(digests)},
+				});
+				const runner = cli.outputFiles[0];
+				if (prod) {
+					mkdirSync('dist', {recursive:true});
+					writeFileSync(runner.path, runner.contents);
+					writeFileSync('dist/cli-build-inputs.json', JSON.stringify(cli.metafile));
+				}
+				return {contents:runner.text, loader:'text', watchFiles:Object.keys(cli.metafile.inputs).map(file => resolve(file))};
+			});
+		}},
 		// isomorphic-git's browser module expects Buffer. Scope the shim to that module.
 		{name:'mobile-git-buffer',setup(build) {
 			build.onLoad({filter:/[\\/]isomorphic-git[\\/]index\.js$/}, ({path}) => ({
@@ -73,8 +90,6 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 
 if (prod) {
 	const result = await context.rebuild();
-	const cli=await esbuild.build({entryPoints:['src/diagnostics/cli.ts'],bundle:true,platform:'node',target:'node20',format:'cjs',outfile:'dist/kb-check.cjs',define:{KB_CHECK_DIGESTS:JSON.stringify(digests)},metafile:true,minify:true});
-	writeFileSync('dist/cli-build-inputs.json',JSON.stringify(cli.metafile));
 	mkdirSync('dist', { recursive: true });
 	writeFileSync('dist/build-inputs.json', JSON.stringify(result.metafile));
 	process.exit(0);

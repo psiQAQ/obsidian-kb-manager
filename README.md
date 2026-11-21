@@ -44,10 +44,10 @@
 
 ### 2. 安装方式
 
-> 当前版本 `3.0.2` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
+> 当前版本 `3.0.3` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
 
 #### 方式 A：从 GitHub Releases 离线安装（推荐）
-1. 下载发行页的 `knowledge-base-manager.zip`（或单独下载 `main.js`、`manifest.json`、`styles.css`）。
+1. 从 [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases) 下载对应版本的 `knowledge-base-manager.zip`（或单独下载 `main.js`、`manifest.json`、`styles.css`）。
 2. 将解压后的插件文件夹放到你的 Vault 插件目录：
    ```text
    <你的 Vault>/.obsidian/plugins/knowledge-base-manager/
@@ -55,7 +55,7 @@
    ├── manifest.json
    └── styles.css
    ```
-   *(压缩包内同时附带了离线校验工具 `kb-check.cjs` 与第三方许可文件 `THIRD_PARTY_NOTICES.md`。)*
+   *(ZIP 另含 `kb-check.cjs`、`LICENSE` 和 `THIRD_PARTY_NOTICES.md`。仅安装三个插件文件时，可从检验界面导出同版本 CLI。使用自定义 Vault 配置目录时，将插件装入该目录下的 `plugins/`。)*
 3. 重启或重载 Obsidian，进入 **设置 → 第三方插件** 启用 **Knowledge Base Manager**。
 
 ---
@@ -64,7 +64,7 @@
 
 1. **打开管理器**：点击左侧功能区书库图标（或运行命令 `打开知识库管理器`），在右侧栏打开管理器视图。
 2. **新建或接管知识库**：
-   - **新建**：点击新建，选择父目录（默认 `knowledge-base`）、模板骨架（如 *融合 LLM Wiki*、*Kepano（含示例）*、*卡片盒* 等），输入显示名称与简介，预览即将生成的文件清单后确认创建。
+   - **新建**：点击 **新建**，先选用途与模板，再点 **填写知识库信息**。选择父目录（默认 `knowledge-base`），填写物理目录名，核对 Git 姓名与邮箱，按需填写显示名、简介和远端。预览后确认创建，打开本库历史即可看到 `Initial commit`。[建库示例](docs/getting-started.md)
    - **克隆**：使用 `克隆知识库` 向导将远端 Git 知识库拉取到选定父目录并核验清单。
    - **接管已有目录**：通过 `管理 Vault 知识库登记` 扫描并登记已有目录（旧目录可在预览后写入 `kb.toml`）。
 3. **写笔记与插模板**：在目标库内打开笔记，调用命令 **`插入本库页面模板`**，插件会读取当前库的模板目录并高亮展示 Frontmatter 属性合并预览（已存在的同名属性保留原值）。
@@ -103,8 +103,8 @@
 
 ### 5. 知识库体检与离线 CLI（`kb-check.cjs`）
 
-在知识库行的 **`… → 体检`** 中，插件会运行结构/链接检查以及该库模板声明的专项检查（`checks/*.mjs`）：
-- **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，插件会弹窗要求你审阅脚本内容与摘要并手动授信，修改脚本后需重新核对。
+在知识库行的 **… → 检验** 中，插件会运行结构/链接检查以及该库模板声明的专项检查（`checks/*.mjs`）：
+- **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，选择 **审查脚本**，核对源码与摘要后点 **信任此版本**。脚本在本机以当前账号权限运行，修改后需重新核对。
 - **离线 CLI**：在已安装 Node.js 的环境或配合 AI Agent 时，可直接运行离线包中的 `kb-check.cjs`（输出单行 UTF-8 JSON，并在库内 `.log/` 留存检查历史）：
   ```bash
   node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --list
@@ -112,6 +112,8 @@
   ```
 
 ---
+
+**报告判读。** 单独勾选 **可移植性**，可检查库外依赖。同名短链在桌面可核对实际目标，离线证据不足时会显示未验证。退出码 0 也可能对应部分完成；agent 应读取报告的 `status`、各项 `coverage` 和 `diagnostics`。[检验与 CLI 示例](docs/diagnostics.md)
 
 ### 6. 常用命令与设置层次
 
@@ -127,6 +129,8 @@
 - **单库身份与覆盖配置**（`<库根目录>/kb.toml`）：保存库 UUID、模板信息、目录映射 `[paths]`、受管文件指纹及该库对全局 Git 偏好的覆盖项；Git 账号身份与远端配置存于该库 `.git/config`，备用 HTTPS 凭据存于 Obsidian `SecretStorage`。
 
 ---
+
+**网络、凭据与本机访问。** 本地建库和检验可离线使用。克隆、获取、拉取、推送会访问你配置的 Git 远端；推送会发送待推的提交及其历史。后台同步须按库授权。桌面调用系统 Git 并使用其配置、凭据助手或 SSH 代理，也可为指定 HTTPS 目标选用 SecretStorage 中的令牌。模板专项会查找 Vault 外的 Node.js 可执行文件，并将所需笔记上下文交给已授信的脚本；该进程具有当前账号的文件和网络权限。[逐库 Git 与凭据](docs/library-git.md) · [迁移、恢复与设置存储](docs/library-lifecycle.md)
 
 ## 二、开发者指南（Developers）
 
@@ -173,7 +177,7 @@ obsidian-kb-manager/
 │   ├── diagnostics/                 # 知识库体检引擎与离线 CLI
 │   │   ├── cli.ts                   # 独立入口：编译为 dist/kb-check.cjs 供终端 / AI Agent 调用
 │   │   ├── index.ts                 # 体检调度入口（通用检查 + 专项脚本执行 + JSON 报告生成）
-│   │   ├── special.ts / snapshot.ts # 专项脚本 .mjs 的 SHA-256 摘要校验、沙箱传参（notes/links）与执行
+│   │   ├── special.ts / snapshot.ts # 专项脚本 .mjs 的 SHA-256 摘要校验、上下文传递（notes/links）与执行
 │   │   ├── check-links.ts / links.ts / references.ts / structures.ts / base-view.ts / fences.ts / coverage.ts / history.ts / types.ts
 │   │
 │   ├── fs/                          # Vault 文件系统安全边界
@@ -214,7 +218,7 @@ obsidian-kb-manager/
 ### 2. 核心架构与模块分层
 
 1. **严格单库边界与并发安全**：
-   - 所有跨异步磁盘操作通过 `Plugin.exclusive(location, action)` 按知识库路径加锁，并在提交/改写前通过 `recheck(disk, config, lib)` 校验 `kb.toml` 内容摘要 `signature`，防止列表过期或身份重复导致误写。
+   - 建库提交和写入逐库偏好等操作按知识库路径串行执行。写入偏好前通过 `recheck(disk, config, lib)` 校验 `kb.toml` 内容摘要 `signature`，防止列表过期或身份重复导致误写。
    - 跨目录移动通过 `recordMove()` 记录阶段状态，中断后可恢复。
 2. **双构建目标（Plugin + Standalone CLI）**：
    - `esbuild.config.mjs` 同时产出 Obsidian 插件 `main.js`（CommonJS，含 `esbuild-svelte` CSS 注入及 `isomorphic-git` 的 `buffer/` 垫片）和独立的 Node 20 命令行工具 `dist/kb-check.cjs`（`src/diagnostics/cli.ts`），保证桌面界面与离线 Agent 共享同一套体检判定逻辑。
@@ -235,8 +239,10 @@ obsidian-kb-manager/
 ### 4. 开发、测试、打包与发布
 
 #### 环境要求
-- Node.js 24（CI 使用 Node 24；本地建议 LTS 18/20+，需支持 `--experimental-strip-types`）
+- Node.js 24（与 CI 一致），以及系统 Git
 - Python 3（运行 `scripts/package_plugin.py` 生成离线安装 ZIP）
+
+完整构建、许可打包与平台验证说明见[开发指南](docs/development.md)。
 
 #### 常用开发命令
 ```bash
@@ -255,7 +261,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 #### CI 与版本发布
 - **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
-- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.2`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.3`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
 
 ---
 
@@ -263,7 +269,7 @@ python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.z
 
 - **依赖与许可审计**：`scripts/package_plugin.py` 会核对 `dist/build-inputs.json` 中的全部外部 `imports` 是否位于安全白名单内，并确保 `references/` 子模块代码**绝不**被打包进最终产物，同时自动收集所有第三方 npm 包与内置模板的许可文本写入包内 `THIRD_PARTY_NOTICES.md`。
 - **模板与体检安全原则**：
-  - 模板中的 `checks/*.mjs` 运行在独立 Node 进程中，禁止修改知识库内容；且模板声明不得自授信，仅当脚本摘要匹配内置官方摘要或获得用户显式信任后方可执行。
+  - 模板中的 `checks/*.mjs` 运行在独立 Node 进程中，作者须遵守只读约定；且模板声明不得自授信，仅当脚本摘要匹配内置官方摘要或获得用户显式信任后方可执行。
   - 新增内置模板需遵循 [docs/template-authoring.md](docs/template-authoring.md) 的目录规范与上游来源标注要求。
 - **Git 兼容与隔离边界**：禁止跨出已登记知识库的 `.git` 边界执行递归子模块操作或任意 shell 命令；所有上游 Obsidian Git 的功能映射状态与边界说明见 [docs/git-compatibility.md](docs/git-compatibility.md)。
 

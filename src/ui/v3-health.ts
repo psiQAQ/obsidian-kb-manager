@@ -1,4 +1,5 @@
 import { ButtonComponent, Notice, Setting, TFile, resolveSubpath, setIcon } from 'obsidian';
+import offlineCli from 'kb-manager:offline-cli';
 import { readFile, writeFile } from 'node:fs/promises';
 import { digest, statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
@@ -206,9 +207,7 @@ export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
 		const relative=destination.trim();
 		if(!relative.endsWith('.cjs'))throw new Error(tr('使用 .cjs 扩展名。','Use the .cjs extension.'));
 		const output=await plugin.disk.path(relative);
-		const source=plugin.app.vault.configDir+'/plugins/'+plugin.manifest.id+'/kb-check.cjs';
-		const bytes=await plugin.app.vault.adapter.readBinary(source);
-		await writeFile(output,new Uint8Array(bytes),{flag:'wx'});
+		await writeFile(output,offlineCli,{encoding:'utf8',flag:'wx'});
 		new Notice(tr('离线检验工具已导出','Offline check tool exported')+' · '+relative);
 		dialog.close();
 	}).setCta();
