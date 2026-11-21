@@ -32,3 +32,5 @@ node -e "const r=JSON.parse(require('node:fs').readFileSync('report.json','utf8'
 ```
 
 退出码 1 表示报告含错误级诊断，2 表示运行或日志失败、脚本尚未授信，或参数无效。个人脚本可在核对实际文件后用 `--trust-digest` 指定认可的摘要；自定义 Vault 配置目录用 `--config-dir` 指定目录名。
+
+运行检查、列出专项（`--list`）和读取历史（`--history`）都使用指定的 Vault 范围。若列出专项或读取历史时收到退出码 2，先核对 `--library` 是否位于 `--vault-root` 内，以及路径是否误指向 Vault 配置目录。

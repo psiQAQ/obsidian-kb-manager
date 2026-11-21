@@ -573,6 +573,19 @@ test('compiled CLI uses pure JSON stdout from a Unicode path with no Obsidian ru
 	assert.equal(report.checks[0].diagnostics[0].message,relative);
 	const list = JSON.parse(invoke('--library',root,'--list').stdout);
 	assert.equal(list.checks[0].digest,digest(script));
+	const scoped = ['--library',root,'--vault-root',vault,'--config-dir','.settings'];
+	const history = JSON.parse(invoke(...scoped,'--history').stdout);
+	assert.ok(history.reports.some(item => item.runId === report.runId));
+	assert.equal(JSON.parse(invoke(...scoped,'--list').stdout).checks[0].digest,digest(script));
+	const otherVault = path.join(vault,'Other vault');
+	await fs.mkdir(otherVault);
+	for (const mode of ['--list','--history']) {
+		const mismatch = invoke('--library',root,'--vault-root',otherVault,mode);
+		assert.equal(mismatch.status,2);
+		assert.equal(JSON.parse(mismatch.stdout).status,'failed');
+		const configFolder = invoke('--library',otherVault,'--vault-root',vault,'--config-dir','Other vault',mode);
+		assert.equal(configFolder.status,2);
+	}
 	const located = invoke('--library',root,'--config-dir','.settings','--checks','fixture.check','--trust-digest',digest(script));
 	assert.equal(located.status,1);
 	assert.equal(JSON.parse(located.stdout).checks[0].diagnostics[0].message,relative);

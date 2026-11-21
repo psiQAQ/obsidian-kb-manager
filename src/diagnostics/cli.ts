@@ -4,7 +4,7 @@ import {tr} from '../i18n.ts';
 import {officialCheckDigests} from '../kb/template-pack.ts';
 import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from './index.ts';
 import type {DiagnosticOptions} from './index.ts';
-import {checkIdPattern, defaultConfigDir, validConfigDir} from './snapshot.ts';
+import {checkIdPattern, defaultConfigDir, libraryLocation, validConfigDir} from './snapshot.ts';
 
 const usage = 'node kb-check.cjs --library <path> [--vault-root <path>] [--config-dir <name>] [--checks all|id,id,...] [--trust-digest <sha256>] [--list|--history]';
 
@@ -46,8 +46,11 @@ export async function runCli(argv: readonly string[]) {
 	try {
 		const {mode, options} = args(argv);
 		if (mode === 'help') return {code:0, payload:{schemaVersion:1, usage}};
-		if (mode === 'history') return {code:0, payload:{schemaVersion:1, reports:await listDiagnosticHistory(options.libraryRoot)}};
-		if (mode === 'list') return {code:0, payload:{schemaVersion:1, ...await listSpecialChecks(options.libraryRoot)}};
+		if (mode === 'history' || mode === 'list') {
+			const {root} = await libraryLocation(options);
+			const data = mode === 'history' ? {reports:await listDiagnosticHistory(root)} : await listSpecialChecks(root);
+			return {code:0, payload:{schemaVersion:1, ...data}};
+		}
 		const report = await runDiagnostics(options);
 		const code = report.status === 'failed' || report.logError || report.checks.some(check => check.diagnostics.some(item => item.code === 'checker-untrusted')) ? 2 :
 			report.checks.some(check => check.diagnostics.some(item => item.severity === 'error')) ? 1 : 0;
