@@ -1,129 +1,276 @@
 # Knowledge Base Manager
 
-在同一个 Obsidian Vault 里，把研究课题、读书笔记和个人收藏分别建成知识库。每个新库有自己的模板、身份清单 `kb.toml` 和 Git 历史。在侧栏选中哪个库，就能查看那个库的改动、提交版本或运行检验。空白 Vault 和已有 Vault 均可使用，直接安装插件即可。
+> **Obsidian 桌面端多知识库管理插件（`knowledge-base-manager`）**：在同一个 Obsidian Vault 中，用「一库一 `kb.toml` + 一库一 Git」的方式创建、登记、模板化、体检并同步多个彼此独立的知识库。
 
-[离线安装](#离线安装) · [创建第一个库](#创建和保存第一个版本) · [18 套模板](#内置模板) · [知识库检验](#知识库检验) · [开发者指南](#开发者指南)
+本插件**不绑定任何特定 Vault 配置仓库**：无论你是全新建立一个空白 Obsidian Vault，还是在已有 Vault 中整理多个专题库，都可以独立安装并使用本插件。
 
-## 使用者指南
+---
 
-### 离线安装
+## 目录
 
-本仓库版本为 **3.0.2**，适用于 Obsidian 桌面版 **1.15.1 或更高版本**。建库和桌面 Git 操作需要系统 Git。模板专项检验和离线 CLI 还需要本机 Node.js，使用 Node.js 24 可与项目验证环境一致。
+- [一、使用者指南（Users）](#一使用者指南users)
+  - [1. 核心定位与特性](#1-核心定位与特性)
+  - [2. 安装方式](#2-安装方式)
+  - [3. 快速上手：从建库到同步](#3-快速上手从建库到同步)
+  - [4. 内置 18 套知识库模板一览](#4-内置-18-套知识库模板一览)
+  - [5. 知识库体检与离线 CLI（kb-check.cjs）](#5-知识库体检与离线-clikb-checkcjs)
+  - [6. 常用命令与设置层次](#6-常用命令与设置层次)
+- [二、开发者指南（Developers）](#二开发者指南developers)
+  - [1. 仓库结构与详细注释](#1-仓库结构与详细注释)
+  - [2. 核心架构与模块分层](#2-核心架构与模块分层)
+  - [3. 构建流程与编译期注入](#3-构建流程与编译期注入)
+  - [4. 开发、测试、打包与发布](#4-开发测试打包与发布)
+  - [5. 扩展开发规范与安全边界](#5-扩展开发规范与安全边界)
+- [三、许可与致谢](#三许可与致谢)
 
-1. 在 [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases) 查看已公开的版本及附件。若所需版本没有列出 `knowledge-base-manager.zip`，可从对应版本源码[构建离线包](docs/development.md#本地验证)。
-2. 将整个 ZIP 解压到目标 Vault 的 `.obsidian/plugins/`。若自定义了 Vault 配置目录，使用该目录下的 `plugins/`。解压后的目录应为：
+---
 
+## 一、使用者指南（Users）
+
+### 1. 核心定位与特性
+
+在单 Vault 托管多个专题知识库时，传统单仓 Git 和全局模板容易导致提交历史混杂、路径冲突与附件错放。**Knowledge Base Manager** 将每个子目录声明为带有唯一身份清单（`kb.toml`）的独立知识库单元，提供四项核心能力：
+
+1. **多库生命周期管理**：在侧边栏统一完成建库、从远端克隆入库、登记/接管已有目录、安全改名与跨父目录迁移（含中断恢复保护）、只读归档。
+2. **模板建库与按库插入页面模板**：内置 **9 类用途共 18 套知识库骨架**，并支持制作和登记个人模板；在笔记中运行 **「插入本库页面模板」**，只从当前所属库的模板目录挑选并预览属性冲突。
+3. **内置质量体检 + 离线 Agent CLI**：支持跨平台通用链接/结构检查及每套模板专属的 `.mjs` 专项校验；同步打包 `kb-check.cjs`，供本地 AI Agent 或命令行在不打开 Obsidian 的情况下运行校验。
+4. **按库隔离的 Git 工作流**（基于 Obsidian Git 2.43.0 适配改造）：
+   - 树形/列表变更视图、并排/统一 Diff、单文件与差异块（Hunk）暂存/重置；
+   - 智能提交、修订提交（Amend）、推送前提交压缩预览（Squash）、拉取前 Fetch 预览与合并/变基策略；
+   - 分支与远端管理、编辑器内冲突块就地解决、行级作者信息（Line Author / Blame）与状态栏实时变更计数；
+   - 逐库独立授权的自动化提交/拉取/推送、Glob 忽略过滤及每库覆盖偏好。
+
+---
+
+### 2. 安装方式
+
+> 当前版本 `3.0.2` 要求 Obsidian 桌面端 `1.15.1` 及以上（`isDesktopOnly: true`），桌面 Git 功能依赖本机已安装的系统 `git`（可在设置高级页指定可执行文件路径）。
+
+#### 方式 A：从 GitHub Releases 离线安装（推荐）
+1. 下载发行页的 `knowledge-base-manager.zip`（或单独下载 `main.js`、`manifest.json`、`styles.css`）。
+2. 将解压后的插件文件夹放到你的 Vault 插件目录：
    ```text
-   plugins/knowledge-base-manager/
-   ├── manifest.json
+   <你的 Vault>/.obsidian/plugins/knowledge-base-manager/
    ├── main.js
-   ├── styles.css
-   ├── kb-check.cjs
-   ├── LICENSE
-   └── THIRD_PARTY_NOTICES.md
+   ├── manifest.json
+   └── styles.css
    ```
+   *(压缩包内同时附带了离线校验工具 `kb-check.cjs` 与第三方许可文件 `THIRD_PARTY_NOTICES.md`。)*
+3. 重启或重载 Obsidian，进入 **设置 → 第三方插件** 启用 **Knowledge Base Manager**。
 
-3. 重新加载 Obsidian，在 **设置 → 第三方插件** 启用 **Knowledge Base Manager**。点左侧书架图标，或在命令面板运行 **打开知识库管理器**，即可在右侧栏看到管理器。
+---
 
-### 创建和保存第一个版本
+### 3. 快速上手：从建库到同步
 
-1. 在管理器点 **新建**，选择 **AI 协作 → 融合 LLM Wiki → 填写知识库信息**。
-2. 保留默认父目录 `knowledge-base`，在 **物理目录名** 填「光学研究」。显示名可沿用目录名，简介可选。核对 Git 姓名和邮箱；只在本地工作时，`origin` 留空。
-3. 点 **预览**，核对目标 `knowledge-base/光学研究`、提交身份和文件清单，再点 **创建**。打开本库历史，看到 `main` 分支上的 `Initial commit`，就已保存第一个本地版本。[建库示例与 Git 身份回退规则](docs/getting-started.md)
-4. 在该库的 `Notes/` 新建笔记，运行 **插入本库页面模板**，预览属性与正文后确认插入。已有同名属性保留原值。写完后从该库行打开 **Git 状态**，核对差异并提交。有远端时，再为这个库设置上游并同步。[逐库 Git 与部分暂存](docs/library-git.md)
+1. **打开管理器**：点击左侧功能区书库图标（或运行命令 `打开知识库管理器`），在右侧栏打开管理器视图。
+2. **新建或接管知识库**：
+   - **新建**：点击新建，选择父目录（默认 `knowledge-base`）、模板骨架（如 *融合 LLM Wiki*、*Kepano（含示例）*、*卡片盒* 等），输入显示名称与简介，预览即将生成的文件清单后确认创建。
+   - **克隆**：使用 `克隆知识库` 向导将远端 Git 知识库拉取到选定父目录并核验清单。
+   - **接管已有目录**：通过 `管理 Vault 知识库登记` 扫描并登记已有目录（旧目录可在预览后写入 `kb.toml`）。
+3. **写笔记与插模板**：在目标库内打开笔记，调用命令 **`插入本库页面模板`**，插件会读取当前库的模板目录并高亮展示 Frontmatter 属性合并预览（已存在的同名属性保留原值）。
+4. **查看状态与同步**：在右侧管理器展开对应知识库即可查看工作区改动、查看历史提交、执行拉取/推送或一键 **`提交并同步本库`**。
 
-已有远端仓库可通过 **克隆知识库** 导入。整库迁移时请一并携带 `kb.toml`，在 **管理 Vault 知识库登记** 中选择清单并预览导入。找回登记、给独立副本分配新身份、移动中断后的恢复都有独立的确认步骤。[接管、移动与修复](docs/library-lifecycle.md)
+---
 
-### 内置模板
+### 4. 内置 18 套知识库模板一览
 
-先选用途，再挑模板。以下 9 类共 18 套均随插件打包。表中最后一列给出适用情形和默认专项，模板详情页会列出工作流所需的社区插件。[上游来源、作者与许可](docs/template-catalog.md)
+插件在构建时内置以下 9 大场景、共 18 套开箱即用的知识库骨架（每套均包含示例页面、页面模板、视图及对应的专项体检脚本）：
 
 | 用途分类 | 模板名称 | 模板 ID | 适用场景与默认专项检查 |
 | --- | --- | --- | --- |
-| `ai-workflows` | **AI 协作工作记忆** | `ai-worklog` | 工作卡、会话交接与决策页接续人机协作（决策取代关系） |
+| `ai-workflows` | **AI 协作工作记忆** | `ai-worklog` | 工作卡、会话交接与决策页接续人机协作（检查决策取代关系） |
 | `ai-workflows` | **融合 LLM Wiki** | `llm-wiki` | 保存资料原件，构建可追溯的知识页、索引与日志（知识页索引与分析证据） |
-| `collections` | **Kepano（含示例）** | `kepano` | 按分类属性管理书影音、人物、地点与剪藏（分类链接） |
+| `collections` | **Kepano（含示例）** | `kepano` | 按分类属性管理书影音、人物、地点与剪藏（分类链接完整性） |
 | `collections` | **媒体体验记录** | `media-tracker` | 记录书影音进度、评分、感想与合集（媒体进度和评分） |
 | `engineering` | **知识花园** | `knowledge-garden` | 将随手种子整理为可分享与持续更新的经验（拟分享条目的私有引用） |
 | `engineering` | **技术雷达** | `technology-radar` | 用评估、试用、采用、暂缓记录选型依据（采用依据与状态） |
 | `learning` | **课程学习** | `coursework` | 管理课程、讲义、作业与截止日期（有效课程和截止日） |
 | `learning` | **专题备考与错题复做** | `exam-practice` | 按专题训练题型，记录错因与复做结果（掌握状态的复做记录） |
 | `projects` | **行动清单与 GTD** | `gtd` | 从收件箱梳理下一步行动、等待与重复事项（等待事项跟进日期） |
-| `projects` | **项目推进与周期复盘** | `project-review` | 项目正文推进任务，周复盘保留完成与归档记录（归档前的未完成任务） |
+| `projects` | **项目推进与周期复盘** | `project-review` | 项目正文推进任务，周复盘保留完成与归档记录（归档前未完成任务） |
 | `reading` | **领域阅读与间隔复习** | `domain-reading` | 从领域入口安排阅读并将术语转为问答卡片（复习卡问答） |
 | `reading` | **卡片盒** | `zettelkasten` | 闪念与文献批注提炼为永久卡与结构页（永久卡来由） |
 | `research` | **研究证据图谱** | `research-evidence` | 用作者、来源、原子证据与主题页组织跨资料分析（证据来源类型） |
 | `research` | **课题研究** | `research-project` | 关联研究问题、资料、研究日志与阶段结论（结论证据） |
-| `starter` | **首周笔记** | `minimal-first-week` | 一页指引与每日一条记录快速熟悉双链（日记入口与日期） |
+| `starter` | **首周笔记** | `minimal-first-week` | 一页指引与每日一条记录快速熟悉双链（日记入口及日期） |
 | `starter` | **日记与知识札记** | `minimal-journal` | 日记留存当天经过，札记按年归档并关联想法（札记归档年份） |
 | `writing` | **长篇书稿** | `manuscript` | 一部书稿一个大纲，独立章节撰写与修订（书稿内章节序号） |
 | `writing` | **世界观与时间线** | `worldbuilding` | 人物、地点、阵营与事件互链构建设定集（事件日期与地点） |
 
-想复用自己的目录时，可在 **设置 → Knowledge Base Manager → 知识库目录与模板** 登记目录模板，也可在 **制作模板** 一栏点 **打开向导**，声明入口、建库变量、页面模板和专项脚本。登记后，在建库向导的 **我的模板** 中选择它。[从普通目录制作可实例化模板](docs/template-authoring.md)
+> 除了内置模板，你还可以在 **设置 → Knowledge Base Manager → 知识库目录与模板 → 制作模板** 中创建个人可实例化模板（详见 [docs/template-authoring.md](docs/template-authoring.md)）。
 
-### 知识库检验
+---
 
-首次检验时，在侧栏找到刚创建的库（例如「光学研究」），打开 **… → 检验**。**运行全部适用项** 会检查清单、笔记属性、链接与嵌入、标题与块、Canvas、Bases、受管绑定，以及本库声明的专项。要判断把库单独搬走会丢失哪些依赖，勾选 **可移植性**，点 **运行所选**。
+### 5. 知识库体检与离线 CLI（`kb-check.cjs`）
 
-例如，A、B 两个库都有 `实验记录.md`。桌面检验使用 Obsidian 在来源页实际选中的目标，可移植性报告能列出同名候选与实际路径。离线 CLI 缺少这项解析证据时会标为未验证。阅读报告时，同时看问题的严重程度和检查的覆盖情况。
+在知识库行的 **`… → 体检`** 中，插件会运行结构/链接检查以及该库模板声明的专项检查（`checks/*.mjs`）：
+- **脚本安全校验**：内置模板的检验脚本使用发布包预置的 SHA-256 摘要；运行第三方或个人自制模板的脚本前，插件会弹窗要求你审阅脚本内容与摘要并手动授信，修改脚本后需重新核对。
+- **离线 CLI**：在已安装 Node.js 的环境或配合 AI Agent 时，可直接运行离线包中的 `kb-check.cjs`（输出单行 UTF-8 JSON，并在库内 `.log/` 留存检查历史）：
+  ```bash
+  node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --list
+  node kb-check.cjs --library "<Vault>/<库路径>" --vault-root "<Vault>" --checks all
+  ```
 
-专项脚本在独立的 Node.js 进程中以当前系统账号权限运行，只读是模板作者应遵守的约定。官方脚本按发行包内的 SHA-256 摘要识别；个人脚本在 **审查脚本** 中核对源码和摘要后，可选择 **信任此版本**。修改脚本后需要重新核对。
+---
 
-离线 agent 可在解压后的插件目录执行以下命令，将两个路径替换为实际位置：
+### 6. 常用命令与设置层次
 
-```sh
-node kb-check.cjs --library "/path/to/Vault/knowledge-base/光学研究" --vault-root "/path/to/Vault" --checks all
-```
+#### 核心命令（支持中/英跟随 Obsidian 或插件内语言设置）
+- **管理与模板**：`打开知识库管理器`、`新建知识库`、`克隆知识库`、`管理 Vault 知识库登记`、`插入本库页面模板`
+- **版本与提交**：`保存本库版本`、`查看本库历史`、`提交并同步本库`、`同步后关闭当前笔记`、`本库 Git 状态`
+- **单文件与编辑器**：`暂存当前文件`、`取消暂存当前文件`、`查看当前文件差异`、`查看当前行作者`、`编辑本库忽略规则`、`在本库忽略当前文件`、`在 GitHub 查看当前文件`、`在 GitHub 查看当前文件历史`
+- **网络操作**：`获取本库远端`、`拉取本库`、`推送本库`、`管理本库分支`、`设置本库远端`、`管理本库自动操作`
 
-命令将 JSON 报告写到标准输出，新库默认在 Git 忽略的 `.log/` 中保存检验历史。退出码为 0 时也可能部分完成；agent 应读取顶层 `status`，逐项检查 `checks[].coverage` 和 `checks[].diagnostics`。[CLI 示例、状态与退出码](docs/diagnostics.md#离线运行与读取报告)
+#### 设置存储在哪里？
+- **全局默认配置**（`.obsidian/plugins/knowledge-base-manager/data.json`）：仅保存语言偏好与全局 Git 默认值（自动化、提交、同步、编辑器、视图、界面）。
+- **本机设备状态**（Obsidian `localStorage`）：保存本设备的父目录、个人模板登记、自动化授权与中断恢复记录，不跨设备误同步。
+- **单库身份与覆盖配置**（`<库根目录>/kb.toml`）：保存库 UUID、模板信息、目录映射 `[paths]`、受管文件指纹及该库对全局 Git 偏好的覆盖项；Git 账号身份与远端配置存于该库 `.git/config`，备用 HTTPS 凭据存于 Obsidian `SecretStorage`。
 
-### 常用命令与设置
+---
 
-| 想做的事 | 入口 |
-|---|---|
-| 从当前笔记提交或查看历史 | **保存本库版本**、**查看本库历史**。不能从笔记确定目标时会打开选库器。 |
-| 核对文件差异、暂存范围和提交署名 | 当前库的 **Git 状态**。已暂存版本与工作区修改可分别查看。 |
-| 手动同步或授权自动操作 | **提交并同步本库**、**管理本库分支**、**管理本库自动操作**。自动提交、拉取和推送按库授权。 |
-| 给某个库设置例外 | **… → 本库 Git 设置** 覆盖全局默认值；Git 身份与远端由本库 Git 配置管理。 |
+## 二、开发者指南（Developers）
 
-全局语言和 Git 默认值保存在插件的 `data.json`。登记表保存 Vault 相对路径，库身份和逐库偏好随 `kb.toml` 保存在本地，自动化授权则留在本设备。[文件与设置存放位置](docs/library-lifecycle.md#文件和设置存放位置) · [与 Obsidian Git 的功能对照](docs/git-compatibility.md)
-
-## 开发者指南
-
-<details>
-<summary>展开带注释的源码目录树</summary>
+### 1. 仓库结构与详细注释
 
 ```text
 obsidian-kb-manager/
-├── manifest.json、versions.json     插件版本、平台和最低 Obsidian 版本
-├── package.json、package-lock.json  npm 脚本与依赖
-├── esbuild.config.mjs              插件和离线 CLI 的构建入口
-├── styles.css                      插件界面样式
-├── src/
-│   ├── main.ts、settings.ts         桌面生命周期、命令注册和设置界面
-│   ├── kb/                         实例身份、建库、模板、移动与维护
-│   ├── registry/                   Vault 登记表、发现与导入
-│   ├── fs/                         路径校验与文件系统操作
-│   ├── diagnostics/                检验引擎、脚本执行、报告与 CLI
-│   ├── git/                        本库提交、差异、历史、远端与同步
-│   ├── ui/                         桌面侧栏、建库向导、检验与编辑器界面
-│   └── mobile/                     移动端兼容入口
-├── assets/
-│   ├── templates/<purpose>/<id>/   模板文件、声明、专项脚本与来源许可
-│   └── licenses/                   随包代码的上游许可材料
-├── scripts/                        模板目录生成、移动入口验证与 ZIP 打包
-├── tests/                          Node.js 回归测试与样例
-├── docs/                           使用、模板制作和技术文档
-├── references/                     供开发者对照的上游子模块
-└── .github/workflows/              三平台验证及草稿 Release 工作流
+├── manifest.json                    # Obsidian 插件清单（id: knowledge-base-manager，isDesktopOnly: true）
+├── versions.json                    # 插件版本 -> 最低兼容 Obsidian 版本映射表
+├── package.json                     # npm 脚本、运行时依赖（isomorphic-git/smol-toml/yaml/diff/picomatch）与工具链
+├── tsconfig.json                    # TypeScript 严格模式配置（允许 .ts 扩展名导入）
+├── esbuild.config.mjs               # 双产物构建配置：插件 main.js + 独立诊断 CLI dist/kb-check.cjs
+├── eslint.config.mts                # ESLint + eslint-plugin-obsidianmd 规则配置
+├── styles.css                       # 插件 UI 样式
+├── version-bump.mjs                 # 版本号同步脚本（更新 manifest.json 与 versions.json）
+├── LICENSE                          # 0-BSD 开源许可
+├── AGENTS.md                        # 本插件仓库开发规范与 Obsidian 社区插件约束
+│
+├── src/                             # 插件 TypeScript / Svelte 源码
+│   ├── main.ts                      # 桌面端插件入口：生命周期、Vault 互斥锁、命令与视图注册
+│   ├── settings.ts                  # 分页设置界面（全局默认值与单库覆盖编辑）
+│   ├── preferences.ts               # 全局/单库 Git 偏好解析、默认值合并与提交模板渲染
+│   ├── i18n.ts                      # 简体中文 / English 双语切换工具
+│   │
+│   ├── kb/                          # 知识库领域核心层（无 UI 耦合）
+│   │   ├── catalog.ts               # 扫描发现、状态检查、重复 ID 标定与并发签名校验 recheck()
+│   │   ├── identity-core.ts         # kb.toml 解析与序列化、ManagedFile 受管文件指纹管理
+│   │   ├── mapping.ts               # [paths] 目录映射解析与路径重叠/合法性校验
+│   │   ├── create.ts / clone.ts / move.ts  # 建库、克隆发布与可恢复跨目录移动
+│   │   ├── insert.ts / template*.ts # 页面模板检索、{{kb_name}}/{{kb_root}} 实例化与模板打包读取
+│   │   ├── audit*.ts / maintenance.ts / kepano.ts  # 跨平台结构/链接审计、修复与 Kepano 专项支持
+│   │   ├── manifest-disk.ts / manifest-upgrade.ts / upgrade-checks.ts  # 清单磁盘并发保护与版本升级
+│   │   ├── bindings.ts / instance-text.ts / preference-migration.ts / sources.ts / toml-edit.ts
+│   │
+│   ├── git/                         # 按库隔离的 Git 服务层（支持系统原生 Git 与 isomorphic-git）
+│   │   ├── repository.ts            # 仓库状态抽象与后端调度
+│   │   ├── network-native.ts        # 桌面系统 Git 调用封装（含 blameLine、合并、变基等）
+│   │   ├── network-http.ts / network-merge.ts / network-refs.ts / network-automation.ts / network-config.ts / network.ts
+│   │   ├── index-actions.ts / index-conflicts.ts / index-history.ts / index-transaction.ts  # 索引、冲突与历史
+│   │   ├── authorship.ts / hunk-lines.ts    # 行作者解析与差异块行号定位
+│   │   ├── versions.ts / squash.ts / initial.ts / identity.ts / guard.ts
+│   │   ├── markdown-attributes.ts / manifest-privacy.ts / settings-migration.ts
+│   │
+│   ├── diagnostics/                 # 知识库体检引擎与离线 CLI
+│   │   ├── cli.ts                   # 独立入口：编译为 dist/kb-check.cjs 供终端 / AI Agent 调用
+│   │   ├── index.ts                 # 体检调度入口（通用检查 + 专项脚本执行 + JSON 报告生成）
+│   │   ├── special.ts / snapshot.ts # 专项脚本 .mjs 的 SHA-256 摘要校验、沙箱传参（notes/links）与执行
+│   │   ├── check-links.ts / links.ts / references.ts / structures.ts / base-view.ts / fences.ts / coverage.ts / history.ts / types.ts
+│   │
+│   ├── fs/                          # Vault 文件系统安全边界
+│   │   ├── vault.ts / paths.ts / segments.ts / publish.ts  # 路径越界防御、原子写入与发布预览
+│   │
+│   ├── registry/                    # Vault 级库登记表（.kb-manager/libraries.json）
+│   │   ├── desktop.ts / discovery.ts / import.ts / paths.ts
+│   │
+│   ├── ui/                          # 桌面端 Obsidian UI、Modal 向导与编辑器集成
+│   │   ├── manager.ts               # 右侧栏 Knowledge Base Manager 主视图
+│   │   ├── source.ts / source-diff.ts / source-editor.ts / source-history.ts / source-conflicts.ts
+│   │   ├── source-components/FileRow.svelte   # Svelte 5 变更文件行组件
+│   │   ├── library-commands.ts / file-commands.ts / insert-template.ts / template-picker.ts
+│   │   ├── create.ts / clone.ts / sync.ts / maintain.ts / authorship.ts / versions.ts
+│   │   ├── v3-health.ts / v3-template-catalog.ts / v3-template-author.ts  # v3 体检、模板市场与向导
+│   │   ├── device.ts / dialog.ts / git-path.ts / identity.ts / library-status.ts / manager-registry.ts / network*.ts / refresh.ts / registry-ignore.ts / repository-identity.ts / text-field.ts
+│   │
+│   └── mobile/                      # 移动端轻量化兼容实现（当前 manifest 仍为桌面独占，构建入口按 Platform.isMobile 分流）
+│       └── plugin.ts / view.ts / git.ts / http.ts / catalog.ts / bindings.ts / forms.ts / ...
+│
+├── assets/                          # 随插件打包的静态资源与内置模板
+│   ├── licenses/obsidian-git.txt    # 上游 Obsidian Git 许可文本（注入 main.js banner 与离线 ZIP）
+│   └── templates/<purpose>/<id>/    # 9 类用途共 18 套内置模板（含 kb-template.json、checks/*.mjs、LICENSES.md）
+│
+├── scripts/                         # 构建、校验与发布脚本
+│   ├── template-catalog.mjs         # 构建期读取 assets/templates/，生成 KB_TEMPLATE_PACKS 与校验摘要 KB_CHECK_DIGESTS
+│   ├── package_plugin.py            # 审计依赖白名单与许可，生成 dist/knowledge-base-manager.zip
+│   └── verify-mobile.mjs            # 校验移动端入口捆绑不引入 Node/Electron 独占模块
+│
+├── tests/                           # Node 原生 test runner 测试套件（27 个 *.test.mjs + fixtures/）
+├── docs/                            # 公开技术文档（template-catalog.md / template-authoring.md / git-compatibility.md）
+├── references/                      # [Git Submodules] 上游对照源码（obsidian-git、kepano-obsidian、15 套模板上游等），严禁打入发行包
+└── .github/workflows/               # CI（Windows/macOS/Ubuntu 三平台校验）与 Tag Draft Release 发布流
 ```
 
-</details>
+---
 
-**写入与恢复。** 桌面管理器按库路径串行执行建库提交、写入逐库偏好等操作。写偏好前会重新发现该库，核对身份唯一性和清单摘要；移动另外记录源、目标和执行阶段，中断后可以复核并继续。[桌面入口](src/main.ts) · [身份复核](src/kb/catalog.ts) · [移动恢复](src/kb/move.ts)
+### 2. 核心架构与模块分层
 
-**构建与验证。** 开发环境使用 Node.js 24、npm、系统 Git 和 Python 3。构建从模板目录生成 `KB_TEMPLATE_PACKS` 与 `KB_CHECK_DIGESTS`，输出 Obsidian 加载的 `main.js` 和独立的 `dist/kb-check.cjs`。生产包还包含移动端兼容入口，当前发行清单仅开放桌面安装。[构建命令、打包与平台验证](docs/development.md)
+1. **严格单库边界与并发安全**：
+   - 所有跨异步磁盘操作通过 `Plugin.exclusive(location, action)` 按知识库路径加锁，并在提交/改写前通过 `recheck(disk, config, lib)` 校验 `kb.toml` 内容摘要 `signature`，防止列表过期或身份重复导致误写。
+   - 跨目录移动通过 `recordMove()` 记录阶段状态，中断后可恢复。
+2. **双构建目标（Plugin + Standalone CLI）**：
+   - `esbuild.config.mjs` 同时产出 Obsidian 插件 `main.js`（CommonJS，含 `esbuild-svelte` CSS 注入及 `isomorphic-git` 的 `buffer/` 垫片）和独立的 Node 20 命令行工具 `dist/kb-check.cjs`（`src/diagnostics/cli.ts`），保证桌面界面与离线 Agent 共享同一套体检判定逻辑。
+3. **双端入口分流与边界验证**：
+   - 打包入口通过 `require('obsidian').Platform.isMobile` 分流至 `src/main.ts` 或 `src/mobile/plugin.ts`，CI 通过 `scripts/verify-mobile.mjs` 保证移动端分支与依赖边界不被破坏（尽管当前发布清单 `manifest.json` 保守标记 `isDesktopOnly: true`）。
 
-## 许可与致谢
+---
 
-插件本体采用 [0-BSD 许可](LICENSE)。逐库 Git 工作流参考并适配了 Obsidian Git 2.43.0 的功能，保留了 [Obsidian Git 的 MIT 许可](assets/licenses/obsidian-git.txt)。模板各自的上游作者、引用范围和许可见[模板目录](docs/template-catalog.md)；离线包中的 `THIRD_PARTY_NOTICES.md` 汇集了模板和随包代码的许可材料。
+### 3. 构建流程与编译期注入
+
+运行 `npm run build` 时，构建管线会依次完成：
+1. 执行 `tsc -noEmit -skipLibCheck` 做全量 TypeScript 类型检查。
+2. 调用 `scripts/template-catalog.mjs` 遍历 `assets/templates/*/*/kb-template.json`，将全部 18 套模板资源与 `checks/*.mjs` 的 SHA-256 摘要序列化为编译期常量 `KB_TEMPLATE_PACKS` 与 `KB_CHECK_DIGESTS`。
+3. 生成 `main.js`、`dist/kb-check.cjs` 以及元信息 `dist/build-inputs.json`、`dist/cli-build-inputs.json` 供后续打包审计使用。
+
+---
+
+### 4. 开发、测试、打包与发布
+
+#### 环境要求
+- Node.js 24（CI 使用 Node 24；本地建议 LTS 18/20+，需支持 `--experimental-strip-types`）
+- Python 3（运行 `scripts/package_plugin.py` 生成离线安装 ZIP）
+
+#### 常用开发命令
+```bash
+npm install                   # 安装依赖
+npm run dev                   # esbuild 监听模式（输出含 inline sourcemap 的 main.js）
+npm run typecheck             # TypeScript 严格检查 (tsc --noEmit)
+npm run lint                  # ESLint + eslint-plugin-obsidianmd 规则检查
+npm test                      # 运行 tests/*.test.mjs 全部自动化测试
+npm run build                 # 生产构建 main.js 与 dist/kb-check.cjs
+node scripts/verify-mobile.mjs # 校验移动端打包边界
+python scripts/package_plugin.py # 生成并核验 dist/knowledge-base-manager.zip
+```
+
+#### 本地部署到 Obsidian 测试
+将仓库根目录构建出的 `main.js`、`manifest.json` 与 `styles.css` 复制到测试 Vault 的 `.obsidian/plugins/knowledge-base-manager/` 目录，并在 Obsidian 中重新加载插件即可。
+
+#### CI 与版本发布
+- **每次 Push / PR**：`.github/workflows/lint.yml` 在 `windows-latest`、`macos-latest`、`ubuntu-latest` 三平台运行 `typecheck`、`lint`、`test`、`build`、`verify-mobile.mjs` 与 `package_plugin.py`。
+- **Tag 发布**：使用 `npm run version` 同步更新 `manifest.json` 与 `versions.json`，推送不带 `v` 前缀的语义化版本 Tag（如 `3.0.2`）后，`.github/workflows/release.yml` 会自动完成构建、生成产物溯源证明（Provenance Attestation）并创建 Draft Release。
+
+---
+
+### 5. 扩展开发规范与安全边界
+
+- **依赖与许可审计**：`scripts/package_plugin.py` 会核对 `dist/build-inputs.json` 中的全部外部 `imports` 是否位于安全白名单内，并确保 `references/` 子模块代码**绝不**被打包进最终产物，同时自动收集所有第三方 npm 包与内置模板的许可文本写入包内 `THIRD_PARTY_NOTICES.md`。
+- **模板与体检安全原则**：
+  - 模板中的 `checks/*.mjs` 运行在独立 Node 进程中，禁止修改知识库内容；且模板声明不得自授信，仅当脚本摘要匹配内置官方摘要或获得用户显式信任后方可执行。
+  - 新增内置模板需遵循 [docs/template-authoring.md](docs/template-authoring.md) 的目录规范与上游来源标注要求。
+- **Git 兼容与隔离边界**：禁止跨出已登记知识库的 `.git` 边界执行递归子模块操作或任意 shell 命令；所有上游 Obsidian Git 的功能映射状态与边界说明见 [docs/git-compatibility.md](docs/git-compatibility.md)。
+
+---
+
+## 三、许可与致谢
+
+- 本插件本体采用 [0-BSD License](LICENSE) 开源。
+- 知识库 Git 管理部分代码改编自 [Obsidian Git 2.43.0](https://github.com/Vinzent03/obsidian-git)（MIT License，许可原文见 [assets/licenses/obsidian-git.txt](assets/licenses/obsidian-git.txt)）。
+- 内置 18 套知识库模板分别源自多位社区作者的开源作品并保留各自上游许可与署名，完整清单请参阅 [docs/template-catalog.md](docs/template-catalog.md) 及各模板目录下的 `LICENSES.md`。
