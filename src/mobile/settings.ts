@@ -1,5 +1,5 @@
 import {PluginSettingTab,Setting} from 'obsidian';
-import type {App} from 'obsidian';
+import type {App,SettingDefinitionItem} from 'obsidian';
 import {tr} from '../i18n.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {registryIgnoreForm} from './registration-forms.ts';
@@ -7,19 +7,32 @@ import type MobilePlugin from './plugin.ts';
 
 export class MobileSettings extends PluginSettingTab {
 	constructor(app:App,private plugin:MobilePlugin){super(app,plugin);}
-	display(){
-		const el=this.containerEl;el.empty();el.addClass('kb-settings');
+	getSettingDefinitions(): SettingDefinitionItem[] {
 		const p=this.plugin;
-		new Setting(el).setName(tr('目录与语言','Directories and language')).addButton(c=>c.setButtonText(tr('打开','Open')).onClick(()=>this.directories()));
-		new Setting(el).setName(tr('Vault Git 忽略规则','Vault Git ignore rule')).addButton(c=>c.setButtonText(tr('预览','Preview')).onClick(async()=>{
-			try{await registryIgnoreForm(p);}catch(error){p.report(error);}
-		}));
-		new Setting(el).setName(tr('本设备的 Vault 提交身份','Vault commit identity on this device')).addButton(c=>c.setButtonText(tr('设置','Configure')).onClick(()=>this.identity()));
-		new Setting(el).setName(tr('暂停本设备 Git','Pause Git on this device')).addToggle(c=>c.setValue(p.paused()).onChange(async v=>{
-			p.app.saveLocalStorage(p.manifest.id+':gitDisabled',v);await p.refresh();
-		}));
-		el.createEl('p',{text:tr('移动版支持 HTTPS 与快进拉取。SSH 和变基需要桌面 Git。','Mobile supports HTTPS and fast-forward pulls. SSH and rebase require desktop Git.')});
-		el.createEl('p',{text:tr('远端必须支持移动 WebView 的跨域请求（CORS）并提供无需重定向的地址。','The remote must allow CORS from the mobile WebView and offer a direct URL without redirects.')});
+		const support = tr('移动版支持 HTTPS 与快进拉取。SSH 和变基需要桌面 Git。','Mobile supports HTTPS and fast-forward pulls. SSH and rebase require desktop Git.');
+		const cors = tr('远端必须支持移动 WebView 的跨域请求（CORS）并提供无需重定向的地址。','The remote must allow CORS from the mobile WebView and offer a direct URL without redirects.');
+		return [{type:'group',cls:'kb-settings',items:[{
+			name:tr('目录与语言','Directories and language'),
+			aliases:[tr('知识库父目录','Library parent directories'),tr('自定义模板目录','Custom template directories'),tr('语言','Language')],
+			render:setting=>{setting.addButton(c=>c.setButtonText(tr('打开','Open')).onClick(()=>this.directories()));},
+		},{
+			name:tr('Vault Git 忽略规则','Vault Git ignore rule'),
+			render:setting=>{setting.addButton(c=>c.setButtonText(tr('预览','Preview')).onClick(async()=>{
+				try { await registryIgnoreForm(p); } catch (error) { p.report(error); }
+			}));},
+		},{
+			name:tr('本设备的 Vault 提交身份','Vault commit identity on this device'),
+			aliases:[tr('默认姓名','Default name'),tr('默认邮箱','Default email')],
+			render:setting=>{setting.addButton(c=>c.setButtonText(tr('设置','Configure')).onClick(()=>this.identity()));},
+		},{
+			name:tr('暂停本设备 Git','Pause Git on this device'),
+			render:setting=>{setting.addToggle(c=>c.setValue(p.paused()).onChange(async v=>{
+				p.app.saveLocalStorage(p.manifest.id+':gitDisabled',v);await p.refresh();
+			}));},
+		},{
+			name:'',searchable:false,
+			render:setting=>{for(const text of [support,cors])setting.descEl.createEl('p',{text});},
+		}]}];
 	}
 	private directories(){
 		const p=this.plugin,ctx=p.ctx;
@@ -32,7 +45,7 @@ export class MobileSettings extends PluginSettingTab {
 		new Setting(dlg.contentEl).setName(tr('语言','Language')).addDropdown(c=>c.addOptions({system:tr('系统默认','System default'),zh:'中文',en:'English'}).setValue(language).onChange(v=>{language=v;}));
 		dlg.action(tr('保存','Save'),async()=>{
 			const paths=(v:string)=>v.split(/\r?\n/u).map(s=>s.trim()).filter(Boolean);
-			await p.saveConfig(paths(parents),paths(templates),language);dlg.close();this.display();
+			await p.saveConfig(paths(parents),paths(templates),language);dlg.close();this.update();
 		});
 		dlg.open();
 	}

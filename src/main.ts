@@ -147,8 +147,8 @@ export default class KnowledgeBaseManager extends Plugin {
 		try{this.observeLibraries(await discover(this.disk,this.config));}catch(error){new Notice(String(error));}
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		registerSourceDiff(this);
-		this.addSettingTab(new ManagerSettings(this));
 		this.updateLanguage();
+		this.addSettingTab(new ManagerSettings(this));
 		this.ribbon=this.addRibbonIcon('library',tr('打开知识库管理器','Open knowledge base manager'),()=>this.openManager());
 		registerSourceEditor(this);
 		registerAuthorship(this);
