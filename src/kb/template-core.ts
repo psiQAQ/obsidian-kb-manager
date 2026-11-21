@@ -16,7 +16,7 @@ export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
 const wikiVersion = '6';
-const builtinVersions = { 'llm-wiki': ['1','2','3','4','5',wikiVersion], kepano: ['1','2','3','4'] };
+const builtinVersions = { 'llm-wiki': ['1','2','3','4','5',wikiVersion], kepano: ['1','2','3','4','5'] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
 	return template?.id === id && builtinVersions[id].includes(template.version);
 }
@@ -45,7 +45,7 @@ export function kepanoTemplate(skeleton:Record<string,string>, root:string):Temp
 	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
 	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(bundledText(name,text))}));
 	files.push(builtinAttributesFile());
-	return {id:'kepano',version:'4',entry:'README.md',files,folders:[],excluded:[]};
+	return {id:'kepano',version:'5',entry:'README.md',files,folders:[],excluded:[]};
 }
 
 export function renderBase(source: string, root: string): string {

@@ -8,4 +8,4 @@ For a new book record, open a blank Markdown note in this library and run **Inse
 
 地图视图需要 Obsidian 支持相应视图类型。地点分类同时提供表格。地图视图不可用时，打开 [[__KB_ROOT__/Templates/Bases/Places.base|地点表格 / Places table]]。
 
-See [license and source](LICENSE.md).
+See [license and source](./LICENSE.md).

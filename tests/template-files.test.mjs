@@ -64,7 +64,8 @@ test('Fusion v6 bundles operation logs and recognizes previous template versions
 	const personal = kepanoTemplate(kepano, root);
 	const names = template => template.files.map(file => file.name);
 	assert.equal(fusion.version, '6');
-	assert.equal(personal.version, '4');
+	assert.equal(personal.version, '5');
+	assert.match(new TextDecoder().decode(personal.files.find(file => file.name === 'README.md').bytes), /\(\.\/LICENSE\.md\)/u);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 7);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
 	assert.ok(names(fusion).includes('wiki/logs/.gitkeep'));
@@ -78,7 +79,7 @@ test('Fusion v6 bundles operation logs and recognizes previous template versions
 	assert.ok(!names(personal).some(name => name.startsWith('README.v')));
 	for (const version of ['1', '2', '3', '4', '5', '6']) {
 		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
-		assert.equal(isKepano({ id: personal.id, version }), ['1', '2', '3', '4'].includes(version));
+		assert.equal(isKepano({ id: personal.id, version }), ['1', '2', '3', '4', '5'].includes(version));
 	}
 	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = instanceManifestSeed(JSON.parse(wiki['kb-template.json']),1).replace(/^templates = .*\r?\n/mu, '');
