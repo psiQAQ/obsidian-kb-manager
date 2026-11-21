@@ -81,7 +81,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		return step;
 	});
 	const pages=frame.createDiv();
-	const newPage=()=>wizard.contentEl.ownerDocument.createElement('fieldset');
+	const newPage=()=>pages.ownerDocument.createDocumentFragment().createEl('fieldset');
 	const templatePage=newPage(),detailsPage=newPage();
 	detailsPage.addClass('kb-wizard-fields');
 	const details=dialogContents(detailsPage);
@@ -106,8 +106,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	details.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	let identityRequired=false;
 	try { requireIdentity(values); } catch { identityRequired=true; }
-	const advanced=detailsPage.ownerDocument.createElement('details');
-	advanced.addClass('kb-v3-detail');
+	const advanced=detailsPage.createEl('details',{cls:'kb-v3-detail'});
 	const advancedSummary=advanced.createEl('summary');
 	advancedSummary.createSpan({text:tr('高级 Git 选项','Advanced Git options')});
 	const identitySummary=advancedSummary.createSpan({cls:'kb-wizard-git-identity kb-v3-muted'});

@@ -219,7 +219,7 @@
 }
 
 /* Coverage remains visible when a severity filter hides findings. */
-.kb-dialog [hidden], .kb-settings [hidden] { display: none !important; }
+:is(.kb-dialog .modal-content, .kb-settings) [hidden] { display: none; }
 .kb-check-scope {
 	display: flex;
 	align-items: baseline;
@@ -409,7 +409,7 @@
 	border: 0;
 }
 .kb-wizard-actions .setting-item-info { display: none; }
-.kb-wizard-actions .setting-item:has(.kb-action-error:not([hidden])) { flex-basis: 100%; }
+.kb-wizard-actions .setting-item.kb-action-failed { flex-basis: 100%; }
 .kb-wizard-card-heading {
 	display: flex;
 	flex-wrap: wrap;

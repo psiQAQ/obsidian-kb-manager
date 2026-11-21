@@ -21,11 +21,13 @@ export function dialogContents(contentEl: HTMLElement) {
 		errorEl.hidden=true;
 		return row.addButton(button=>button.setButtonText(label).onClick(async ()=>{
 			button.setDisabled(true);
+			row.settingEl.removeClass('kb-action-failed');
 			errorEl.hidden=true;
 			try { await action(); }
 			catch (error) {
 				if (errorEl.isConnected) {
 					errorEl.setText(String(error));
+					row.settingEl.addClass('kb-action-failed');
 					errorEl.hidden=false;
 				} else new Notice(String(error),8000).messageEl.addClass('kb-notice-text');
 			}
