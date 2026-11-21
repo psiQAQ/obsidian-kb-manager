@@ -25,6 +25,8 @@ For a manual installation from GitHub:
 
 Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use **Registry** to preview its registration. Each instance carries its own `kb.toml` identity file.
 
+Registered paths are stored in the plugin’s `data.json` alongside its language and Git defaults. If you previously used `.kb-manager/libraries.json`, open **Registry → Preview legacy registry migration**, review the paths and destination, then select **Confirm migration**. The plugin verifies the saved list before removing the old file. If your vault is in Git, check whether `data.json` is already tracked before sharing it. It now contains your library folder names.
+
 ## Check a library
 
 Open **… → Check library** on the library’s row. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Select **Portability** separately to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
