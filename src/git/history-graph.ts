@@ -12,28 +12,85 @@ export interface GraphCommit {
 
 export interface HistorySnapshot {
 	tips:string[];
-	labels:Map<string,string[]>;
+	labels:Map<string,GraphRef[]>;
+	refs:GraphRef[];
 	branch:string;
+	head:string;
+	detached:boolean;
 }
 
-export async function snapshotHistory(dir:string,allBranches:boolean):Promise<HistorySnapshot> {
-	const branch=await guardGit(dir,new Set(),true);
-	const [head,refs]=await Promise.all([
-		headOid(dir),
-		gitResult(dir,['for-each-ref','--format=%(objectname) %(refname) %(symref)','refs/heads/','refs/remotes/']),
-	]);
-	const tips=new Set<string>(head?[head]:[]);
-	const labels=new Map<string,string[]>();
-	for(const line of refs.stdout.toString('utf8').trimEnd().split('\n')){
-		const [oid,ref,symbolic]=line.split(' ');
-		if(!oid || !ref || symbolic)continue;
-		const name=ref.replace(/^refs\/(heads|remotes)\//u,'');
-		const names=labels.get(oid)??[];
-		names.push(ref==='refs/heads/'+branch?'HEAD · '+name:name);
-		labels.set(oid,names);
-		if(allBranches)tips.add(oid);
+export interface GraphRef {
+	ref:string;
+	name:string;
+	kind:'head'|'local'|'remote'|'tag'|'stash';
+	oid:string;
+	tagOid?:string;
+}
+
+export type HistoryScope='current'|'all'|readonly string[];
+
+export function historyRefKey(ref:GraphRef) {
+	return ref.kind==='stash'?'stash:'+ref.oid:ref.ref;
+}
+
+export function historyTips(snapshot:HistorySnapshot,scope:HistoryScope,showStashes=false):string[] {
+	const tips=new Set<string>();
+	const selected=typeof scope==='string'?undefined:new Set(scope);
+	if(snapshot.head && typeof scope==='string')tips.add(snapshot.head);
+	for(const ref of snapshot.refs){
+		if(selected?.has(historyRefKey(ref)) || (showStashes && ref.kind==='stash' && !selected) ||
+			(scope==='all' && (ref.kind==='local' || ref.kind==='remote' || ref.kind==='tag')))tips.add(ref.oid);
 	}
-	return {tips:[...tips],labels,branch};
+	return [...tips];
+}
+
+export async function snapshotHistory(dir:string,scope:HistoryScope|boolean='current'):Promise<HistorySnapshot> {
+	const branch=await guardGit(dir,new Set(),true);
+	const [head,refs,stashes]=await Promise.all([
+		headOid(dir),
+		gitResult(dir,['for-each-ref','--format=%(refname)%00%(symref)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)',
+			'refs/heads/','refs/remotes/','refs/tags/']),
+		gitResult(dir,['stash','list','-z','--format=%H%x00%gd']),
+	]);
+	const snapshot:HistorySnapshot={tips:[],labels:new Map(),refs:[],branch,head,detached:branch==='HEAD'};
+	const add=(entry:GraphRef)=>{
+		snapshot.refs.push(entry);
+		const labels=snapshot.labels.get(entry.oid)??[];
+		labels.push(entry);
+		snapshot.labels.set(entry.oid,labels);
+	};
+	if(head)add({ref:'HEAD',name:'HEAD',kind:'head',oid:head});
+	for(const line of refs.stdout.toString('utf8').trimEnd().split('\n')){
+		const [ref,symbolic,object,objectType,peeled,peeledType]=line.split('\0');
+		if(!object || !ref || symbolic)continue;
+		const kind=ref.startsWith('refs/heads/')?'local':ref.startsWith('refs/remotes/')?'remote':'tag';
+		let oid=objectType==='commit'?object:peeledType==='commit'?peeled:undefined;
+		if(kind==='tag' && peeledType==='tag'){
+			// for-each-ref dereferences one tag layer. Handle tags on tags without trusting a ref name in the command.
+			const resolved=await gitResult(dir,['rev-parse','--verify','--quiet',object+'^{commit}'],{allowedExitCodes:[0,1]});
+			oid=resolved.stdout.toString('ascii').trim() || undefined;
+		}
+		if(!oid)continue;
+		add({ref,name:ref.split('/').slice(2).join('/'),kind,oid,...(objectType==='tag'?{tagOid:object}:{})});
+	}
+	const entries=stashes.stdout.toString('utf8').split('\0');
+	for(let i=0;i+1<entries.length;i+=2){
+		const [oid,ref]=[entries[i],entries[i+1]];
+		if(oid && ref && /^stash@\{\d+\}$/u.test(ref))add({ref,name:ref,kind:'stash',oid});
+	}
+	snapshot.tips=historyTips(snapshot,scope===true?'all':scope===false?'current':scope);
+	return snapshot;
+}
+
+export async function historyWorktree(dir:string):Promise<{staged:number;unstaged:number}|undefined> {
+	await guardGit(dir);
+	const {stdout}=await gitResult(dir,['status','--porcelain=v1','-z','--no-renames','--untracked-files=all','--ignore-submodules=all']);
+	let staged=0,unstaged=0;
+	for(const row of stdout.toString('utf8').split('\0').filter(Boolean)){
+		if(row[0]!==' ' && row[0]!=='?')staged++;
+		if(row[1]!==' ')unstaged++;
+	}
+	return staged || unstaged?{staged,unstaged}:undefined;
 }
 
 /** Each request traverses the same immutable tips, including both sides of merges. */
@@ -41,8 +98,13 @@ export async function readGraphPage(dir:string,tips:readonly string[],offset:num
 	if(!tips.length)return [];
 	if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(size)||size<1||tips.some(t=>!/^[a-f0-9]{40}$/u.test(t)))
 		throw new Error('Invalid history page');
-	const result=await gitResult(dir,['log','--no-show-signature','--no-notes','--topo-order','--skip='+offset,'--max-count='+size,
-		'-z','--format=%H%x00%P%x00%an%x00%at%x00%B','--stdin','--'],{stdin:Buffer.from(tips.join('\n')+'\n')});
+	return logCommits(dir,tips,['--topo-order','--skip='+offset,'--max-count='+size]);
+}
+
+async function logCommits(dir:string,revs:readonly string[],order:string[]):Promise<GraphCommit[]> {
+	if(!revs.length)return [];
+	const result=await gitResult(dir,['log','--no-show-signature','--no-notes',...order,
+		'-z','--format=%H%x00%P%x00%an%x00%at%x00%B','--stdin','--'],{stdin:Buffer.from(revs.join('\n')+'\n')});
 	const fields=result.stdout.toString('utf8').split('\0');
 	const commits:GraphCommit[]=[];
 	for(let i=0;i<fields.length-1;i+=5){
@@ -93,21 +155,51 @@ export class HistoryLanes {
 
 export class GraphHistory {
 	readonly rows:GraphRow[]=[];
+	readonly indices=new Map<string,number>();
+	readonly children=new Map<string,string[]>();
+	width=0;
 	private readonly lanes=new HistoryLanes();
 	private pending?:Promise<void>;
+	private order?:string[];
 	complete=false;
 	private dir:string;
 	readonly snapshot:HistorySnapshot;
-	constructor(dir:string,snapshot:HistorySnapshot){this.dir=dir;this.snapshot=snapshot;}
-	async load(count:number){
-		while(!this.complete && this.rows.length<count){
-			this.pending??=this.fetch(Math.min(200,count-this.rows.length)).finally(()=>{this.pending=undefined;});
+	readonly workingRow?:GraphRow;
+	constructor(dir:string,snapshot:HistorySnapshot,showWorktree=false){
+		this.dir=dir;this.snapshot=snapshot;
+		if(showWorktree){
+			const parents=snapshot.tips.includes(snapshot.head)?[snapshot.head]:[];
+			this.workingRow=this.lanes.append({oid:'worktree',parents,author:'',timestamp:0,message:''});
+			this.width=this.workingRow.width;
+		}
+	}
+	async load(count:number,active=()=>true){
+		while(active() && !this.complete && this.rows.length<count){
+			this.pending??=this.fetch(Math.min(800,count-this.rows.length)).finally(()=>{this.pending=undefined;});
 			await this.pending;
 		}
 	}
 	private async fetch(size:number){
-		const commits=await readGraphPage(this.dir,this.snapshot.tips,this.rows.length,size);
-		for(const commit of commits)this.rows.push(this.lanes.append(commit));
+		// Use bounded native pages at startup. For deep history, walk once and load metadata by object ID.
+		const offset=this.rows.length;
+		if(!this.order && offset>=128){
+			const result=await gitResult(this.dir,['rev-list','--topo-order','--stdin','--'],
+				{stdin:Buffer.from(this.snapshot.tips.join('\n')+'\n')});
+			this.order=result.stdout.toString('ascii').trim().split('\n').filter(Boolean);
+		}
+		const commits=this.order?await logCommits(this.dir,this.order.slice(offset,offset+size),['--no-walk=unsorted']):
+			await readGraphPage(this.dir,this.snapshot.tips,offset,size);
+		for(const commit of commits){
+			const row=this.lanes.append(commit);
+			this.width=Math.max(this.width,row.width);
+			this.indices.set(commit.oid,this.rows.length);
+			this.rows.push(row);
+			for(const parent of commit.parents){
+				const children=this.children.get(parent)??[];
+				children.push(commit.oid);
+				this.children.set(parent,children);
+			}
+		}
 		this.complete=commits.length<size;
 	}
 }
