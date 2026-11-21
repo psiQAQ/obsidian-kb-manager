@@ -129,7 +129,7 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 			text('commitHostname',['主机名替换文本','Hostname replacement'],'laptop',['留空使用本机名称。','Leave empty to use this device’s hostname.']);
 			add(['预览提交说明','Preview commit message'],(setting,{value}) => setting.addButton(button => button.setButtonText(t('预览','Preview')).onClick(() => {
 					const example = renderCommitMessage({commitMessage:value('commitMessage'),commitHostname:value('commitHostname')},
-						moment().format(value('commitDateFormat')),hostname(),['Notes/example.md']);
+						moment.utc().local().format(value('commitDateFormat')),hostname(),['Notes/example.md']);
 					const preview=new Dialog(plugin.app,t('预览提交说明','Preview commit message'));
 					preview.facts([[t('提交说明','Commit message'),example || t('提交时手动填写','Enter manually when committing')]]);
 					preview.open();

@@ -129,7 +129,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		await checkSource();
 		const sourceText = await disk.read(file.path);
 		const source = file.shared && kind === 'kepano' ? bindSharedKepanoPage(file.name, sourceText, location, assets) : sourceText;
-		const editor = view.editor, note = editor.getValue(), now = moment();
+		const editor = view.editor, note = editor.getValue(), now = moment.utc().local();
 		const result = insertTemplate(note, source, editor.posToOffset(editor.getCursor()), target.basename,
 			(kind, pattern) => now.format(pattern || (kind === 'date' ? 'YYYY-MM-DD' : 'HH:mm')));
 		const preview = new Dialog(app, tr('预览插入', 'Preview insertion'));

@@ -15,7 +15,7 @@
 		"isolatedModules": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
-		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
 		"types": ["node"],
 		"lib": ["ES2021", "DOM"]
 	},

@@ -303,7 +303,7 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 							if(state.preview.staged)throw new Error(fromEnglish('Index already contains staged changes','索引已有暂存内容'));
 							const selected=selectPaths(grant.autoGlobMode,grant.autoGlobs,state.preview.changes.map(c=>c.file));
 							if(op==='commit' && selected.length){
-								const message=renderCommitMessage({...prefs,commitMessage:prefs.autoCommitMessage},moment().format(prefs.commitDateFormat),
+								const message=renderCommitMessage({...prefs,commitMessage:prefs.autoCommitMessage},moment.utc().local().format(prefs.commitDateFormat),
 									hostname(),selected);
 								await saveVersion(dir,state.preview,message,async receipt=>{
 									plugin.saves[id]=receipt;await plugin.persist();

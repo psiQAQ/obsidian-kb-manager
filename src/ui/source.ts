@@ -72,7 +72,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	el.createEl('p',{text:preview.branch+' · '+(preview.head.slice(0,10)||t('尚无提交','No commits yet'))});
 	if(readonly)el.createEl('p',{text:t('此知识库当前只读','This library is currently read-only')});
 	const commitFiles=preview.staged ? candidates(preview,'unstage') : preview.changes;
-	let message=drafts.get(id) ?? renderCommitMessage(pref,moment().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
+	let message=drafts.get(id) ?? renderCommitMessage(pref,moment.utc().local().format(pref.commitDateFormat),hostname(),commitFiles.map(c=>c.file));
 	if(!readonly)addTextField(new Setting(el).setName(t('提交说明','Commit message')),message,value=>{message=value;drafts.set(id,value);},
 		{example:t('更新知识库笔记','Update knowledge base notes')},true);
 	const committed=(submitted:string)=>()=>{if(drafts.get(id)===submitted)drafts.delete(id);};

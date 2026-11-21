@@ -51,7 +51,7 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			const staged=candidates(preview,'unstage'),working=candidates(preview,'stage');
 			const included=preview.staged?staged:working;
 			const files=included.map(c=>c.file);
-			let message=draft ?? renderCommitMessage(prefs,moment().format(prefs.commitDateFormat),hostname(),files);
+			let message=draft ?? renderCommitMessage(prefs,moment.utc().local().format(prefs.commitDateFormat),hostname(),files);
 			dialog.multiline(tr('提交说明','Commit message'),message,v=>{message=v;},{example:tr('更新知识库笔记','Update knowledge base notes')});
 			if(prefs.listChangedFilesInMessageBody)dialog.contentEl.createEl('p',{text:tr('提交正文将附上本次提交的文件名。','Filenames included in this commit are appended to the commit body.')});
 			const signature=(name:string,email:string)=>(name||'—')+' <'+(email||'—')+'>';
