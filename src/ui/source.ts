@@ -18,6 +18,8 @@ import { showDiff } from './source-diff.ts';
 import { showSourceHistory } from './source-history.ts';
 import { conflictFiles } from '../git/index-history.ts';
 import { mergePanel } from './network-merge.ts';
+import { activeOperation } from '../git/graph-recovery.ts';
+import { openHistoryRecovery } from './history-advanced.ts';
 import { commitAndSync } from './sync.ts';
 import type { CommitMode } from '../git/versions.ts';
 import FileRow from './source-components/FileRow.svelte';
@@ -65,6 +67,9 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 		const conflicts=await conflictFiles(dir).catch(()=>[]);
 		if(!active())return;
 		const section=group(el,conflicts.length?t('冲突','Conflicts')+' ('+conflicts.length+')':t('仓库状态','Repository state'),true);
+		if(!readonly && await activeOperation(dir)){
+			button('git-pull-request',t('继续或中止操作','Continue or abort operation'),()=>openHistoryRecovery(plugin,lib,dir),false,section);
+		}
 		if(await mergePanel(plugin,lib,section,dir,readonly))return;
 		if(!active())return;
 		if(conflicts.length){

@@ -1,18 +1,27 @@
-import { ItemView, Notice, Scope, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Menu, Notice, Scope, WorkspaceLeaf } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover, recheck } from '../kb/catalog.ts';
+import { discover } from '../kb/catalog.ts';
 import { displayAuthor } from '../git/authorship.ts';
-import { commitFiles } from '../git/index-history.ts';
-import { GraphHistory, snapshotHistory } from '../git/history-graph.ts';
-import type { GraphCommit } from '../git/history-graph.ts';
-import { showDiff } from './source-diff.ts';
+import { GraphHistory, historyTips, historyWorktree, snapshotHistory } from '../git/history-graph.ts';
+import type { GraphRef, HistoryScope } from '../git/history-graph.ts';
 import { assertGitEnabled } from './device.ts';
 import { revealSourceTab } from './source-tabs.ts';
 import { drawCommitGraph } from './history-graph-row.ts';
+import { historyButton, historyDisplayControl, historyOptions, historyScopeControl, refKind } from './history-controls.ts';
+import type { HistoryDisplay } from './history-controls.ts';
+import { showHistoryMenu } from './history-actions.ts';
+import { HistoryWindow, historyRowHeight } from './history-window.ts';
+import { renderHistoryDetail } from './history-detail.ts';
+import type { HistoryComparisonControl } from './history-detail.ts';
+import { renderHistorySearch } from './history-search.ts';
+import type { HistorySearch } from './history-search.ts';
 
 export const historyType='knowledge-base-manager-history';
-const batchSize=20;
+const batchSize=96;
+const worktreeOid='worktree';
+const newComparison=():HistoryComparisonControl=>({base:'',parent:'',override:'',reversed:false});
+
 export function registerSourceHistory(plugin:KnowledgeBaseManager) {
 	plugin.registerView(historyType,leaf=>new SourceHistory(leaf,plugin));
 }
@@ -22,199 +31,242 @@ export async function showSourceHistory(plugin:KnowledgeBaseManager,id:string) {
 
 class SourceHistory extends ItemView {
 	private id?:string;
-	private plugin:KnowledgeBaseManager;
 	private generation=0;
-	private all=false;
-	private query='';
-	private tailObserver?:IntersectionObserver;
+	private branches:HistoryScope='current';
+	private search:HistorySearch={query:'',field:'all'};
 	private selected='';
-	private parent='';
+	private comparison=newComparison();
 	private searchInput?:HTMLInputElement;
+	private dispose?:()=>void;
+	private anchor?:()=>{oid?:string;offset:number;scroll:number};
 
-	constructor(leaf:WorkspaceLeaf,plugin:KnowledgeBaseManager){
-		super(leaf);this.plugin=plugin;
-		this.contentEl.addEventListener('keydown',event=>{
+	constructor(leaf:WorkspaceLeaf,private readonly plugin:KnowledgeBaseManager){
+		super(leaf);
+		const focusSearch=()=>{this.searchInput?.focus();this.searchInput?.select();};
+		this.registerDomEvent(this.contentEl,'keydown',event=>{
 			if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='f'){
-				event.preventDefault();event.stopPropagation();this.searchInput?.focus();this.searchInput?.select();
+				event.preventDefault();event.stopPropagation();focusSearch();
 			}
 		},true);
-		// Obsidian routes workspace shortcuts through the active leaf's scope.
 		this.scope??=new Scope(plugin.app.scope);
-		this.scope.register(['Mod'],'f',()=>{this.searchInput?.focus();this.searchInput?.select();return false;});
+		this.scope.register(['Mod'],'f',()=>{focusSearch();return false;});
 	}
 	getViewType(){return historyType;}
 	getIcon(){return 'git-graph';}
 	getDisplayText(){return this.plugin.t('知识库历史','Library history');}
 	getState(){return {id:this.id};}
-	override onClose(){this.generation++;this.tailObserver?.disconnect();return Promise.resolve();}
+	override onClose(){this.generation++;this.dispose?.();return Promise.resolve();}
+
 	async setState(state:unknown,result:ViewStateResult){
 		const generation=++this.generation;
-		this.tailObserver?.disconnect();
+		const previous=this.anchor?.();
+		this.dispose?.();
+		this.dispose=undefined;this.anchor=undefined;this.searchInput=undefined;
 		await super.setState(state,result);
-		if(generation!==this.generation)return;
-		const previousList=this.contentEl.querySelector<HTMLElement>('.kb-history-table');
-		const scroll=previousList?.scrollTop??0;
-		const previousRow=previousList && Array.from(previousList.querySelectorAll<HTMLElement>('[data-oid]'))
-			.find(row=>row.getBoundingClientRect().bottom>previousList.getBoundingClientRect().top);
-		const anchor=previousRow?.dataset.oid;
-		const offset=previousRow && previousList?previousRow.getBoundingClientRect().top-previousList.getBoundingClientRect().top:0;
+		const live=()=>generation===this.generation;
+		if(!live())return;
 		this.contentEl.empty();
 		if(!state || typeof state!=='object' || !('id' in state) || typeof state.id!=='string')return;
-		const restore=this.id===state.id && previousList?.dataset.scope===(this.all?'all':'current');
+		const restore=this.id===state.id?previous:undefined;
 		if(this.id!==state.id){
-			this.all=false;this.query='';this.selected='';this.parent='';
+			this.branches='current';this.search={query:'',field:'all'};this.selected='';this.comparison=newComparison();
 		}
 		const id=this.id=state.id,plugin=this.plugin,t=plugin.t;
 		const el=this.contentEl.createDiv({cls:'kb-git-history'});
-		const live=()=>generation===this.generation;
 		try{
 			assertGitEnabled(plugin);
 			const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity?.id===id && !l.duplicate && !l.problem);
 			if(!lib)throw new Error(t('无法定位知识库','Could not locate the library'));
-			const dir=await plugin.disk.path(lib.location);
-			const graph=new GraphHistory(dir,await snapshotHistory(dir,this.all));
+			const dir=await plugin.disk.path(lib.location),snapshot=await snapshotHistory(dir);
 			if(!live())return;
-			const pref=plugin.preferences(id);
+			const prefs=plugin.preferences(id);
+			const options:HistoryDisplay={graph:true,refs:true,stashes:true,worktree:true,author:prefs.historyAuthor!=='hidden',
+				date:prefs.historyDate,sha:true,authorWidth:16,dateWidth:12,shaWidth:10,refPosition:'before',detailLayout:'below',
+				...historyOptions(plugin)};
+			snapshot.tips=historyTips(snapshot,this.branches,options.stashes);
+			const workLabel=t('未提交的更改','Uncommitted changes');
+			const worktree=options.worktree && !snapshot.detached?await historyWorktree(dir).catch((error:unknown)=>{
+				if(live())new Notice(String(error));return undefined;
+			}):undefined;
+			if(!live())return;
+			const graph=new GraphHistory(dir,snapshot,!!worktree);
+			const virtual=graph.workingRow?1:0;
+			const formatter=new Intl.DateTimeFormat();
+			const date=(timestamp:number)=>formatter.format(timestamp*1000);
+			const report=(error:unknown)=>{if(live())new Notice(String(error));};
+			const reload=()=>{void this.setState({id},{history:false});};
+			const changeScope=(scope:HistoryScope)=>{
+				this.branches=scope;this.anchor=undefined;reload();
+			};
 			el.createEl('h3',{text:lib.location});
 			const bar=el.createDiv({cls:'kb-history-toolbar'});
-			const scope=bar.createEl('select',{cls:'kb-history-scope',attr:{'aria-label':t('历史范围','History scope')}});
-			scope.createEl('option',{value:'current',text:t('当前分支','Current branch')+' · '+graph.snapshot.branch});
-			scope.createEl('option',{value:'all',text:t('所有分支（含远端跟踪分支）','All branches (including remote-tracking branches)')});
-			scope.value=this.all?'all':'current';
-			scope.onchange=()=>{
-				this.all=scope.value==='all';this.selected='';this.parent='';
-				void this.setState({id},{history:false});
+			historyScopeControl(bar,plugin,snapshot,this.branches,changeScope);
+			historyButton(bar,t('刷新历史','Refresh history'),'refresh-cw').onclick=reload;
+			const head=historyButton(bar,t('转到 HEAD','Go to HEAD'),'locate-fixed');
+			head.disabled=!snapshot.head;
+			historyDisplayControl(bar,plugin,options,reload);
+			const searchBar=el.createDiv({cls:'kb-history-toolbar'});
+			const panels=el.createDiv({cls:'kb-history-panels'});
+			panels.toggleClass('kb-history-panels-side',options.detailLayout==='side');
+			const list=panels.createDiv({cls:'kb-history-table',attr:{'aria-label':t('提交历史','Commit history'),role:'group',tabindex:'-1'}});
+			list.dataset.scope=typeof this.branches==='string'?this.branches:'custom';
+			list.setCssProps({'--kb-history-author-width':options.authorWidth+'ch',
+				'--kb-history-date-width':options.dateWidth+'ch','--kb-history-sha-width':options.shaWidth+'ch'});
+			const detail=panels.createDiv({cls:'kb-history-detail'});
+			const empty=list.createEl('p',{text:t('还没有提交','No commits yet')});empty.hidden=true;
+			const rowAt=(index:number)=>virtual && index===0?graph.workingRow:graph.rows[index-virtual];
+			const indexOf=(oid:string)=>oid===worktreeOid && virtual?0:(graph.indices.get(oid)??-1)+virtual;
+			const present=(oid:string)=>oid===worktreeOid?!!virtual:graph.indices.has(oid);
+			let loaded=0,detailRequest=0,pendingJump=0,paging=false;
+			const load=async(count:number)=>{
+				await graph.load(Math.max(batchSize,count-virtual),live);
+				if(!live())return;
+				loaded=Math.max(loaded,Math.min(count,graph.rows.length+virtual));
+				window.update(loaded,Math.max(1,graph.width));
+				empty.hidden=loaded>0;
 			};
-			const search=this.searchInput=bar.createEl('input',{type:'search',placeholder:t('查找提交 SHA、说明或作者','Find SHA, message or author')});
-			search.setAttribute('aria-label',search.placeholder);
-			search.value=this.query;
-			const find=bar.createDiv({cls:'kb-find-controls'});
-			const list=el.createDiv({cls:'kb-history-table',attr:{'aria-label':t('提交历史','Commit history')}});
-			list.dataset.scope=scope.value;
-			const detail=el.createDiv({cls:'kb-history-detail'});
-			let detailRequest=0,searchRequest=0;
-			const report=(error:unknown)=>{if(live())new Notice(String(error));};
-			const showDetails=async(commit:GraphCommit)=>{
+			const paintDetail=async()=>{
+				const index=indexOf(this.selected),row=present(this.selected)?rowAt(index):undefined;
 				const request=++detailRequest;
-				detail.empty();this.selected=commit.oid;
-				for(const button of Array.from(list.querySelectorAll<HTMLElement>('[data-oid]')))
-					button.setAttribute('aria-pressed',String(button.dataset.oid===commit.oid));
-				detail.createEl('h4',{text:commit.message.split('\n')[0]||t('无提交说明','No commit message')});
-				const body=commit.message.split('\n').slice(1).join('\n').trim();
-				if(body)detail.createEl('p',{cls:'kb-commit-body',text:body});
-				const parent=commit.parents.includes(this.parent)?this.parent:commit.parents[0];
-				this.parent=parent??'';
-				const sides=detail.createDiv({cls:'kb-history-comparison'});
-				if(commit.parents.length>1){
-					const choose=sides.createEl('select',{cls:'kb-history-parent',attr:{'aria-label':t('比较父提交','Comparison parent')}});
-					for(const [i,oid] of commit.parents.entries())
-						choose.createEl('option',{value:oid,text:t('父提交','Parent')+' '+(i+1)+' · '+oid.slice(0,10)});
-					choose.value=this.parent;
-					choose.onchange=()=>{this.parent=choose.value;void showDetails(commit).catch(report);};
-				}else sides.createSpan({text:parent?.slice(0,10)??'∅'});
-				sides.createSpan({text:' → '+commit.oid.slice(0,10)});
-				await recheck(plugin.disk,plugin.config,lib);
-				const {files}=await commitFiles(dir,commit.oid,parent);
-				if(!live() || request!==detailRequest)return;
-				if(!files.length)detail.createEl('p',{text:t('此比较没有文件变更','No file changes in this comparison')});
-				for(const {file,before,after} of files){
-					const button=detail.createEl('button',{cls:'kb-history-file',attr:{type:'button'}});
-					button.createSpan({text:!before?'A':!after?'D':'M',cls:'kb-history-change'});
-					button.createSpan({text:file});
-					button.onclick=()=>{void showDiff(plugin,{id,file,staged:false,commit:commit.oid,
-						...(parent && parent!==commit.parents[0]?{parent}:{})}).catch(report);};
-				}
+				window.mark(row?index:-1);
+				detail.empty();
+				if(!row)return;
+				const {commit}=row;
+				const children=[...(graph.children.get(commit.oid)??[])];
+				if(graph.workingRow?.commit.parents.includes(commit.oid))children.unshift(worktreeOid);
+				await renderHistoryDetail(detail,{plugin,lib,dir,commit,refs:snapshot.labels.get(commit.oid)??[],head:snapshot.head,
+					children,worktree:!snapshot.detached,control:this.comparison,active:()=>live() && request===detailRequest,
+					repaint:()=>{void paintDetail().catch(report);},jump:oid=>{void jump(oid,true).catch(report);},
+					menu:(anchor,ref)=>showMenu(commit.oid,{anchor,ref})});
 			};
-			let rendered=0,lanes=0;
-			const observer=this.tailObserver=new IntersectionObserver(entries=>{
-				if(live() && entries.some(entry=>entry.isIntersecting && entry.target===list.lastElementChild))
-					void appendThrough(rendered+batchSize).catch(report);
-			},{root:list,rootMargin:'0px 0px 96px 0px'});
-			const appendThrough=async(count:number,valid=live)=>{
-				await graph.load(count+1);
+			const pick=(oid:string,compare=false)=>{
+				if(this.selected!==oid){
+					this.comparison.parent='';this.comparison.override='';this.comparison.reversed=false;
+					if(compare)this.comparison.base=this.selected || oid;
+					this.selected=oid;
+				}
+				void paintDetail().catch(report);
+			};
+			const locate=async(oid:string,active=live)=>{
+				while(active() && !present(oid) && !graph.complete)await graph.load(graph.rows.length+800,active);
+				return active() && present(oid)?indexOf(oid):-1;
+			};
+			const jump=async(oid:string,focus=false)=>{
+				const request=++pendingJump,valid=()=>live() && request===pendingJump;
+				const index=await locate(oid,valid);
+				if(index<0 || !valid())return;
+				if(index>=loaded)await load(index+batchSize);
 				if(!valid())return;
-				const end=Math.min(count,graph.rows.length);
-				if(end<=rendered)return;
-				observer.disconnect();
-				for(const row of graph.rows.slice(rendered,end)){
-					const {commit}=row;
-					const button=list.createEl('button',{cls:'kb-history-row',attr:{type:'button','data-oid':commit.oid,'aria-pressed':String(commit.oid===this.selected)}});
-					drawCommitGraph(button,row);
-					lanes=Math.max(lanes,row.width);
-					const summary=button.createSpan({cls:'kb-history-subject'});
-					for(const name of graph.snapshot.labels.get(commit.oid)??[])summary.createSpan({text:name,cls:'kb-history-ref'});
-					summary.createSpan({text:commit.message.split('\n')[0]||t('无提交说明','No commit message')});
-					button.createSpan({cls:'kb-commit-meta',text:[displayAuthor(commit.author,pref.historyAuthor),
-						pref.historyDate?new Date(commit.timestamp*1000).toLocaleDateString():''].filter(Boolean).join(' · ')});
-					button.createEl('code',{text:commit.oid.slice(0,10)});
-					button.onclick=()=>{this.parent='';void showDetails(commit).catch(report);};
-				}
-				rendered=end;
-				list.setCssProps({'--kb-history-lanes':String(lanes)});
-				if(end<graph.rows.length && list.lastElementChild)observer.observe(list.lastElementChild);
+				pick(oid);
+				window.reveal(index,focus);
 			};
-			const findSelection=async(oid:string,valid:()=>boolean)=>{
-				let from=0;
-				while(valid()){
-					for(;from<graph.rows.length;from++)if(graph.rows[from]!.commit.oid===oid)return from;
-					if(graph.complete)return -1;
-					await graph.load(from+200);
-				}
-				return -1;
+			const showMenu=(oid:string,trigger:{anchor?:HTMLElement;event?:MouseEvent;ref?:GraphRef})=>{
+				if(!live())return;
+				const commit=present(oid) && oid!==worktreeOid?rowAt(indexOf(oid))?.commit:undefined;
+				const origin=this.selected && this.selected!==oid?this.selected:snapshot.head!==oid?snapshot.head:'';
+				showHistoryMenu({plugin,lib,dir,commit,detached:snapshot.detached,...trigger,refresh:reload,
+					selectBase:base=>{
+						if(!live())return;
+						this.comparison.base=base;this.comparison.override='';this.comparison.reversed=false;
+						void jump(base).catch(report);
+					},
+					openComparison:origin && present(origin)?target=>{
+						if(!live() || origin===target)return;
+						pick(target);this.comparison.base=origin;void paintDetail().catch(report);
+					}:undefined});
 			};
-			const runSearch=async(keepSelection=false)=>{
-				const request=++searchRequest,query=this.query.trim().toLowerCase();
-				const valid=()=>live() && request===searchRequest;
-				find.empty();
-				if(!query)return;
-				const status=find.createSpan({attr:{role:'status'},text:t('查找中…','Searching…')});
-				const matches:number[]=[];
-				let checked=0;
-				while(valid()){
-					for(;checked<graph.rows.length;checked++){
-						const c=graph.rows[checked]!.commit;
-						if([c.oid,c.message,c.author].some(v=>v.toLowerCase().includes(query)))matches.push(checked);
-					}
-					if(graph.complete)break;
-					await graph.load(checked+200);
-				}
-				if(!valid())return;
-				if(!matches.length){status.setText(t('没有匹配的提交','No matching commits'));return;}
-				let at=Math.max(0,matches.findIndex(n=>graph.rows[n]!.commit.oid===this.selected));
-				let jumpRequest=0;
-				const jump=async(step:number)=>{
-					const current=++jumpRequest;
-					at=(at+step+matches.length)%matches.length;
-					const index=matches[at]!,commit=graph.rows[index]!.commit;
-					status.setText((at+1)+' / '+matches.length);
-					await appendThrough(index+batchSize,valid);
-					if(!valid() || current!==jumpRequest)return;
-					if(commit.oid!==this.selected)this.parent='';
-					await showDetails(commit);
-					if(valid() && current===jumpRequest)list.querySelector('[data-oid="'+commit.oid+'"]')?.scrollIntoView({block:'nearest'});
+			const expandRefs=(button:HTMLElement,oid:string,refs:GraphRef[])=>{
+				const menu=new Menu();
+				for(const ref of refs)menu.addItem(item=>item.setTitle(refKind(ref.kind,t)+' · '+ref.name)
+					.onClick(()=>showMenu(oid,{anchor:button,ref})));
+				const rect=button.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom});
+			};
+			const createRow=(index:number)=>{
+				const row=rowAt(index)!;
+				const {commit}=row,oid=commit.oid,working=oid===worktreeOid;
+				const refs=snapshot.labels.get(oid)??[];
+				const title=working?workLabel:commit.message.split('\n')[0]||t('无提交说明','No commit message');
+				const button=createEl('button',{cls:'kb-history-row',attr:{type:'button','data-oid':oid}});
+				const node=working?'worktree':oid===snapshot.head?'head':refs.some(ref=>ref.kind==='stash')?'stash':
+					commit.parents.length>1?'merge':'commit';
+				const tooltip=working?workLabel:[title,oid,commit.author,date(commit.timestamp),...refs.map(ref=>ref.name)].join('\n');
+				if(options.graph)drawCommitGraph(button,row,tooltip,node);
+				const labels=()=>{
+					if(!options.refs || !refs.length)return;
+					const group=button.createSpan({cls:'kb-history-labels'});
+					for(const [i,ref] of refs.slice(0,2).entries())group.createSpan({text:ref.name,cls:['kb-history-ref','kb-history-ref-'+ref.kind],
+						attr:{'data-ref-index':String(i),title:refKind(ref.kind,t)+' · '+ref.name}});
+					if(refs.length>2)group.createSpan({text:'+'+(refs.length-2),cls:['kb-history-ref','kb-history-ref-more'],
+						attr:{title:refs.map(ref=>ref.name).join('\n'),'data-more-refs':'true'}});
 				};
-				for(const [label,cls,step] of [[t('上一匹配','Previous match'),'kb-find-prev',-1],[t('下一匹配','Next match'),'kb-find-next',1]] as const){
-					const btn=find.createEl('button',{cls,text:label});btn.disabled=matches.length===1;btn.onclick=()=>{void jump(step).catch(report);};
+				if(options.refPosition==='before')labels();
+				button.createSpan({cls:'kb-history-subject',text:title,attr:{title:tooltip}});
+				if(options.refPosition==='after')labels();
+				if(working && worktree){
+					button.createSpan({cls:'kb-commit-meta',text:t('暂存','Staged')+' '+worktree.staged+' · '+t('未暂存','Unstaged')+' '+worktree.unstaged});
+				}else{
+					if(options.author)button.createSpan({cls:['kb-commit-meta','kb-history-author'],
+						text:displayAuthor(commit.author,prefs.historyAuthor==='hidden'?'full':prefs.historyAuthor)});
+					if(options.date)button.createSpan({cls:['kb-commit-meta','kb-history-date'],text:date(commit.timestamp)});
+					if(options.sha)button.createEl('code',{cls:'kb-history-sha',text:oid.slice(0,10)});
 				}
-				if(keepSelection){status.setText((at+1)+' / '+matches.length);return;}
-				await jump(0);
+				button.onclick=event=>{
+					if(event.target instanceof Element && event.target.closest('[data-more-refs]')){expandRefs(button,oid,refs);return;}
+					pendingJump++;pick(oid,event.ctrlKey||event.metaKey);
+				};
+				button.oncontextmenu=event=>{
+					event.preventDefault();event.stopPropagation();
+					const target=event.target instanceof Element?event.target.closest<HTMLElement>('[data-ref-index]'):null;
+					showMenu(oid,{event,ref:target?refs[Number(target.dataset.refIndex)]:undefined});
+				};
+				button.onkeydown=event=>{
+					const children=graph.children.get(oid)??[];
+					const sameLaneChild=children.find(child=>rowAt(indexOf(child))?.color===row.color);
+					const sameLaneParent=row.parents.findIndex(rail=>rail.color===row.color);
+					const keys:Record<string,()=>void>={
+						ArrowUp:()=>{const other=rowAt(index-1);if(other)void jump(other.commit.oid,true).catch(report);},
+						ArrowDown:()=>{void (async()=>{if(index+1>=loaded)await load(loaded+batchSize);
+							const other=rowAt(index+1);if(other)await jump(other.commit.oid,true);})().catch(report);},
+						ArrowLeft:()=>{const parent=commit.parents[Math.max(0,sameLaneParent)];if(parent)void jump(parent,true).catch(report);},
+						ArrowRight:()=>{const child=graph.workingRow?.commit.parents.includes(oid)?worktreeOid:sameLaneChild??children[0];
+							if(child)void jump(child,true).catch(report);},
+						Home:()=>{const first=rowAt(0);if(first)void jump(first.commit.oid,true).catch(report);},
+						ContextMenu:()=>showMenu(oid,{anchor:button}),
+					};
+					const action=event.shiftKey && event.key==='F10'?keys.ContextMenu:event.ctrlKey || event.metaKey || event.altKey?
+						undefined:keys[event.key];
+					if(action){event.preventDefault();event.stopPropagation();action();}
+				};
+				return button;
 			};
-			search.oninput=()=>{this.query=search.value;void runSearch().catch(report);};
-			const selected=this.selected;
-			const index=selected?await findSelection(selected,live):-1;
+			const window=new HistoryWindow(list,createRow,()=>{
+				if(!live() || paging || (graph.complete && loaded>=graph.rows.length+virtual))return;
+				paging=true;void load(loaded+batchSize).catch(report).finally(()=>{paging=false;});
+			});
+			const search=renderHistorySearch(searchBar,graph,t,this.search,prefs.historyAuthor,date,live,()=>this.selected,
+				oid=>{void jump(oid).catch(report);},()=>window.focusVisible(),report);
+			this.searchInput=search.search;
+			this.dispose=()=>{window.destroy();search.close();};
+			this.anchor=()=>{
+				const index=Math.floor(list.scrollTop/historyRowHeight);
+				return {oid:rowAt(index)?.commit.oid,offset:list.scrollTop-index*historyRowHeight,scroll:list.scrollTop};
+			};
+			head.onclick=()=>{void (async()=>{
+				if(typeof this.branches==='string' || await locate(snapshot.head)>=0)await jump(snapshot.head);
+				else if(live()){
+					this.branches='current';this.selected=snapshot.head;this.comparison=newComparison();this.anchor=undefined;reload();
+				}
+			})().catch(report);};
+			const selected=this.selected?await locate(this.selected):-1;
+			const anchor=restore?.oid?await locate(restore.oid):-1;
 			if(!live())return;
-			if(index<0){this.selected='';this.parent='';}
-			const anchorIndex=restore && anchor?await findSelection(anchor,live):-1;
+			if(selected<0){this.selected='';this.comparison.parent='';}
+			await load(Math.max(selected+1,anchor+batchSize,batchSize));
 			if(!live())return;
-			await appendThrough(Math.max(batchSize,index+1,anchorIndex+batchSize));
-			if(!live())return;
-			if(!rendered)list.createEl('p',{text:t('还没有提交','No commits yet')});
-			if(index>=0)await showDetails(graph.rows[index]!.commit);
-			if(restore){
-				const row=anchor && list.querySelector<HTMLElement>('[data-oid="'+anchor+'"]');
-				list.scrollTop=row?list.scrollTop+row.getBoundingClientRect().top-list.getBoundingClientRect().top-offset:scroll;
-			}
-			if(this.query)await runSearch(index>=0);
-		}catch(error){if(live())el.createEl('p',{cls:'kb-git-error',text:String(error)});}
+			if(this.selected)void paintDetail().catch(report);
+			if(restore)list.scrollTop=anchor>=0?anchor*historyRowHeight+restore.offset:restore.scroll;
+			else if(selected>=0)window.reveal(selected);
+			search.restore();
+		}catch(error){if(live())el.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});}
 	}
 }

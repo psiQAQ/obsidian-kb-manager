@@ -11,7 +11,7 @@ import {Dialog} from './dialog.ts';
 export async function mergePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTMLElement,dir:string,readonly=false){
 	const t=plugin.t,metadata=path.join(dir,'.git');
 	if(await statIfPresent(path.join(metadata,'rebase-merge'))||await statIfPresent(path.join(metadata,'rebase-apply'))){
-		el.createEl('p',{text:t('变基正在进行。请在该知识库中完成或中止变基，然后刷新。','Rebase in progress. Complete or abort it in this library, then refresh.')});return true;
+		el.createEl('p',{text:t('变基正在进行。请先处理冲突，再选择继续或中止。','Rebase in progress. Resolve conflicts, then continue or abort.')});return true;
 	}
 	if(!await statIfPresent(path.join(metadata,'MERGE_HEAD'))){
 		const index=path.join(metadata,'index');
