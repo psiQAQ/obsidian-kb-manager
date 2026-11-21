@@ -630,3 +630,44 @@
 		grid-row: 2;
 	}
 }
+
+.kb-git-history { display: flex; flex-direction: column; gap: var(--size-4-2); height: 100%; min-height: 0; }
+.kb-git-history h3, .kb-git-history h4 { margin: 0; }
+.kb-history-toolbar, .kb-find-controls, .kb-history-comparison, .kb-history-pager {
+	display: flex; flex-wrap: wrap; gap: var(--size-4-2); align-items: center;
+}
+.kb-history-toolbar input { flex: 1 1 14rem; min-width: 8rem; }
+.kb-history-table { min-height: 4rem; overflow: auto; flex: 1 1 auto; }
+.kb-history-table .kb-history-row {
+	display: flex; width: max-content; min-width: 100%; height: 32px; padding: 0 var(--size-4-2);
+	gap: var(--size-4-2); align-items: center; justify-content: flex-start; text-align: start;
+	color: var(--text-normal); box-shadow: none; border: 0; border-radius: 0; background: transparent;
+}
+.kb-history-row:hover { background: var(--background-modifier-hover); }
+.kb-history-table .kb-history-row[aria-pressed=true] { background: var(--background-modifier-active-hover); }
+.kb-history-row:focus-visible, .kb-history-file:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.kb-history-subject { flex: 1; white-space: nowrap; }
+.kb-history-graph { flex: none; }
+.kb-history-graph path { fill: none; stroke: currentColor; stroke-width: 1.8px; }
+.kb-history-graph circle { fill: currentColor; }
+.kb-track-0 { color: var(--color-blue); }
+.kb-track-1 { color: var(--color-orange); }
+.kb-track-2 { color: var(--color-purple); }
+.kb-track-3 { color: var(--color-green); }
+.kb-track-4 { color: var(--color-pink); }
+.kb-track-5 { color: var(--color-cyan); }
+.kb-history-ref {
+	padding: 0 var(--size-4-1); border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s); margin-inline-end: var(--size-4-1);
+	color: var(--text-accent); font-size: var(--font-ui-smaller);
+}
+.kb-history-detail { flex: 0 1 auto; overflow: auto; max-height: 40%; border-block-start: 1px solid var(--background-modifier-border); }
+.kb-history-detail:empty { display: none; }
+.kb-history-detail h4 { padding-block: var(--size-4-2); }
+.kb-history-detail .kb-history-file {
+	display: flex; gap: var(--size-4-2); width: 100%; height: auto; min-height: var(--input-height);
+	align-items: baseline; justify-content: start; text-align: start; white-space: normal; overflow-wrap: anywhere;
+	background: transparent; border: 0; box-shadow: none;
+}
+.kb-history-detail .kb-history-file:hover { background: var(--background-modifier-hover); }
+.kb-history-change, .kb-history-pager { color: var(--text-muted); font-size: var(--font-ui-small); }

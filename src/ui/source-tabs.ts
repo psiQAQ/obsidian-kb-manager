@@ -19,7 +19,10 @@ export function revealSourceTab(plugin: KnowledgeBaseManager, type: string, stat
 	const {workspace} = plugin.app;
 	const key = tabKey(type, state);
 	let pending = opening.get(workspace);
-	if (!pending) opening.set(workspace, pending = new Map());
+	if (!pending) {
+		pending = new Map<string, Promise<void>>();
+		opening.set(workspace, pending);
+	}
 	const underway = pending.get(key);
 	if (underway) return underway;
 

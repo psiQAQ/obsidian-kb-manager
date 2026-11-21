@@ -115,13 +115,16 @@ export async function saveVersion(dir:string,confirmed:VersionPreview,message:st
 	}
 }
 
-export async function history(dir:string,cursor?:string,size=20){
+interface HistoryCursor { tip:string; offset:number }
+
+export async function history(dir:string,cursor?:HistoryCursor,size=20){
 	await guardGit(dir,new Set(),true);
-	const ref=cursor??await headOid(dir);
-	if(!ref)return {entries:[],next:undefined};
-	if(!/^[0-9a-f]{40}$/u.test(ref) || !Number.isSafeInteger(size) || size<1)throw new Error('Invalid history cursor');
-	const raw=await gitResult(dir,['rev-list','--max-count='+String(size+1),ref]);
-	const ids=raw.stdout.toString('ascii').trim().split('\n');
+	const tip=cursor?.tip??await headOid(dir),offset=cursor?.offset??0;
+	if(!tip)return {entries:[],next:undefined};
+	if(!/^[0-9a-f]{40}$/u.test(tip) || !Number.isSafeInteger(offset) || offset<0 || !Number.isSafeInteger(size) || size<1)
+		throw new Error('Invalid history cursor');
+	const raw=await gitResult(dir,['rev-list','--topo-order','--skip='+offset,'--max-count='+String(size+1),tip]);
+	const ids=raw.stdout.toString('ascii').trim().split('\n').filter(Boolean);
 	const entries=await Promise.all(ids.slice(0,size).map(id=>readCommit(dir,id)));
-	return {entries,next:ids[size]};
+	return {entries,next:ids.length>size?{tip,offset:offset+size}:undefined};
 }
