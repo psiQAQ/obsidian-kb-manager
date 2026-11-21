@@ -12,7 +12,7 @@ import { revealSourceTab } from './source-tabs.ts';
 import { drawCommitGraph } from './history-graph-row.ts';
 
 export const historyType='knowledge-base-manager-history';
-const pageSize=20;
+const batchSize=20;
 export function registerSourceHistory(plugin:KnowledgeBaseManager) {
 	plugin.registerView(historyType,leaf=>new SourceHistory(leaf,plugin));
 }
@@ -26,7 +26,7 @@ class SourceHistory extends ItemView {
 	private generation=0;
 	private all=false;
 	private query='';
-	private page=0;
+	private tailObserver?:IntersectionObserver;
 	private selected='';
 	private parent='';
 	private searchInput?:HTMLInputElement;
@@ -46,9 +46,10 @@ class SourceHistory extends ItemView {
 	getIcon(){return 'git-graph';}
 	getDisplayText(){return this.plugin.t('知识库历史','Library history');}
 	getState(){return {id:this.id};}
-	override onClose(){this.generation++;return Promise.resolve();}
+	override onClose(){this.generation++;this.tailObserver?.disconnect();return Promise.resolve();}
 	async setState(state:unknown,result:ViewStateResult){
 		const generation=++this.generation;
+		this.tailObserver?.disconnect();
 		await super.setState(state,result);
 		if(generation!==this.generation)return;
 		const previousList=this.contentEl.querySelector<HTMLElement>('.kb-history-table');
@@ -61,7 +62,7 @@ class SourceHistory extends ItemView {
 		if(!state || typeof state!=='object' || !('id' in state) || typeof state.id!=='string')return;
 		const restore=this.id===state.id && previousList?.dataset.scope===(this.all?'all':'current');
 		if(this.id!==state.id){
-			this.all=false;this.query='';this.page=0;this.selected='';this.parent='';
+			this.all=false;this.query='';this.selected='';this.parent='';
 		}
 		const id=this.id=state.id,plugin=this.plugin,t=plugin.t;
 		const el=this.contentEl.createDiv({cls:'kb-git-history'});
@@ -81,7 +82,7 @@ class SourceHistory extends ItemView {
 			scope.createEl('option',{value:'all',text:t('所有分支（含远端跟踪分支）','All branches (including remote-tracking branches)')});
 			scope.value=this.all?'all':'current';
 			scope.onchange=()=>{
-				this.all=scope.value==='all';this.page=0;this.selected='';this.parent='';
+				this.all=scope.value==='all';this.selected='';this.parent='';
 				void this.setState({id},{history:false});
 			};
 			const search=this.searchInput=bar.createEl('input',{type:'search',placeholder:t('查找提交 SHA、说明或作者','Find SHA, message or author')});
@@ -90,9 +91,8 @@ class SourceHistory extends ItemView {
 			const find=bar.createDiv({cls:'kb-find-controls'});
 			const list=el.createDiv({cls:'kb-history-table',attr:{'aria-label':t('提交历史','Commit history')}});
 			list.dataset.scope=scope.value;
-			const pager=el.createDiv({cls:'kb-history-pager'});
 			const detail=el.createDiv({cls:'kb-history-detail'});
-			let detailRequest=0,listRequest=0,searchRequest=0;
+			let detailRequest=0,searchRequest=0;
 			const report=(error:unknown)=>{if(live())new Notice(String(error));};
 			const showDetails=async(commit:GraphCommit)=>{
 				const request=++detailRequest;
@@ -125,21 +125,22 @@ class SourceHistory extends ItemView {
 						...(parent && parent!==commit.parents[0]?{parent}:{})}).catch(report);};
 				}
 			};
-			const renderPage=async(page:number,valid=live)=>{
-				const request=++listRequest;
-				pager.empty();
-				await graph.load((page+1)*pageSize+1);
-				if(!valid()||request!==listRequest)return;
-				this.page=Math.max(0,Math.min(page,Math.ceil(graph.rows.length/pageSize)-1));
-				const start=this.page*pageSize;
-				const rows=graph.rows.slice(start,start+pageSize);
-				list.empty();list.scrollTop=0;
-				if(!rows.length)list.createEl('p',{text:t('还没有提交','No commits yet')});
-				const width=Math.max(1,...rows.map(row=>row.width));
-				for(const row of rows){
+			let rendered=0,lanes=0;
+			const observer=this.tailObserver=new IntersectionObserver(entries=>{
+				if(live() && entries.some(entry=>entry.isIntersecting && entry.target===list.lastElementChild))
+					void appendThrough(rendered+batchSize).catch(report);
+			},{root:list,rootMargin:'0px 0px 96px 0px'});
+			const appendThrough=async(count:number,valid=live)=>{
+				await graph.load(count+1);
+				if(!valid())return;
+				const end=Math.min(count,graph.rows.length);
+				if(end<=rendered)return;
+				observer.disconnect();
+				for(const row of graph.rows.slice(rendered,end)){
 					const {commit}=row;
 					const button=list.createEl('button',{cls:'kb-history-row',attr:{type:'button','data-oid':commit.oid,'aria-pressed':String(commit.oid===this.selected)}});
-					drawCommitGraph(button,row,width);
+					drawCommitGraph(button,row);
+					lanes=Math.max(lanes,row.width);
 					const summary=button.createSpan({cls:'kb-history-subject'});
 					for(const name of graph.snapshot.labels.get(commit.oid)??[])summary.createSpan({text:name,cls:'kb-history-ref'});
 					summary.createSpan({text:commit.message.split('\n')[0]||t('无提交说明','No commit message')});
@@ -148,11 +149,9 @@ class SourceHistory extends ItemView {
 					button.createEl('code',{text:commit.oid.slice(0,10)});
 					button.onclick=()=>{this.parent='';void showDetails(commit).catch(report);};
 				}
-				const turn=(page:number)=>{detailRequest++;this.selected='';this.parent='';detail.empty();void renderPage(page).catch(report);};
-				if(start)pager.createEl('button',{cls:'kb-history-prev',text:t('上一页','Previous page')}).onclick=()=>turn(this.page-1);
-				if(rows.length)pager.createSpan({text:(start+1)+'–'+(start+rows.length)});
-				if(graph.rows.length>start+pageSize)
-					pager.createEl('button',{cls:'kb-history-next',text:t('下一页','Next page')}).onclick=()=>turn(this.page+1);
+				rendered=end;
+				list.setCssProps({'--kb-history-lanes':String(lanes)});
+				if(end<graph.rows.length && list.lastElementChild)observer.observe(list.lastElementChild);
 			};
 			const findSelection=async(oid:string,valid:()=>boolean)=>{
 				let from=0;
@@ -182,16 +181,17 @@ class SourceHistory extends ItemView {
 				if(!valid())return;
 				if(!matches.length){status.setText(t('没有匹配的提交','No matching commits'));return;}
 				let at=Math.max(0,matches.findIndex(n=>graph.rows[n]!.commit.oid===this.selected));
+				let jumpRequest=0;
 				const jump=async(step:number)=>{
+					const current=++jumpRequest;
 					at=(at+step+matches.length)%matches.length;
 					const index=matches[at]!,commit=graph.rows[index]!.commit;
 					status.setText((at+1)+' / '+matches.length);
-					const jumpRequest=listRequest+1;
-					await renderPage(Math.floor(index/pageSize),valid);
-					if(!valid() || jumpRequest!==listRequest)return;
+					await appendThrough(index+batchSize,valid);
+					if(!valid() || current!==jumpRequest)return;
 					if(commit.oid!==this.selected)this.parent='';
 					await showDetails(commit);
-					if(valid())list.querySelector('[data-oid="'+commit.oid+'"]')?.scrollIntoView({block:'nearest'});
+					if(valid() && current===jumpRequest)list.querySelector('[data-oid="'+commit.oid+'"]')?.scrollIntoView({block:'nearest'});
 				};
 				for(const [label,cls,step] of [[t('上一匹配','Previous match'),'kb-find-prev',-1],[t('下一匹配','Next match'),'kb-find-next',1]] as const){
 					const btn=find.createEl('button',{cls,text:label});btn.disabled=matches.length===1;btn.onclick=()=>{void jump(step).catch(report);};
@@ -206,9 +206,9 @@ class SourceHistory extends ItemView {
 			if(index<0){this.selected='';this.parent='';}
 			const anchorIndex=restore && anchor?await findSelection(anchor,live):-1;
 			if(!live())return;
-			const target=index>=0?index:anchorIndex;
-			await renderPage(target>=0?Math.floor(target/pageSize):this.page);
+			await appendThrough(Math.max(batchSize,index+1,anchorIndex+batchSize));
 			if(!live())return;
+			if(!rendered)list.createEl('p',{text:t('还没有提交','No commits yet')});
 			if(index>=0)await showDetails(graph.rows[index]!.commit);
 			if(restore){
 				const row=anchor && list.querySelector<HTMLElement>('[data-oid="'+anchor+'"]');

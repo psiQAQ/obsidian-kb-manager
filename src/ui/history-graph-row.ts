@@ -1,11 +1,11 @@
 import type { GraphRow } from '../git/history-graph.ts';
 
 /** Continue the same tracks through adjacent rows; edge coordinates use lane units. */
-export function drawCommitGraph(row:HTMLElement,item:GraphRow,width:number) {
+export function drawCommitGraph(row:HTMLElement,item:GraphRow) {
 	const spacing=15;
 	const x=(lane:number)=>8+spacing*lane;
 	const svg=row.createSvg('svg',{cls:'kb-history-graph',attr:{
-		width:width*spacing+2,height:32,viewBox:'0 0 '+(width*spacing+2)+' 32',preserveAspectRatio:'none','aria-hidden':'true',
+		height:32,'aria-hidden':'true',
 	}});
 	const path=(d:string,color:number)=>svg.createSvg('path',{cls:'kb-track-'+color%6,attr:{d}});
 	for(const {from,to,color} of item.rails)
