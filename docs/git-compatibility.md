@@ -41,7 +41,7 @@
 | 高级 | `limitToVault`、`basePath`、`gitDir` | 边界限制。仓库位置来自已验证的知识库，Git 元数据固定在该库的 `.git`。 |
 | 高级 | `updateSubmodules`、`submoduleRecurseCheckout` | 边界限制。不递归操作嵌套仓库。 |
 | 高级 | `gitPath`、`PATHPaths`、`envVars`、重载环境 | 部分对应。桌面使用系统 Git；可在高级设置中指定本机的 Git 可执行文件绝对路径。可重定向仓库的环境变量受限。 |
-| 高级 | `pluginDisabled`、复制调试信息、调试日志 | 部分对应。在本设备暂停知识库 Git 并保留管理器设置入口。可复制版本、后端和数量诊断；原始路径、内容和凭据不在诊断中。 |
+| 高级 | `pluginDisabled`、复制调试信息、调试日志 | 部分对应。在本设备暂停知识库 Git 并保留管理器设置入口。可查看包含版本、平台、后端和库数量的只读 JSON，选中后用系统复制命令取用。报告省略原始路径、内容和凭据。 |
 
 上游还包含已废弃的 `mergeOnPull`、`autoCommitOnlyStaged`、明文 `password` 迁移和移动端标记 `showedMobileNotice`。本插件在桌面独立保存设置，不导入另一插件的数据。上游的支持与捐助链接可在其项目页查看。
 
