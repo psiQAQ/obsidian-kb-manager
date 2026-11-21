@@ -15,8 +15,8 @@
 </script>
 
 <div class="tree-item nav-file">
-    <div class="tree-item-self nav-file-title kb-workspace-file" data-path={path}>
-        <button type="button" class="tree-item-inner nav-file-title-content clickable-icon" aria-label={`${diffLabel} · ${path}`}
+    <div class="kb-workspace-file" data-path={path}>
+        <button type="button" class="kb-workspace-file-name" aria-label={`${diffLabel} · ${path}`}
             title={`${diffLabel} · ${path}`} onclick={showDiff}>{label}</button>
         <div class="kb-workspace-file-actions">
             <span class="nav-file-tag" aria-label={description} title={description}>{status}</span>

@@ -510,13 +510,27 @@
 	align-items: start;
 	gap: var(--size-2-1) var(--size-4-1);
 }
-.kb-workspace-file .nav-file-title-content {
+.kb-library-git .kb-workspace-file-name {
+	grid-column: 1;
+	grid-row: 1;
+	display: block;
+	height: auto;
+	min-width: 0;
+	padding: var(--size-2-1) var(--size-4-1);
+	background: transparent;
+	box-shadow: none;
 	justify-content: flex-start;
 	overflow-wrap: anywhere;
 	text-align: start;
 	white-space: normal;
 }
+.kb-library-git .kb-workspace-file-name:hover {
+	background: var(--background-modifier-hover);
+}
 .kb-workspace-file-actions {
+	grid-column: 2;
+	grid-row: 1;
+	justify-self: end;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
@@ -568,5 +582,9 @@
 @container (max-width: 20rem) {
 	.kb-library-git .kb-workspace-file {
 		grid-template-columns: minmax(0, 1fr);
+	}
+	.kb-library-git .kb-workspace-file-actions {
+		grid-column: 1;
+		grid-row: 2;
 	}
 }
