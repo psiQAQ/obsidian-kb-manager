@@ -18,18 +18,18 @@ For a manual installation from GitHub:
 
 ## Create your first library
 
-1. Run **Open knowledge base manager** from the command palette. In the sidebar, select **New**.
+1. Run **Open knowledge base manager** from the command palette. In the sidebar, select **Create**.
 2. Choose a use case and a template. The 18 built-in templates cover research, reading, project management, writing, and other workflows. [Template catalog and upstream credits](docs/template-catalog.md)
 3. Choose the vault root or another parent folder, enter the library folder name, and review the Git identity. You can change the initial branch and commit message. Leave the remote URL blank to work locally.
 4. Review the files and the template’s suggested folders to exclude from Obsidian search. Clear any exclusions you do not want, then confirm. With the defaults, the first commit is `Initial commit` on `main`.
 
-Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use **Registry** to preview its registration. Each instance carries its own `kb.toml` identity file.
+Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use the registration action in the sidebar to preview its registration. Each instance carries its own `kb.toml` identity file.
 
 Registered paths are stored in the plugin’s `data.json` alongside its language and Git defaults. If your vault is in Git, check whether `data.json` is already tracked before sharing it. It now contains your library folder names.
 
 ## Check a library
 
-Open **… → Check library** on the library’s row. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Select **Portability** separately to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
+Open **… → Check library** on the library’s row. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Use **Choose individual checks** and select **Portability** to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
 
 Each result includes findings and coverage. A partial result means something could not be checked, even if there are no findings. New libraries carry their own runner and editable rules. From the library root, with Node.js installed, run:
 
@@ -37,7 +37,7 @@ Each result includes findings and coverage. A partial result means something cou
 node ./checks/kb-check.cjs --library . --checks all
 ```
 
-For libraries created before 3.2.0, **Export offline check tool** remains available. Review changes to local rules before trusting them in Obsidian. These scripts execute with your account’s permissions.
+For libraries created before 3.2.0, the **Tools** tab lets you export the offline runner. Review changes to local rules before trusting them in Obsidian. These scripts execute with your account’s permissions.
 
 The CLI writes JSON to standard output. Read `status`, each check’s `coverage`, and its `diagnostics` together. Offline checks can report a short link as unverified when its actual destination depends on Obsidian’s metadata cache.
 
