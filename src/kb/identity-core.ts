@@ -149,9 +149,17 @@ export function writePreferences(raw:string, overrides:Partial<GitPreferences>) 
 
 export function withLibraryIgnores(raw:string) {
 	const newline=raw.includes('\r\n')?'\r\n':'\n';
-	const rules=raw.split(/\r?\n/u).filter(line=>line && !line.startsWith('#'));
-	if(rules.slice(-2).join('\n')==='/.log/\n/kb.toml')return raw;
-	return withManifestIgnore(raw+(raw && !raw.endsWith('\n')?newline:'')+'/.log/'+newline);
+	const rules=raw.replace(/^\uFEFF/u,'').split(/\r?\n/u).filter(line=>line.trim() && !line.startsWith('#'));
+	const required=['/.log/','/'+identityFile];
+	// Only trailing rules are safe to reuse: a later user negation can override an earlier ignore.
+	const trailing=new Set<string>();
+	for(const rule of rules.reverse()){
+		if(!required.includes(rule))break;
+		trailing.add(rule);
+	}
+	const missing=required.filter(rule=>!trailing.has(rule));
+	if(!missing.length)return raw;
+	return raw+(raw && !raw.endsWith('\n')?newline:'')+missing.join(newline)+newline;
 }
 
 export function withManifestIgnore(raw:string) {

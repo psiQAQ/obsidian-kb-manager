@@ -10,7 +10,18 @@ import { registerVaultLibrary, scanVaultFolder } from '../src/registry/discovery
 import { confirmImport, previewImport } from '../src/registry/import.ts';
 import { amendRegistry, parseRegistry, registryPath } from '../src/registry/paths.ts';
 
+import { withLibraryIgnores } from '../src/kb/identity-core.ts';
+
 const configDir = '.fixture-settings';
+
+test('adds missing local ignores once and respects later overriding rules', () => {
+	const existing='/kb.toml\r\n# local identity\r\n';
+	const included=existing+'/.log/\r\n';
+	assert.equal(withLibraryIgnores(existing),included);
+	assert.equal(withLibraryIgnores(included),included);
+	const override=included+'!*\r\n';
+	assert.equal(withLibraryIgnores(override),override+'/.log/\r\n/kb.toml\r\n');
+});
 
 async function setup(t) {
 	const dir = path.resolve('.tmp');
