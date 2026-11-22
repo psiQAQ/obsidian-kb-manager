@@ -151,6 +151,11 @@ export function readFindings(data: unknown, common = false): Diagnostic[] | unde
 	return diagnostics;
 }
 
+export function specialCheckTrusted(check: DeclaredCheck, options: DiagnosticOptions) {
+	const {digest} = check;
+	return !!digest && (options.officialDigests?.includes(digest) || options.trustedDigests?.includes(digest));
+}
+
 export async function runSpecial(check: DeclaredCheck, options: DiagnosticOptions, vault: string, context: CheckContext | undefined,
 	inventory: Inventory, identifiedVault: boolean, readLinks: () => Promise<NonNullable<CheckContext['links']>>) {
 	const report = result({id: check.id, name: check.name});
@@ -164,7 +169,7 @@ export async function runSpecial(check: DeclaredCheck, options: DiagnosticOption
 	}
 	if (!check.source || !check.digest) return fail('checker-unavailable');
 	if (!context) return fail('checker-config');
-	if (![...options.officialDigests ?? [], ...options.trustedDigests ?? []].includes(check.digest)) return fail('checker-untrusted');
+	if (!specialCheckTrusted(check, options)) return fail('checker-untrusted');
 	const response = await runChecker(check.source, options, vault, async () => check.linkEvidence ? {...context, links:await readLinks()} : context);
 	if ('error' in response) return fail(response.error);
 	const output = isRecord(response.data) ? response.data : {findings: response.data, unverified: 0};

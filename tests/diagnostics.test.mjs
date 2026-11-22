@@ -226,6 +226,51 @@ test('scan gaps affect checks that need to read the file', async t => {
 	for (const id of selected.filter(id => id !== 'bases')) assert.equal(result(baseFile,id).coverage.unknown,0,id);
 });
 
+test('selected rules read only their required content in both legacy and installed libraries', async t => {
+	for (const kit of [false,true]) await t.test(kit?'installed':'legacy',async t => {
+		const {options,root,put} = await fixture(t);
+		await put('name.md','\uFFFD Markdown unrelated to Canvas\n');
+		await put('map.canvas',JSON.stringify({nodes:[{id:'expected',type:'file',x:0,y:0,width:200,height:100,
+			file:relative+'/notes/target.md',subpath:'#Local heading'}]}));
+		await put('checks/checker.mjs','export default () => [];');
+		if (kit) {
+			const entries = Object.entries(checkKitFiles());
+			for (const [file,source] of entries) await put(file,source);
+			await put('kb.toml',writeCheckKit(manifest,{protocol:1,version:checkKitVersion,
+				digests:Object.fromEntries(entries.map(([file,source])=>[file,digest(source)]))}));
+		}
+		const open = fs.open;
+		const readdir = fs.readdir;
+		const readNotes = [];
+		const readDirs = [];
+		const opened = t.mock.method(fsPromises,'open',async (target,...args) => {
+			if (target.endsWith('.md')) readNotes.push(path.relative(root,target));
+			return await open(target,...args);
+		});
+		const listed = t.mock.method(fsPromises,'readdir',async (target,...args) => {
+			readDirs.push(path.relative(root,target));
+			return await readdir(target,...args);
+		});
+		syncBuiltinESMExports();
+		try {
+			const manifestOnly = await runDiagnostics({...options,selected:['manifest']});
+			assert.equal(result(manifestOnly,'manifest').status,'passed');
+			assert.deepEqual(readNotes,[]);
+			assert.ok(readDirs.includes('notes'));
+			readDirs.length = 0;
+			const unapproved = await runDiagnostics({...options,selected:['fixture.check']});
+			assert.deepEqual(codes(result(unapproved,'fixture.check')),['checker-untrusted']);
+			assert.deepEqual(readNotes,[]);
+			assert.deepEqual(readDirs,[]);
+			const canvasOnly = await runDiagnostics({...options,selected:['canvas']});
+			assert.equal(result(canvasOnly,'canvas').status,'passed');
+			assert.deepEqual(readNotes,[path.join('notes','target.md')]);
+		} finally {
+			opened.mock.restore();listed.mock.restore();syncBuiltinESMExports();
+		}
+	});
+});
+
 test('unscannable subdirectories leave affected paths and rules unverified', async t => {
 	const {root,options,put} = await fixture(t);
 	await put('protected/start.md','# Unseen');

@@ -1,13 +1,13 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
-import {commonSnapshot, runCommon} from './common.ts';
+import {commonCheckTrusted, commonSnapshot, runCommon} from './common.ts';
 import {commonEvidence} from './common-evidence.ts';
 import {addReason} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelectedTemplateScripts, templateSnapshot} from './snapshot.ts';
-import {runSpecial} from './special.ts';
+import {runSpecial, specialCheckTrusted} from './special.ts';
 import {inspectBases, inspectBindings, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
 import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
@@ -46,6 +46,8 @@ function failure(check: DiagnosticCheckResult, code: string, message: string) {
 	return check;
 }
 
+const markdownChecks = new Set(['properties','links','anchors','bases','portability']);
+
 export async function runDiagnostics(options: DiagnosticOptions): Promise<DiagnosticReport> {
 	const {signal, selected} = options;
 	const all = !selected || selected === 'all';
@@ -69,13 +71,25 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const manifest = await manifestSnapshot(root, signal);
 		const identity = manifest.parsed?.identity;
 		report.library = {id:identity?.id, template:template.template ? {id:template.template.id, version:template.template.version} : identity?.template};
-		const found = await inventory(root, configDir, signal);
 		const dirs = new Set(template.template?.pageTemplates ?? []);
 		if (manifest.parsed?.mapping?.templates) dirs.add(manifest.parsed.mapping.templates);
 		const templateDirs = [...dirs];
 		const checks = new Map(active.map(id => [id, result(describe(id))]));
 		const common = await commonSnapshot(root,manifest.checkKit,active,signal);
 		const commonRules = new Map(common?.map(rule => [rule.id,rule]));
+		const availableGeneral = active.filter(id => {
+			if (!generalIds.has(id)) return false;
+			if (!common) return true;
+			const rule = commonRules.get(id);
+			return !!rule?.source && commonCheckTrusted(rule,options.trustedDigests);
+		});
+		const templateNeedsNotes = !!manifest.parsed && !!template.template && active.some(id => {
+			const check = specials.get(id);
+			return !!check?.source && specialCheckTrusted(check,options);
+		});
+		const needsNotes = templateNeedsNotes || availableGeneral.some(id => markdownChecks.has(id));
+		const needsPaths = availableGeneral.includes('manifest') || availableGeneral.includes('canvas');
+		const found = await inventory(root, configDir, needsNotes ? 'notes' : needsPaths ? 'paths' : 'none', signal);
 		let readCommonEvidence: ReturnType<typeof commonEvidence> | undefined;
 		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
 		const completed = new Set<string>();

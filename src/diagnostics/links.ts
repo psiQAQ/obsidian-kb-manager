@@ -5,7 +5,7 @@ import {baseViewNames} from './base-view.ts';
 import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {inspectFootnotes, inspectPdfFragment} from './references.ts';
-import {decode, readRelative, relativePath} from './snapshot.ts';
+import {decode, noteReader, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, NoteRecord} from './snapshot.ts';
 import {printable} from './types.ts';
 import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
@@ -79,7 +79,8 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 	const {signal} = options;
 	const files = new Set(inventory.files);
 	const notes = new Map(inventory.notes.map(note => [note.path, note]));
-	const anchors = new Map<string, {headings: Set<string>; blocks: Set<string>}>();
+	const readNote = inventory.mode === 'paths' ? noteReader(root, signal) : undefined;
+	const anchors = new Map<string, {headings: Set<string>; blocks: Set<string>} | undefined>();
 	const baseViews = new Map<string, Promise<ReadonlySet<string> | undefined>>();
 	const vaultPath = (file: string) => location ? `${location}/${file}` : file;
 	async function baseAnchor(vaultFile: string, fragment: string): Promise<LinkResolution['anchor']> {
@@ -96,18 +97,26 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		const names = await views;
 		return names ? names.has(fragment.slice(1)) ? 'resolved' : 'missing' : 'unknown';
 	}
-	function staticAnchor(file: string, fragment: string): LinkResolution['anchor'] {
-		const note = notes.get(file);
-		if (!note || note.problem?.code === 'unclosed-frontmatter' || fragment.startsWith('##')) return 'unknown';
-		let marks = anchors.get(file);
-		if (!marks) {
+	async function staticAnchor(file: string, fragment: string): Promise<LinkResolution['anchor']> {
+		if (!/\.md$/iu.test(file) || fragment.startsWith('##')) return 'unknown';
+		if (!anchors.has(file)) {
+			let note = notes.get(file);
+			if (!note && readNote) {
+				try {note = await readNote(file);}
+				catch {signal?.throwIfAborted();}
+			}
+			if (!note || note.problem?.code === 'unclosed-frontmatter') {
+				anchors.set(file,undefined);
+				return 'unknown';
+			}
 			const body = maskLiterals(prose(note.body));
 			const headings = new Set<string>();
 			for (const m of body.matchAll(/^ {0,3}#{1,6}\s+(.+?)\s*$/gmu)) headings.add(normalize(m[1]!.replace(/\s+#+$/u, '').trim()));
 			for (const m of body.matchAll(/^ {0,3}(\S[^\n]*)\n {0,3}(?:=+|-+)[ \t]*$/gmu)) headings.add(normalize(m[1]!.trim()));
-			marks = {headings, blocks: new Set([...body.matchAll(/(?:^|\s)\^([\w-]+)[ \t]*$/gmu)].map(m => m[1]!))};
-			anchors.set(file, marks);
+			anchors.set(file,{headings, blocks:new Set([...body.matchAll(/(?:^|\s)\^([\w-]+)[ \t]*$/gmu)].map(m => m[1]!))});
 		}
+		const marks = anchors.get(file);
+		if (!marks) return 'unknown';
 		if (fragment.startsWith('#^')) return marks.blocks.has(fragment.slice(2)) ? 'resolved' : 'missing';
 		if (fragment.slice(1).includes('#')) return 'unknown';
 		const heading = normalize(fragment.slice(1).trim());
@@ -147,7 +156,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		if (!canvasPath && !files.has(candidate) && files.has(candidate + '.md')) candidate += '.md';
 		if (!files.has(candidate)) return explicit || canvasPath ? {status:'missing'} : {status: 'unknown'};
 		const targetPath = vaultPath(candidate);
-		const anchor = fragment ? /\.base$/iu.test(candidate) ? await baseAnchor(targetPath, fragment) : staticAnchor(candidate, fragment) : undefined;
+		const anchor = fragment ? /\.base$/iu.test(candidate) ? await baseAnchor(targetPath, fragment) : await staticAnchor(candidate, fragment) : undefined;
 		return {status: 'resolved', path:targetPath, anchor};
 	}
 	const localCandidates = linkCandidateIndex(function* () {for (const file of files) yield vaultPath(file);});

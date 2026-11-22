@@ -51,10 +51,12 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 	const {root, relative, vault, identifiedVault} = location;
 	const {signal} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
-	const {resolve, vaultPath, outsideTarget, candidates} = linkResolver({...options,vaultRoot:identifiedVault ? vault : undefined}, inventory, root, relative);
+	let resolver: ReturnType<typeof linkResolver> | undefined;
+	const getResolver = () => resolver ??= linkResolver({...options,vaultRoot:identifiedVault ? vault : undefined}, inventory, root, relative);
 
 	async function reference(file: string, link: LinkRequest, line?: number) {
 		if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) return {kind:'template' as const, link, line};
+		const {resolve,outsideTarget} = getResolver();
 		const found = await resolve(file, link);
 		return {kind:'local' as const, link, found, line, cross:outsideTarget(found),
 			evidence:found.path ?? (relativePath(link.target) ? link.target : undefined)};
@@ -63,11 +65,12 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 		const pause = checkpoint?.();
 		if (pause) await pause;
 		let link: LinkRequest | undefined;
-		try {link = linkRequest(vaultPath(file), item);}
+		try {link = linkRequest(getResolver().vaultPath(file), item);}
 		catch {return {kind:'invalid-encoding' as const, line:item.line};}
 		return link ? reference(file, link, item.line) : {kind:'external' as const, line:item.line};
 	}
 	async function readLinks() {
+		const {vaultPath} = getResolver();
 		const notes = [];
 		for (const note of inventory.notes) {
 			const pause = checkpoint?.();
@@ -89,6 +92,7 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 		return notes;
 	}
 	async function readCanvases() {
+		const {vaultPath} = getResolver();
 		const canvases = [];
 		for await (const {file,text} of readStructured(root,inventory,'.canvas',signal)) {
 			if (text === undefined) {canvases.push({file, unreadable:true}); continue;}
@@ -159,6 +163,7 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 				if (scope === 'registered' && !options.registeredPaths) check.coverage.unknown++;
 			}
 			const notes = await getLinks(), canvasFiles = await getCanvases();
+			const {candidates} = getResolver();
 			const candidateMatches = [];
 			const canvasMatches = [];
 			for (const note of notes) {

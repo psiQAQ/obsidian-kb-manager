@@ -195,6 +195,7 @@ function noteRecord(file: string, raw: string): NoteRecord {
 }
 
 export interface Inventory {
+	mode: 'none' | 'paths' | 'notes';
 	files: Set<string>;
 	directories: Set<string>;
 	excluded: Set<string>;
@@ -204,10 +205,20 @@ export interface Inventory {
 	skipped: number;
 }
 
-export async function inventory(root: string, configDir: string, signal?: AbortSignal): Promise<Inventory> {
-	const found: Inventory = {files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [],
-		unreadableDirectories: new Set(), skipped: 0};
+export function noteReader(root: string, signal?: AbortSignal) {
 	let remaining = bytesPerLibrary;
+	return async (file: string) => {
+		const bytes = await readRelative(root, file, Math.min(remaining, bytesPerFile), signal);
+		remaining -= bytes.length;
+		return noteRecord(file, decode(bytes));
+	};
+}
+
+export async function inventory(root: string, configDir: string, mode: Inventory['mode'], signal?: AbortSignal): Promise<Inventory> {
+	const found: Inventory = {mode, files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [],
+		unreadableDirectories: new Set(), skipped: 0};
+	if (mode === 'none') return found;
+	const readNote = noteReader(root, signal);
 	async function visit(relative: string) {
 		signal?.throwIfAborted();
 		const directory = path.join(root, relative);
@@ -234,12 +245,9 @@ export async function inventory(root: string, configDir: string, signal?: AbortS
 			if (entry.isDirectory()) await visit(file);
 			if (!entry.isFile()) continue;
 			found.files.add(file);
-			if (!/\.md$/iu.test(file)) continue;
-			try {
-				const bytes = await readRelative(root, file, Math.min(remaining, bytesPerFile), signal);
-				remaining -= bytes.length;
-				found.notes.push(noteRecord(file, decode(bytes)));
-			} catch {signal?.throwIfAborted(); found.unreadable.push(file);}
+			if (mode !== 'notes' || !/\.md$/iu.test(file)) continue;
+			try {found.notes.push(await readNote(file));}
+			catch {signal?.throwIfAborted(); found.unreadable.push(file);}
 		}
 	}
 	await visit('');
