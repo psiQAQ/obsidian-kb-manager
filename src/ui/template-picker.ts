@@ -10,7 +10,8 @@ import { kepanoBinding, kepanoBindingAssets, sharedTemplateKind } from '../kb/te
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder, previewTemplateRestore, restoreTemplateFile } from '../kb/template-files.ts';
 import type { Preset, TemplateAccess } from '../kb/template-files.ts';
 import { compareRegistryPaths } from '../registry/paths.ts';
-import { V3Dialog, dialogContents } from './dialog.ts';
+import { V3Dialog } from './dialog.ts';
+import { changeActions } from './change-preview.ts';
 
 interface InsertionScope {
 	location: string;
@@ -88,13 +89,13 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		let missing: Preset[] = [];
 		try { missing = await previewTemplateRestore(access, kind, location, local, assets, legacy.files); }
 		catch (error) { dialog.lines([tr('无法预览本库模板恢复：', 'Cannot review library template restoration: ') + String(error)]); }
-		if (missing.length) dialog.action(tr('预览恢复缺失模板', 'Review restoration of missing templates'), () => {
-			const review = new V3Dialog(app, tr('恢复模板到本库', 'Restore templates to this library'));
+		if (missing.length) dialog.action(tr('预览恢复缺失模板', 'Review restoration of missing templates'), origin => {
+			const review = new V3Dialog(app, tr('恢复模板到本库', 'Restore templates to this library'),dialog.owner).returnFocusTo(origin);
 			const bindings = kind === 'kepano' && missing.some(file =>
 				file.path === location + '/' + file.bundledPath && kepanoBinding(assets, file.bundledPath));
 			review.lines([...missing.map(file => file.path), ...(bindings ?
 				[tr('在清单中登记恢复的受管链接', 'Record restored managed links in the manifest') + ' · ' + location + '/kb.toml'] : [])]);
-			review.action(tr('恢复所列模板', 'Restore listed templates'), async () => {
+			changeActions(review.contentEl,[{label:tr('恢复所列模板', 'Restore listed templates'),primary:true,run:async () => {
 				await scope.confirm(async () => {
 					const latest = await shared();
 					const refreshed = await previewTemplateRestore(access, kind, location, local, assets, latest.files);
@@ -107,7 +108,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 				review.close();
 				dialog.close();
 				if (currentView()) await scope.reopen();
-			}).setCta();
+			}}]);
 			review.open();
 			return Promise.resolve();
 		});
@@ -120,7 +121,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 	}
 	dialog.choice(tr('页面模板', 'Page template'), Object.fromEntries(files.map(file => [file.path,
 		file.name + (file.shared ? tr('（旧版共享）', ' (legacy shared)') : '')])), value => { selected = value; });
-	dialog.action(tr('预览插入', 'Preview insertion'), async () => {
+	dialog.action(tr('预览插入', 'Preview insertion'), async origin => {
 		const file = files.find(candidate => candidate.path === selected);
 		if (!file || !currentView()) throw changed();
 		async function checkSource() {
@@ -134,7 +135,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		const editor = view.editor, note = editor.getValue(), now = moment.utc().local();
 		const result = insertTemplate(note, source, editor.posToOffset(editor.getCursor()), target.basename,
 			(kind, pattern) => now.format(pattern || (kind === 'date' ? 'YYYY-MM-DD' : 'HH:mm')));
-		const preview = new V3Dialog(app, tr('预览插入', 'Preview insertion'));
+		const preview = new V3Dialog(app, tr('预览插入', 'Preview insertion'),dialog.owner).returnFocusTo(origin);
 		preview.facts([[tr('目标笔记','Target note'),targetPath],[tr('模板来源','Template source'),file.path]]);
 		if(result.conflicts.length){
 			preview.contentEl.createEl('p',{text:tr('保留笔记中的这些现有属性。','Keep the current values of these note properties.')});
@@ -144,20 +145,20 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		preview.contentEl.createEl('h3',{text:rendered});
 		preview.contentEl.createEl('pre',{cls:'kb-template-insertion-preview',text:result.text,
 			attr:{tabindex:'0',role:'region','aria-label':rendered}});
-		const actions=dialogContents(preview.contentEl.createDiv({cls:'kb-wizard-actions'}));
-		const back=actions.action(tr('返回选择模板','Back to template selection'),()=>{preview.close();return Promise.resolve();});
-		actions.action(tr('插入模板','Insert template'),async()=>{
-			back.setDisabled(true);
-			await scope.confirm(async () => {
-				await checkTemplateFile(access, targetPath, location);
-				await checkSource();
-				if (await disk.read(file.path) !== sourceText || !currentView() || view.editor !== editor || editor.getValue() !== note) throw changed();
-				editor.transaction({ changes: [{ from: { line: 0, ch: 0 }, to: editor.offsetToPos(note.length), text: result.text }] });
-				editor.setCursor(editor.offsetToPos(result.cursor));
-			}).finally(()=>back.setDisabled(false));
-			preview.close();
-			dialog.close();
-		}).setCta();
+		changeActions(preview.contentEl,[
+			{label:tr('返回选择模板','Back to template selection'),run:()=>{preview.close();return Promise.resolve();}},
+			{label:tr('插入模板','Insert template'),primary:true,run:async()=>{
+				await scope.confirm(async () => {
+					await checkTemplateFile(access, targetPath, location);
+					await checkSource();
+					if (await disk.read(file.path) !== sourceText || !currentView() || view.editor !== editor || editor.getValue() !== note) throw changed();
+					editor.transaction({ changes: [{ from: { line: 0, ch: 0 }, to: editor.offsetToPos(note.length), text: result.text }] });
+					editor.setCursor(editor.offsetToPos(result.cursor));
+				});
+				preview.close();
+				dialog.close();
+			}},
+		]);
 		preview.open();
 	}).setCta();
 	dialog.open();

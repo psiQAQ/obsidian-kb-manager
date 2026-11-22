@@ -43,7 +43,8 @@ async function gitStamp(dir:string) {
 	return JSON.stringify([branch,head,await statIfPresent(index)?digest(await fs.readFile(index)):'']);
 }
 
-export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:string,name:string,skeleton:Record<string,string>,store?:ExclusionStore):Promise<MoveRecord>{
+export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:string,name:string,skeleton:Record<string,string>,store?:ExclusionStore,
+	originals?:Map<string,string>):Promise<MoveRecord>{
 	await recheck(disk,config,lib);
 	if(!lib.identity || lib.identity.archived)throw new Error(tr('无效的库状态','Invalid library state'));
 	const destination=validateLibraryPath(libraryDestination(parent,name),disk.configDir,config.templates), source=lib.location;
@@ -58,7 +59,7 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 	if(collision)throw new Error(tr('目标已存在：','Destination already exists: ')+collision);
 	if(key(destination)!==key(source))await disk.path(destination);
 	const warnings=await ancestorWarnings(disk,destination);
-	const report=await examine(disk,lib,skeleton,destination);
+	const report=await examine(disk,lib,skeleton,destination,originals);
 	const manifestFile=path.join(dir,identityFile);
 	const {raw:previous,signature}=await readManifestFile(manifestFile);
 	if(signature!==lib.signature)throw new Error(tr('清单已变化','The library manifest changed'));
@@ -70,7 +71,10 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 		binding.root=destination;
 		binding.fingerprint=digest(change.after);
 	}
-	if(changes.length)changes.push({file:identityFile,before:signature,after:writeIdentity(previous,next),fields:[tr('记录新绑定位置','Record the new binding locations')]});
+	if(changes.length){
+		originals?.set(identityFile,previous);
+		changes.push({file:identityFile,before:signature,after:writeIdentity(previous,next),fields:[tr('记录新绑定位置','Record the new binding locations')]});
+	}
 	const exclusions=store && await planMovedExclusions(store,next.id,source,destination,next.excludedFolders ?? []);
 	return {token:randomUUID(),exclusions,id:lib.identity.id,source,destination,git:await gitStamp(dir),manifest:signature,
 		changes,warnings:[...warnings,...report.manual],phase:'prepared'};

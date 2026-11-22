@@ -3,7 +3,7 @@ import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import test from 'node:test';
 import {initializeRepository} from '../src/git/repository.ts';
-import {readRepositoryIdentity,writeRepositoryIdentity} from '../src/git/identity.ts';
+import {identityAfter,readRepositoryIdentity,repositoryIdentityChanges,writeRepositoryIdentity} from '../src/git/identity.ts';
 import {previewVersion,saveVersion,history} from '../src/git/versions.ts';
 import {gitResult} from '../src/git/network-native.ts';
 import {withIndex} from '../src/git/index-transaction.ts';
@@ -58,6 +58,21 @@ test('each identity field follows Git configuration, including inherited values,
 	assert.deepEqual(await read(dir),inherited);
 	for(const key of ['name','email'])assert.equal((await gitResult(dir,['config','--local','--no-includes','--get-all','user.'+key],{allowedExitCodes:[0,1]})).code,1);
 	assert.deepEqual(await fs.readFile(global),globalBytes);
+});
+
+test('an explicitly empty local field is still a change when removing its override',async t=>{
+	const {dir,home}=await setup(t),empty=identity('','');
+	await fs.writeFile(path.join(home,'.gitconfig'),'[user]\n name = Inherited 42\n');
+	const inherited=await readRepositoryIdentity(dir);
+	assert.deepEqual(repositoryIdentityChanges(inherited,empty),[]);
+	assert.deepEqual(repositoryIdentityChanges(inherited,identity('  ','\t')),[]);
+	await gitResult(dir,['config','--local','user.name','']);
+	const overridden=await readRepositoryIdentity(dir);
+	assert.equal(overridden.identity.name,'');
+	assert.deepEqual(repositoryIdentityChanges(overridden,empty),['name']);
+	assert.deepEqual(identityAfter(overridden,'name',''),inherited.values.name.at(-1));
+	await writeRepositoryIdentity(dir,overridden,empty);
+	assert.deepEqual(await read(dir),inherited.identity);
 });
 
 test('config writes reject changed local or inherited values and foreign locks while preserving unrelated settings',async t=>{

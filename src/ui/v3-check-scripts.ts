@@ -6,6 +6,7 @@ import {tr} from '../i18n.ts';
 import {applyCheckKitUpdate, previewCheckKitUpdate} from '../kb/check-kit-update.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import {V3Dialog} from './dialog.ts';
+import {changeActions, changeComparison} from './change-preview.ts';
 
 function trustKey(plugin: KnowledgeBaseManager) {
 	return plugin.manifest.id+':check-script-trust';
@@ -51,12 +52,12 @@ export async function reviewDiagnosticScript(plugin: KnowledgeBaseManager, locat
 		showSource(dialog.contentEl,tr('查看完整脚本','View full script'),reviewed.source);
 	} else dialog.contentEl.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:reviewed.source});
 	if (!trustedDigests(plugin).includes(reviewed.digest)) {
-		dialog.action(tr('授权此版本','Approve this version'),async()=>{
+		changeActions(dialog.contentEl,[{label:tr('授权此脚本版本','Approve this script version'),primary:true,run:async()=>{
 			if ((await read()).digest !== reviewed.digest) throw changed();
 			plugin.app.saveLocalStorage(trustKey(plugin),[...new Set([...trustedDigests(plugin),reviewed.digest])]);
 			await refresh();
 			dialog.close();
-		}).setCta();
+		}}]);
 	}
 	dialog.open();
 }
@@ -71,8 +72,9 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 	const plan = await previewCheckKitUpdate(plugin.disk,location);
 	if (!plan) throw new Error(tr('此知识库没有已安装的检验工具包。','This library has no installed check kit.'));
 	const dialog = new V3Dialog(plugin.app,tr('预览检验工具更新','Preview check kit update'));
-	dialog.facts([[tr('知识库','Library'),location],[tr('已安装版本','Installed version'),plan.installedVersion],
-		[tr('插件提供版本','Bundled version'),plan.targetVersion]]);
+	dialog.facts([[tr('知识库','Library'),location]]);
+	changeComparison(dialog.contentEl,[{label:tr('检验工具版本','Check kit version'),before:plan.installedVersion,
+		after:plan.targetVersion,afterLabel:plan.canApply?undefined:tr('插件提供版本','Bundled version')}]);
 	if (plan.downgrade) dialog.contentEl.createEl('p',{text:tr('此知识库已安装更新的检验工具包。','This library has a newer check kit installed.')});
 	else if (plan.files.some(file => file.change === 'modified' || file.change === 'missing' || file.change === 'unavailable'))
 		dialog.contentEl.createEl('p',{text:tr('已修改、缺失或无法读取的文件需要人工处理。','Review edited, missing, or unavailable files manually.')});
@@ -91,19 +93,24 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 			facts.createEl('dt',{text:label});
 			facts.createEl('dd',{text:value});
 		}
-		entry.addEventListener('toggle',()=>{
+		if (file.change === 'current') continue;
+		const reviewContents=()=>{
 			if (!entry.open) return;
-			if (file.before !== undefined || file.change === 'add' || file.change === 'missing')
-				showDifference(entry,file.before ?? '',file.after,tr('本地文件','Local file'),tr('官方文件','Bundled file'));
-			else if (file.change !== 'current') showSource(entry,tr('查看官方文件','View bundled file'),file.after);
-		},{once:true});
+			entry.removeEventListener('toggle',reviewContents);
+			const applies=plan.canApply && (file.change==='add' || file.change==='replace');
+			const before=file.before ?? (file.change==='unavailable'?tr('无法读取文件','File unavailable'):
+				file.installedDigest?tr('无法显示为 UTF-8 文本','Unavailable as UTF-8 text'):tr('文件缺失','File missing'));
+			changeComparison(entry,[{label:tr('文件内容','File content'),before,after:file.after,code:true,
+				afterLabel:applies?undefined:tr('内置候选内容','Bundled candidate')}]);
+		};
+		entry.addEventListener('toggle',reviewContents);
 	}
 	if (plan.canApply) {
-		dialog.action(tr('确认更新可更新的文件','Confirm update for eligible files'),async()=>{
+		changeActions(dialog.contentEl,[{label:tr('更新符合条件的文件','Update eligible files'),primary:true,run:async()=>{
 			await plugin.exclusive(location,()=>applyCheckKitUpdate(plugin.disk,location,plan));
 			await refresh();
 			dialog.close();
-		}).setCta();
+		}}]);
 	}
 	dialog.open();
 }

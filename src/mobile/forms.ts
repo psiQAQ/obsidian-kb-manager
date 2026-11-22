@@ -6,7 +6,8 @@ import {tr} from '../i18n.ts';
 import {readManifest} from '../kb/identity-core.ts';
 import {reviewCreationExclusions} from '../ui/template-filter.ts';
 import type {ApprovedExclusions} from '../ui/template-filter.ts';
-import {Dialog} from '../ui/dialog.ts';
+import {Dialog,dialogContents} from '../ui/dialog.ts';
+import {changeActions,changeComparison,panelGroup} from '../ui/change-preview.ts';
 import {destinationParentField} from '../ui/registry-path-field.ts';
 import {builtinTemplateLabels,templateIdentityLabel} from '../ui/template-labels.ts';
 import {libraryDestination} from '../registry/paths.ts';
@@ -154,55 +155,92 @@ export function cloneForm(plugin:MobilePlugin) {
 	});
 	dlg.open();
 }
-export async function librarySettings(plugin:MobilePlugin,lib:Library) {
+export async function librarySettings(plugin:MobilePlugin,lib:Library,owner:Window=activeWindow) {
 	plugin.assertEnabled();
 	const store=plugin.store(lib),old=await mobileStatus(store),author=await localAuthor(store);
-	const dlg=new Dialog(plugin.app,tr('本库 Git 设置','Library Git settings'));
+	const dlg=new Dialog(plugin.app,tr('本库 Git 设置','Library Git settings'),owner);
+	const target=lib.location+'/.git/config',keys=['name','email'] as const;
 	const draft={...author};
-	dlg.lines([lib.location+'/.git/config',tr('清空姓名或邮箱以继承本设备为此 Vault 设置的对应字段。','Clear a field to inherit its default for this vault on this device.')]);
+	const changedFields=()=>keys.filter(key=>draft[key]!==author[key]);
+	dlg.facts([[tr('本库配置','Library config'),target]]);
+	const fields=panelGroup(dlg.contentEl,tr('本库覆盖值','Local overrides'));
 	const inherit=tr('可留空，继承本设备的 Vault 默认值','Optional · inherit the vault default on this device');
-	dlg.text('user.name',author.name,v=>{draft.name=v.trim();},inherit);
-	dlg.text('user.email',author.email,v=>{draft.email=v.trim();},inherit);
-	dlg.action(tr('预览身份修改','Preview identity changes'),async()=>{
-		if([draft.name,draft.email].some(v=>/[<>]/u.test(v)||Array.from(v).some(c=>c.charCodeAt(0)<32 || c.charCodeAt(0)===127)))throw new Error(tr('身份含无效字符','Invalid identity characters'));
-		const updates:Record<string,string|undefined>={},lines=[lib.location+'/.git/config'];
-		for(const k of ['name','email'] as const)if(draft[k]!==author[k]){
-			updates['user.'+k]=draft[k]||undefined;
-			lines.push('user.'+k+' · '+(author[k]||'∅')+' → '+(draft[k]||tr('继承','Inherit')));
-		}
-		if(lines.length===1)throw new Error(tr('没有变更','No changes'));
-		confirm(plugin,tr('保存提交身份','Save commit identity'),lines,async()=>{
-			await plugin.exclusive(lib.location,()=>configure(store,old,updates),lib);
-		},()=>dlg.close());
-		await Promise.resolve();
-	});
+	const capture=()=>{
+		const next={...draft},device=plugin.deviceAuthor(),changed=changedFields();
+		if(keys.some(key=>/[<>]/u.test(next[key]) || Array.from(next[key]).some(c=>c.charCodeAt(0)<32 || c.charCodeAt(0)===127)))
+			throw new Error(tr('身份含无效字符','Invalid identity characters'));
+		return {next,device,changed};
+	};
+	const apply=async({next,device,changed}:ReturnType<typeof capture>,preview?:Dialog)=>{
+		const updates=Object.fromEntries(changed.map(key=>['user.'+key,next[key]||undefined]));
+		await plugin.exclusive(lib.location,()=>configure(store,old,updates,()=>{
+			const freshDevice=plugin.deviceAuthor();
+			if(changed.some(key=>(!next[key].trim() || !author[key].trim()) && device[key].trim()!==freshDevice[key].trim()))
+				throw new Error(tr('继承的提交身份已变化，请重新预览','Inherited commit identity changed. Preview again.'));
+		}),lib);
+		preview?.close();dlg.close();await plugin.refresh();
+	};
+	const source=(local:string,inherited:string)=>local.trim()
+		?local.trim()+' · '+tr('本库','Local')
+		:(inherited.trim()||tr('未设置','Unset'))+' · '+tr('本设备的 Vault 默认值','Vault default on this device');
+	const review=(origin:HTMLButtonElement)=>{
+		const plan=capture();
+		const preview=new Dialog(plugin.app,tr('预览 Git 提交身份变更','Review Git identity changes'),owner).returnFocusTo(origin);
+		preview.facts([[tr('写入位置','Save to'),target]]);
+		changeComparison(preview.contentEl,plan.changed.map(key=>({
+			label:'user.'+key,before:source(author[key],plan.device[key]),after:source(plan.next[key],plan.device[key]),
+			...(!plan.next[key] && {afterLabel:tr('变更后 · 继承','After · Inherit')}),
+		})));
+		changeActions(preview.contentEl,[{label:tr('应用变更','Apply changes'),run:()=>apply(plan,preview),primary:true}]);
+		preview.open();return Promise.resolve();
+	};
+	for(const key of keys)dialogContents(fields).text('user.'+key,author[key],value=>{
+		draft[key]=value.trim();
+		actions.setDisabled(!changedFields().length);
+	},inherit);
+	const actions=changeActions(fields,[
+		{label:tr('预览变更','Preview changes'),run:review},
+		{label:tr('直接应用','Apply directly'),run:()=>apply(capture()),primary:true},
+	]);
+	actions.setDisabled(true);
 	dlg.open();
 }
-export async function remoteSettings(plugin:MobilePlugin,lib:Library) {
+export async function remoteSettings(plugin:MobilePlugin,lib:Library,owner:Window=activeWindow) {
 	plugin.assertEnabled();
 	const store=plugin.store(lib),old=await mobileStatus(store),current=await upstream(store,old.branch);
-	const dlg=new Dialog(plugin.app,tr('本库 HTTPS 远端','Library HTTPS remote'));
-	const remote=current?.remote??'origin';
+	const dlg=new Dialog(plugin.app,tr('本库 HTTPS 远端','Library HTTPS remote'),owner);
+	const remote=current?.remote??'origin',target=lib.location+'/.git/config';
+	const urlLabel=tr('远端 HTTPS 地址','Remote HTTPS URL'),branchLabel=tr('上游分支','Upstream branch');
 	let url=current?.url??'',branch=current?.branch??old.branch,user='',token='',clear=false;
-	dlg.lines([lib.location+'/.git/config',remote]);
-	dlg.text(tr('远端 HTTPS 地址','Remote HTTPS URL'),url,v=>{url=v;});
-	dlg.text(tr('上游分支','Upstream branch'),branch,v=>{branch=v;});
+	dlg.facts([[tr('本库配置','Library config'),target],[tr('远端','Remote'),remote]]);
+	dlg.text(urlLabel,url,v=>{url=v;});
+	dlg.text(branchLabel,branch,v=>{branch=v;});
 	dlg.text(tr('认证用户名（可选）','Authentication username (optional)'),'',v=>{user=v;});
 	tokenField(dlg,v=>{token=v;});
 	new Setting(dlg.contentEl).setName(tr('清除这个地址的已保存令牌','Clear saved token for this address')).addToggle(c=>c.onChange(v=>{clear=v;}));
-	dlg.action(tr('预览','Preview'),async()=>{
-		const addr=endpoint(url),ref=branchName(branch),id=lib.identity!.id,key=await secretKey(id,addr);
+	changeActions(dlg.contentEl,[{label:tr('预览远端设置','Preview remote settings'),primary:true,run:async origin=>{
+		const addr=endpoint(url),ref=branchName(branch),id=lib.identity!.id;
 		const credential=token?JSON.stringify({username:user||'git',password:token}):undefined,remove=clear;
+		if(remove && credential)throw new Error(tr('请选择更新或清除令牌','Choose either update or clear token'));
+		const key=await secretKey(id,addr);
 		const updates={['remote.'+remote+'.url']:addr,['remote.'+remote+'.fetch']:'+refs/heads/*:refs/remotes/'+remote+'/*',
 			['branch.'+old.branch+'.remote']:remote,['branch.'+old.branch+'.merge']:'refs/heads/'+ref};
-		if(remove && credential)throw new Error(tr('请选择更新或清除令牌','Choose either update or clear token'));
-		confirm(plugin,tr('确认远端设置','Confirm remote settings'),[lib.location,remote,(current?.url??'∅')+' → '+addr,
-			(current?.branch??'∅')+' → '+ref,remove?tr('清除本设备令牌','Clear device token'):credential?tr('更新本设备令牌','Update device token'):tr('保留凭据','Keep credentials')],async()=>{
+		const preview=new Dialog(plugin.app,tr('确认远端设置','Confirm remote settings'),owner).returnFocusTo(origin);
+		preview.facts([[tr('写入位置','Save to'),target],[tr('远端','Remote'),remote]]);
+		changeComparison(preview.contentEl,[
+			{label:urlLabel,before:current?.url??'',after:addr},
+			{label:branchLabel,before:current?.branch??'',after:ref},
+		]);
+		preview.facts([[tr('凭据','Credentials'),remove?tr('清除本设备令牌','Clear device token'):
+			credential?tr('更新本设备令牌','Update device token'):tr('保留凭据','Keep credentials')]]);
+		changeActions(preview.contentEl,[{label:tr('保存远端设置','Save remote settings'),primary:true,run:async()=>{
 			await plugin.exclusive(lib.location,async()=>{
 				await configure(store,old,updates);
 				if(remove || credential)plugin.app.secretStorage.setSecret(key,credential??'');
 			},lib);
-		},()=>dlg.close());
-	});
+			preview.close();dlg.close();await plugin.refresh();
+		}}]);
+		preview.open();
+	}}]);
 	dlg.open();
 }

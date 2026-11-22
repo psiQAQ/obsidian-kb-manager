@@ -12,7 +12,8 @@ import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 
 export interface Repair {file:string;before:string|null;after:string;fields:string[]}
 export interface Report {manual:string[];repairs:Repair[]}
-export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location):Promise<Report>{
+export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location,
+	originals?:Map<string,string>):Promise<Report>{
 	const manual:string[]=[];
 	if(lib.problem)manual.push(lib.problem);
 	if(lib.duplicate)manual.push(tr('ID 重复','Duplicate library ID'));
@@ -26,11 +27,12 @@ export async function examine(disk:VaultDisk,lib:Library,skeleton:Record<string,
 			if(!valid)manual.push(tr('检查映射 ','Check mapping: ')+role+' → '+relative);
 		}
 	}
-	const bindings=await examineBindings(disk,lib,skeleton,destination);
+	const bindings=await examineBindings(disk,lib,skeleton,destination,originals);
 	return {manual:[...manual,...bindings.manual],repairs:bindings.repairs};
 }
 
-export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location):Promise<Report>{
+export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record<string,string>,destination=lib.location,
+	originals?:Map<string,string>):Promise<Report>{
 	const manual:string[]=[], repairs:Repair[]=[];
 	for(const binding of lib.identity?.managed??[]){
 		if(binding.role!=='template-root' || !binding.offsets || !binding.root)continue;
@@ -40,13 +42,16 @@ export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record
 			const text=await fs.readFile(file,'utf8');
 			if(digest(text)!==binding.fingerprint)throw new Error(tr('受管文件已编辑，保留原文','Managed file was edited. Keeping contents.'));
 			const after=rebindSlots(text,binding.offsets,binding.root,destination);
-			if(text!==after)repairs.push({file:binding.path,before:binding.fingerprint,after,fields:[binding.root+' → '+destination]});
+			if(text!==after){
+				originals?.set(binding.path,text);
+				repairs.push({file:binding.path,before:binding.fingerprint,after,fields:[binding.root+' → '+destination]});
+			}
 		}catch(error){manual.push(binding.path+' · '+String(error));}
 	}
 	if(lib.identity?.schemaVersion===2 && !lib.identity.managed.some(item=>item.role!=='template-root'))return {manual,repairs};
 	if(lib.identity && isKepano(lib.identity.template)){
 		const bindingAssets=kepanoBindingAssets(skeleton,lib.identity.template.version);
-		let originals:Record<string,string>|undefined;
+		let rendered:Record<string,string>|undefined;
 		for(const item of lib.identity.managed){
 			if(item.role==='template-root')continue;
 			if(item.role!=='kepano-bindings' || !kepanoBinding(bindingAssets,item.path)){
@@ -57,8 +62,8 @@ export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record
 				const file=await disk.path(lib.location+'/'+item.path), stat=await statIfPresent(file);
 				if(!stat){
 					if(item.path.endsWith('.base') || (lib.identity.template.version!=='1' && /^Templates\/.+\.md$/u.test(item.path))){
-						originals??=renderKepano(bindingAssets,destination);
-						repairs.push({file:item.path,before:null,after:originals[item.path]!,fields:[tr('恢复内置模板文件','Restore built-in template file')]});
+						rendered??=renderKepano(bindingAssets,destination);
+						repairs.push({file:item.path,before:null,after:rendered[item.path]!,fields:[tr('恢复内置模板文件','Restore built-in template file')]});
 					}else manual.push(tr('缺少受管页面：','Missing managed page: ')+item.path);
 					continue;
 				}
@@ -76,8 +81,11 @@ export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record
 					result={content:current.content,edits:[...result.edits,...current.edits],manual:current.manual};
 				}
 				manual.push(...result.manual);
-				if(result.edits.length)repairs.push({file:item.path,before:digest(text),after:result.content,
-					fields:result.edits.map(edit=>edit.role+' · '+edit.old+' → '+edit.value)});
+				if(result.edits.length){
+					originals?.set(item.path,text);
+					repairs.push({file:item.path,before:digest(text),after:result.content,
+						fields:result.edits.map(edit=>edit.role+' · '+edit.old+' → '+edit.value)});
+				}
 			}catch(error){manual.push(item.path+' · '+String(error));}
 		}
 		return {manual,repairs};
@@ -104,8 +112,11 @@ export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record
 	try{
 		const result=rebind(source,binding.root??lib.location,destination);
 		manual.push(...result.manual);
-		if(result.edits.length)repairs.push({file:'knowledge.base',before:digest(source),after:result.content,
-			fields:result.edits.map(e=>e.role+'：'+e.old+' → '+e.value)});
+		if(result.edits.length){
+			originals?.set('knowledge.base',source);
+			repairs.push({file:'knowledge.base',before:digest(source),after:result.content,
+				fields:result.edits.map(e=>e.role+'：'+e.old+' → '+e.value)});
+		}
 	}catch(error){manual.push(String(error));}
 	return {manual,repairs};
 }

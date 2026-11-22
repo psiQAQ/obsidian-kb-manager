@@ -257,6 +257,36 @@ try {
 		return {terminated:pids,historyFiles:before.length};
 	});
 	if(scope==='all'){
+		await scenario('fieldEditActions',async()=>{
+			const manifest=join(fixture.vault,'Alpha','kb.toml'),before=await readFile(manifest,'utf8');
+			const draft='Desktop preview\nSecond line';
+			const editDescription=async value=>{
+				await libraryMenu('Alpha','Edit');
+				return observe('description field',value=>{
+					const input=document.querySelector('.kb-dialog textarea[aria-label="Description"]');
+					if(!input)return;
+					const previous=input.value;
+					input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));
+					return {previous};
+				},value);
+			};
+			const {previous}=await editDescription(draft);
+			await modalButton('Preview changes');
+			const values=await observe('description comparison',()=>{
+				const pair=document.querySelector('.kb-change-pair');
+				if(pair)return [...pair.querySelectorAll('dd')].map(cell=>cell.textContent);
+			});
+			assert.equal(values.length,2);assert.equal(values[1],draft);
+			assert.equal(await readFile(manifest,'utf8'),before);
+			await modalButton('Apply changes');
+			await observe('preview saved',()=>!document.querySelector('.kb-dialog'));
+			assert.notEqual(await readFile(manifest,'utf8'),before);
+			await editDescription(previous);
+			await modalButton('Apply directly');
+			await observe('direct save complete',()=>!document.querySelector('.kb-dialog'));
+			assert.equal(await readFile(manifest,'utf8'),before);
+			return {previewReadOnly:true,multilinePreserved:true,originalRestored:true};
+		});
 		const {verifyDiagnosticHistory}=await import('./diagnostic-history.mjs');
 		await verifyDiagnosticHistory({fixture,scenario,observe,modalButton,libraryMenu,evaluate});
 		const {verifyTemplateUpdate}=await import('./template-update.mjs');

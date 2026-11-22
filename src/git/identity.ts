@@ -82,19 +82,25 @@ export async function checkedIdentityArgs(dir:string,preview:GitIdentity):Promis
 	return ['user','author','committer'].flatMap(key=>['-c',key+'.name='+name,'-c',key+'.email='+email]);
 }
 export function identityAfter(preview:IdentityPreview,key:keyof GitIdentity,local:string):IdentityValue|undefined{
-	const entries=preview.values[key],direct=entries.map(e=>e.direct).lastIndexOf(true);
+	const entries=preview.values[key],effective=entries.at(-1),direct=entries.map(e=>e.direct).lastIndexOf(true);
 	const inherited=entries.filter(e=>!e.direct);
 	if(!local)return inherited[inherited.length-1];
-	if(direct>=0 && direct<entries.length-1)return entries[entries.length-1];
-	if(direct<0 && entries[entries.length-1]?.scope==='worktree')return entries[entries.length-1];
+	if(direct>=0 && direct<entries.length-1)return effective;
+	if(direct<0 && (effective?.scope==='worktree' || effective?.scope==='command'))return effective;
 	return {scope:'local',origin:'.git/config',value:local,direct:true};
+}
+export function repositoryIdentityChanges(preview:IdentityPreview,draft:GitIdentity) {
+	return keys.filter(key=>{
+		const next=draft[key].trim();
+		return next!==preview.local[key] || !next && preview.values[key].some(v=>v.direct);
+	});
 }
 export async function writeRepositoryIdentity(dir:string,preview:IdentityPreview,draft:GitIdentity){
 	const fresh=await readRepositoryIdentity(dir);
 	if(fresh.shared)throw new Error(tr('此库含特殊的本地配置，请使用 Git 修改','This repository has special local configuration. Edit it with Git.'));
 	if(fresh.config!==preview.config || JSON.stringify(fresh.values)!==JSON.stringify(preview.values))
 		throw new Error(tr('仓库配置或继承身份已变化，请重新预览','Repository configuration or inherited identity changed. Preview again.'));
-	const changes=keys.filter(key=>draft[key].trim()!==preview.local[key] || !draft[key].trim() && preview.values[key].some(v=>v.direct));
+	const changes=repositoryIdentityChanges(preview,draft);
 	for(const key of changes)validateField(draft[key]);
 	if(!changes.length)return;
 	await updateConfig(dir,preview.config,async shadow=>{

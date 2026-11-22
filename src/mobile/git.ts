@@ -128,10 +128,11 @@ export async function localAuthor(s:Store):Promise<Author>{
 	};
 	return {name:await field('name'), email:await field('email')};
 }
-export async function configure(s:Store,snapshot:Snapshot,updates:Record<string,string|undefined>){
+export async function configure(s:Store,snapshot:Snapshot,updates:Record<string,string|undefined>,beforeWrite?:()=>void){
 	await locked(s,['config.lock'],async locks=>{
 		await expectSnapshot(s,snapshot,locks);
 		const r=repo(s),path=meta(s,'config'),initial=await s.disk.read(path);
+		if(await hash(initial)!==snapshot.config)throw changed();
 		let text=initial;
 		const promises={...r.fs.promises,readFile:async(file:string,opt?:string|{encoding?:string})=>
 			file===r.gitdir+'/config'?text:r.fs.promises.readFile(file,opt),
@@ -144,6 +145,7 @@ export async function configure(s:Store,snapshot:Snapshot,updates:Record<string,
 			await git.setConfig({...r,fs:{promises},path:name,value});
 		}
 		if(await s.disk.read(path)!==initial)throw changed();
+		beforeWrite?.();
 		await s.disk.write(path,text);
 	});
 }

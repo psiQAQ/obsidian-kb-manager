@@ -10,6 +10,7 @@ import type KnowledgeBaseManager from '../main.ts';
 import {discover,recheck} from '../kb/catalog.ts';
 import type {Library} from '../kb/catalog.ts';
 import {Dialog,dialogContents} from './dialog.ts';
+import {changeActions,changeComparison} from './change-preview.ts';
 import {applyChange,bindRemote,bindingPlan,changePlan,createBranch,remoteState,secretKey,transfer} from '../git/network.ts';
 import type {AutomationGrant,RemoteTarget,Credentials} from '../git/network.ts';
 import {history,saveVersion} from '../git/versions.ts';
@@ -184,22 +185,26 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 		dialog.text(t('远端名称','Remote name'),remote,v=>{remote=v;});
 		dialog.text('URL',url,v=>{url=v;});
 		dialog.text(t('上游分支','Upstream branch'),branch,v=>{branch=v;});
-		dialog.action(t('预览上游修改','Preview upstream changes'),async()=>{
+		dialog.action(t('预览上游修改','Preview upstream changes'),async origin=>{
 			const plan=await bindingPlan(dir,state.preview.branch,remote,url,branch);
-			const next=new Dialog(plugin.app,t('确认上游修改','Confirm upstream changes'));
+			const next=new Dialog(plugin.app,t('确认上游修改','Confirm upstream changes'),dialog.owner).returnFocusTo(origin);
 			const before=plan.oldBranch?.replace(/^refs\/heads\//u,'');
-			next.lines([lib.location+' · '+plan.branch,
-				t('上游','Upstream')+' · '+(plan.oldUpstream && before?plan.oldUpstream+'/'+before:'∅')+' → '+plan.remote+'/'+plan.remoteBranch,
-				t('获取','Fetch')+' · '+(plan.old?.display??'∅')+' → '+plan.fetch.display,
-				t('推送','Push')+' · '+(plan.oldPush?.display??'∅')+' → '+(plan.push?.display??'∅')]);
-			next.action(t('保存本库上游','Save library upstream'),async()=>{
+			const unconfigured=t('未配置','Unconfigured');
+			next.facts([[t('知识库','Library'),lib.location],[t('本地分支','Local branch'),plan.branch]]);
+			changeComparison(next.contentEl,[
+				{label:t('上游','Upstream'),before:plan.oldUpstream && before?plan.oldUpstream+'/'+before:unconfigured,
+					after:plan.remote+'/'+plan.remoteBranch},
+				{label:t('获取地址','Fetch URL'),before:plan.old?.display??unconfigured,after:plan.fetch.display},
+				{label:t('推送地址','Push URL'),before:plan.oldPush?.display??unconfigured,after:plan.push?.display??unconfigured},
+			]);
+			changeActions(next.contentEl,[{label:t('保存本库上游','Save library upstream'),primary:true,run:async()=>{
 				await write(folder=>bindRemote(folder,plan.branch,plan.remote,plan.fetch.url,plan.remoteBranch,plan));
 				const grant=plugin.grants[id];
 				if(grant && (grant.push || grant.pull || grant.autoPullOnStart) && JSON.stringify(grant)!==JSON.stringify(grantFor(plugin,lib,await remoteState(dir)))){
 					grant.paused='review';await plugin.persist();
 				}
 				next.close();dialog.close();await plugin.refresh();
-			});next.open();
+			}}]);next.open();
 		});
 		const urls=new Set(state.target?[state.target.url,state.target.pushUrl]:[]);
 		if([...urls].some(url=>url.startsWith('https://'))){

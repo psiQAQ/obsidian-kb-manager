@@ -130,6 +130,29 @@ test('mobile adapter creates all template types and preserves each library index
 	await assert.rejects(mobileStatus(s));
 });
 
+test('mobile config rejects an external edit during the status scan or a stale inherited default before publishing',async t=>{
+	const {root,disk,ctx}=await setup(t),location='library';
+	execFileSync('git',['init','--quiet','--initial-branch=main',path.join(root,location)]);
+	const store={root:location,disk,configDir:ctx.configDir},file=location+'/.git/config';
+	const old=await mobileStatus(store),initial=await disk.read(file);
+	const external=initial+'\n[user]\n name = Concurrent 42\n';
+	let edited=false;
+	const concurrentDisk={...disk,list:async folder=>{
+		if(!edited && folder===location){edited=true;await disk.write(file,external);}
+		return disk.list(folder);
+	}};
+	const updates={'user.name':'My draft'};
+	await assert.rejects(configure({...store,disk:concurrentDisk},old,updates),/changed|变化/u);
+	assert.equal(await disk.read(file),external);
+	const latest=await mobileStatus(store);
+	const staleDefault=new Error('Device default changed');
+	await assert.rejects(configure(store,latest,updates,()=>{throw staleDefault;}),staleDefault);
+	assert.equal(await disk.read(file),external);
+	await configure(store,latest,updates);
+	assert.equal((await localAuthor(store)).name,'My draft');
+	assert.equal(await disk.stat(file+'.lock'),null);
+});
+
 test('mobile creation previews Git ignore rules, validates identity and configures a local HTTPS origin',async t=>{
 	const {root,disk,ctx}=await setup(t),assets=await inputs(root);
 	await disk.write('templates/sample/.gitignore','*.bin\n/nested/*\n!/nested/keep.md\n/pruned/\n!/kb.toml\n');

@@ -9,6 +9,7 @@ import { previewVersion } from '../git/versions.ts';
 import { candidates, changeIndex } from '../git/index-actions.ts';
 import { remoteState } from '../git/network.ts';
 import { Dialog } from './dialog.ts';
+import { changeActions, changeComparison } from './change-preview.ts';
 import { showDiff } from './source-diff.ts';
 import { tr } from '../i18n.ts';
 
@@ -67,12 +68,12 @@ async function fileAction(plugin:KnowledgeBaseManager, action:typeof commands[nu
 		const entry=candidates(preview,op).find(c=>c.file===file);
 		if(!entry)throw new Error(tr('当前文件没有对应改动','This file has no matching changes'));
 		if(entry.head!==entry.stage && entry.stage!==entry.work)dialog.lines([tr('将替换此文件的部分暂存内容','This replaces the partially staged version of this file')]);
-		dialog.action(title,async()=>{
+		changeActions(dialog.contentEl,[{label:title,primary:true,run:async()=>{
 			await plugin.exclusiveGit(lib.location,async()=>{
 				await recheck(plugin.disk,plugin.config,lib);await changeIndex(dir,preview,op,[file]);
 			});
 			dialog.close();await plugin.refresh();
-		});
+		}}]);
 		dialog.open();return;
 	}
 	const filename=join(dir,'.gitignore');
@@ -86,23 +87,24 @@ async function fileAction(plugin:KnowledgeBaseManager, action:typeof commands[nu
 	const rule='/'+file.replace(/[\\*?[\] ]/gu,'\\$&');
 	let after=action==='add-to-gitignore' ? original+(original && !original.endsWith('\n')?newline:'')+rule+newline : original;
 	if(action==='edit-gitignore')dialog.multiline('.gitignore',original,value=>{after=value.replace(/\r?\n/gu,newline);});
-	dialog.action(tr('预览规则','Preview rules'),async()=>{
+	dialog.action(tr('预览规则','Preview rules'),async origin=>{
 		if(after===original)return;
-		const confirmation=new Dialog(plugin.app,tr('确认忽略规则','Confirm ignore rules'));
-		confirmation.lines([lib.location+'/.gitignore']);
-		confirmation.contentEl.createEl('pre',{text:after});
-		confirmation.action(tr('保存','Save'),async()=>{
+		const approved=after;
+		const confirmation=new Dialog(plugin.app,tr('确认忽略规则','Confirm ignore rules'),dialog.owner).returnFocusTo(origin);
+		changeComparison(confirmation.contentEl,[{label:lib.location+'/.gitignore',
+			before:before??tr('文件缺失','File missing'),after:approved,code:true}]);
+		changeActions(confirmation.contentEl,[{label:tr('保存本库忽略规则','Save library ignore rules'),primary:true,run:async()=>{
 			await plugin.exclusiveGit(lib.location,async()=>{
 				await recheck(plugin.disk,plugin.config,lib);
 				if(await read()!==before)throw new Error(tr('忽略规则已变化，请重新预览','Ignore rules changed. Preview again.'));
-				if(before===undefined)await fs.writeFile(filename,after,{flag:'wx'});
+				if(before===undefined)await fs.writeFile(filename,approved,{flag:'wx'});
 				else await plugin.app.vault.adapter.process(lib.location+'/.gitignore',text=>{
 					if(text!==before)throw new Error(tr('忽略规则已变化','Ignore rules changed'));
-					return after;
+					return approved;
 				});
 			});
 			confirmation.close();dialog.close();await plugin.refresh();
-		});confirmation.open();await Promise.resolve();
-	});
+		}}]);confirmation.open();await Promise.resolve();
+	}).setCta();
 	dialog.open();
 }

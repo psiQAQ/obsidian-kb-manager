@@ -70,7 +70,8 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	const base=renderBase(skeleton['knowledge.base'],'A/光学').replace('file.inFolder("A/光学/Notes")','file.name == "私人条件"')+'\n# 人工注释\n';
 	const manifest=newIdentity('光学','本地',{id:'llm-wiki',version:'1'});
 	manifest.managed.push({path:'knowledge.base',fingerprint:digest(base),root:'A/光学'});
-	await fs.writeFile(path.join(libdir,identityFile),writeIdentity('',manifest));
+	const manifestText=writeIdentity('',manifest);
+	await fs.writeFile(path.join(libdir,identityFile),manifestText);
 	await fs.writeFile(path.join(libdir,'knowledge.base'),base);
 	await registerVaultLibrary(disk,config,'A/光学');
 	await fs.writeFile(path.join(root,'outside.md'),'[[A/光学/note]]');
@@ -84,7 +85,9 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	await fs.writeFile(path.join(libdir,'attachment.bin'),Buffer.from([255,10,0]));
 	const head=git(libdir,'rev-parse','HEAD'),index=await fs.readFile(path.join(libdir,'.git/index'));
 	const [lib]=await discover(disk,config);
-	const record=await planMove(disk,config,lib,'B','新 光学',skeleton);
+	const originals=new Map();
+	const record=await planMove(disk,config,lib,'B','新 光学',skeleton,undefined,originals);
+	assert.deepEqual(originals,new Map([['knowledge.base',base],[identityFile,manifestText]]));
 	assert.ok(record.warnings.some(w=>w.includes('人工笔记')));
 	const dest=path.join(root,'B','新 光学');
 	let saved;
@@ -99,6 +102,8 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	};
 	await assert.rejects(executeMove(disk,config,record,{...files,replace:()=>Promise.reject(new Error('interrupted'))},persist),/interrupted/);
 	assert.equal(saved.phase,'moved');
+	assert.equal(Object.hasOwn(saved,'originals'),false);
+	for(const change of saved.changes)assert.deepEqual(Object.keys(change).sort(),['after','before','fields','file']);
 	const moved=path.join(dest,'knowledge.base');
 	const previous=await fs.readFile(moved,'utf8');
 	await fs.writeFile(moved,previous+'# new edit');
@@ -118,7 +123,10 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	assert.equal(current.identity.id,manifest.id);
 	assert.deepEqual((await examine(disk,current,skeleton)).repairs,[]);
 	await fs.unlink(moved);
-	const [repair]=(await examine(disk,current,skeleton)).repairs;
+	const repairOriginals=new Map();
+	const [repair]=(await examine(disk,current,skeleton,current.location,repairOriginals)).repairs;
+	assert.equal(repair.before,null);
+	assert.equal(repairOriginals.has(repair.file),false);
 	await applyRepair(disk,config,current,repair,files,skeleton);
 	const repaired=(await discover(disk,config))[0];
 	const intermediate=await planMove(disk,config,repaired,'B','Optics',skeleton);

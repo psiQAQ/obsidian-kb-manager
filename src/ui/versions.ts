@@ -11,6 +11,7 @@ import { candidates } from '../git/index-actions.ts';
 import { initializeRepository,readCommit } from '../git/repository.ts';
 import { showSourceHistory } from './source-history.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
+import { changeActions } from './change-preview.ts';
 import { assertGitEnabled } from './device.ts';
 import { editRepositoryIdentity, identitySourceText } from './repository-identity.ts';
 
@@ -28,13 +29,13 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 	if(lib.git==='missing'){
 		dialog.facts(libraryFacts);
 		dialog.lines([tr('此库没有 Git 历史。初始化将创建 .git/ 和 main 分支。',"This library has no Git history. Initialization creates .git/ and a main branch.")]);
-		if(!lib.identity?.archived)dialog.action(tr('初始化本地 Git',"Initialize local Git"),async()=>{
+		if(!lib.identity?.archived)changeActions(dialog.contentEl,[{label:tr('初始化本地 Git',"Initialize local Git"),primary:true,run:async()=>{
 			await plugin.exclusiveGit(lib.location,async()=>{
 				await recheck(plugin.disk,plugin.config,lib);
 				await initializeRepository(dir);
 			});
 			dialog.close();await plugin.refresh();
-		});
+		}}]);
 	} else if(mode==='history'){
 		if(!lib.identity)throw new Error(tr('库身份已失效','Library identity is no longer valid'));
 		return showSourceHistory(plugin,lib.identity.id);
@@ -52,6 +53,7 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			previous.candidate===preview.head?tr('上次提交已写入：',"Previous commit exists: ")+preview.head:tr('上次操作尚未确认完成，当前 HEAD：',"Previous operation is unconfirmed. Current HEAD: ")+(preview.head||tr('空',"empty")),
 			tr('上次说明：',"Previous message: ")+previous.message,tr('已记录暂存：',"Recorded staged files: ")+(previous.staged.join('、')||tr('无',"none")),previous.problem??'',
 		]);
+		let commitAction:{label:string;run:()=>Promise<void>;primary:boolean}|undefined;
 		if(preview.changes.length){
 			const staged=candidates(preview,'unstage'),working=candidates(preview,'stage');
 			const included=preview.staged?staged:working;
@@ -83,10 +85,10 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			dialog.facts(author===committer?[[tr('作者与提交者','Author and committer'),committer]]:
 				[[tr('作者','Author'),author],[tr('提交者','Committer'),committer]]);
 			if(!preview.identity.name || !preview.identity.email)dialog.action(tr('设置本库 Git 身份','Set library Git identity'),async()=>{
-				onDraft?.(message);await editRepositoryIdentity(plugin,lib);dialog.close();
+				onDraft?.(message);await editRepositoryIdentity(plugin,lib,owner);dialog.close();
 			});
 			const label=commitMode==='amend'?tr('修订上一次提交','Amend previous commit'):preview.staged?tr('提交已暂存内容','Commit staged changes'):tr('暂存并提交','Stage and commit');
-			dialog.action(label,async()=>{
+			commitAction={label,primary:true,run:async()=>{
 				const oid=await plugin.exclusiveGit(lib.location,async()=>{
 					await recheck(plugin.disk,plugin.config,lib);
 					const complete=prefs.listChangedFilesInMessageBody && message.trim()?message+'\n\n'+files.map(file=>'- '+file).join('\n'):message;
@@ -98,7 +100,7 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 				});
 				dialog.contentEl.empty();dialog.lines([lib.location,tr('已提交 ',"Committed ")+oid]);
 				await onCommitted?.(message);await plugin.refresh();
-			}).setCta();
+			}};
 		}else dialog.lines([tr('没有待提交内容',"No changes to commit")]);
 		const details=dialog.contentEl.createEl('details',{cls:'kb-commit-details'});
 		details.createEl('summary',{text:tr('Git 详情','Git details')});
@@ -107,6 +109,7 @@ export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:
 			...(['name','email'] as const).map(key=>['user.'+key,identitySourceText(preview.identitySources[key])] as const),
 			[tr('扫描','Scan'),preview.platform+tr(' · 已扫描 ',' · Scanned ')+preview.files+tr(' 个文件，读取 ',' files and ')+preview.bytes+tr(' 字节，用时 ',' bytes in ')+preview.elapsed+' ms'],
 		]);
+		if(commitAction)changeActions(dialog.contentEl,[commitAction]);
 	}
 	dialog.open();
 }

@@ -13,20 +13,25 @@ import { moveVaultPath } from '../kb/move-link-text.ts';
 import { readMoveReference } from '../kb/move-references.ts';
 import { changeIdentity } from './identity.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
+import { changeActions, changeComparison, panelGroup } from './change-preview.ts';
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
 import { planMoveReferences, selectMoveReferences, verifyMoveReferences } from './move-links.ts';
+import { showAddedIgnoreRules } from './registry-ignore.ts';
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const preview=await previewManifestUpgrade(plugin.disk,lib);
 	if(!preview)return;
 	const {relative,id,ignores,log,checks}=preview;
 	const dialog=new Dialog(plugin.app,tr('升级知识库清单','Upgrade library manifest'),owner);
-	dialog.facts([[tr('文件','File'),relative],[tr('清单格式','Manifest schema'),'1 → 2'],[tr('知识库 ID','Library ID'),id]]);
-	dialog.contentEl.createEl('p',{text:log.exists?tr('使用现有的 .log/ 目录保存检验日志。','Use the existing .log/ directory for check logs.'):tr('创建 .log/ 目录以保存检验日志。','Create .log/ for check logs.')});
+	dialog.facts([[tr('文件','File'),relative],[tr('知识库 ID','Library ID'),id]]);
+	changeComparison(dialog.contentEl,[
+		{label:tr('清单格式','Manifest schema'),before:'1',after:'2'},
+		{label:tr('检验日志目录','Check log folder'),before:log.exists?'.log/':tr('目录缺失','Folder missing'),after:'.log/'},
+	]);
 	if(ignores.before!==ignores.after){
-		dialog.contentEl.createEl('p',{text:tr('在本库 .gitignore 末尾追加规则','Append rules to this library’s .gitignore')});
-		dialog.contentEl.createEl('pre').createEl('code',{text:ignores.after.slice(ignores.before?.length ?? 0).trim()});
+		showAddedIgnoreRules(dialog.contentEl,lib.location+'/.gitignore',ignores.before,
+			ignores.after.slice(ignores.before?.length ?? 0).trim());
 	}
 	if(checks.manual.length){
 		dialog.contentEl.createEl('p',{text:tr('专项文件需人工核对。本次升级会更新清单格式和日志位置。','Review the check files manually. This upgrade updates the manifest format and log location.')});
@@ -38,13 +43,16 @@ export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,ow
 			const item=dialog.contentEl.createEl('details');
 			item.createEl('summary',{text:(file.existing?tr('已匹配 ','Matched '):tr('创建 ','Create '))+lib.location+'/'+file.path});
 			item.createEl('p',{text:'SHA-256 '+file.fingerprint});
-			item.createEl('pre').createEl('code',{text:file.content});
+			if(file.existing)item.createEl('pre').createEl('code',{text:file.content});
+			else changeComparison(item,[{
+				label:tr('文件内容','File content'),before:tr('文件缺失','File missing'),after:file.content,code:true,
+			}]);
 		}
 	}
-	dialog.action(tr('应用清单升级','Apply manifest upgrade'),async()=>{
+	changeActions(dialog.contentEl,[{label:tr('应用清单升级','Apply manifest upgrade'),primary:true,run:async()=>{
 		await plugin.exclusive(lib.location,()=>applyManifestUpgrade(plugin.disk,plugin.config,preview));
 		dialog.close();await plugin.refresh();
-	}).setCta();
+	}}]);
 	dialog.open();
 }
 
@@ -82,33 +90,66 @@ export function visible(plugin:KnowledgeBaseManager,protectEditors=false):Visibl
 
 export function edit(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow){
 	if(!lib.identity)return;
-	const previous=lib.identity;
-	let name=previous.displayName,description=previous.description;
+	const previous=lib.identity,expected={...lib},target=lib.location+'/kb.toml';
+	const draft={displayName:previous.displayName,description:previous.description};
+	const labels={displayName:tr('显示名','Display name'),description:tr('简介','Description')};
+	const fields=['displayName','description'] as const;
+	const changedFields=(next:typeof draft)=>fields.filter(field=>next[field]!==previous[field]);
+	const status=(archived:boolean)=>archived?tr('已归档','Archived'):tr('活动中','Active');
 	const dialog=new Dialog(plugin.app,tr('编辑知识库',"Edit knowledge base"),owner);
-	dialog.lines([lib.location+'/kb.toml']);
-	dialog.text(tr('显示名',"Display name"),name,v=>{name=v;});dialog.multiline(tr('简介',"Description"),description,v=>{description=v;});
-	const confirm=(archive:boolean)=>{
-		const next=new Dialog(plugin.app,tr('确认清单修改',"Confirm manifest changes"),owner);
-		next.lines([lib.location+'/kb.toml',previous.displayName+' → '+name,previous.description+' → '+description,
-			tr('状态：','Status: ')+(previous.archived?tr('已归档','Archived'):tr('活动中','Active'))+' → '+
-				(archive?tr('已归档','Archived'):tr('活动中','Active'))]);
-		next.action(tr('应用',"Apply"),async()=>{
-			if(!name.trim())throw new Error(tr('请输入显示名',"Enter a display name"));
-			await plugin.exclusive(lib.location,async()=>{
-				await recheck(plugin.disk,plugin.config,lib);
-				await changeIdentity(plugin,lib,value=>{value.displayName=name;value.description=description;value.archived=archive;});
-			});
-			next.close();dialog.close();await plugin.refresh();
-		});next.open();
+	dialog.facts([[tr('清单','Manifest'),target]]);
+	const capture=()=>{
+		if(!draft.displayName.trim())throw new Error(tr('请输入显示名','Enter a display name'));
+		return {...draft};
 	};
-	dialog.action(tr('预览元信息',"Preview metadata"),()=>{confirm(previous.archived);return Promise.resolve();});
-	dialog.action(previous.archived?tr('恢复活动状态',"Restore to active"):tr('归档',"Archive"),()=>{confirm(!previous.archived);return Promise.resolve();});
+	const apply=async(next:typeof draft,archived?:boolean,preview?:Dialog)=>{
+		await plugin.exclusive(expected.location,async()=>{
+			await recheck(plugin.disk,plugin.config,expected);
+			await changeIdentity(plugin,expected,value=>{
+				Object.assign(value,next);
+				if(archived!==undefined)value.archived=archived;
+			});
+		});
+		preview?.close();dialog.close();await plugin.refresh();
+	};
+	const archiveAction=previous.archived?tr('恢复活动状态','Restore to active'):tr('归档','Archive');
+	const review=(origin:HTMLButtonElement,archived?:boolean)=>{
+		const next=capture();
+		const title=archived===undefined?tr('预览清单变更','Review manifest changes'):
+			archived?tr('确认归档知识库','Confirm library archive'):tr('确认恢复活动状态','Confirm library restoration');
+		const preview=new Dialog(plugin.app,title,owner).returnFocusTo(origin);
+		preview.facts([[tr('写入位置','Save to'),target]]);
+		const rows=changedFields(next).map(field=>({label:labels[field],before:previous[field],after:next[field]}));
+		if(archived!==undefined)rows.unshift({label:tr('状态','Status'),before:status(previous.archived),after:status(archived)});
+		changeComparison(preview.contentEl,rows);
+		changeActions(preview.contentEl,[{
+			label:archived===undefined?tr('应用变更','Apply changes'):archiveAction,
+			run:()=>apply(next,archived,preview),primary:true,
+		}]);
+		preview.open();return Promise.resolve();
+	};
+	const information=panelGroup(dialog.contentEl,tr('知识库信息','Library information'));
+	const update=(field:keyof typeof draft,value:string)=>{
+		draft[field]=value;
+		actions.setDisabled(!changedFields(draft).length);
+	};
+	dialogContents(information).text(labels.displayName,draft.displayName,value=>update('displayName',value));
+	dialogContents(information).multiline(labels.description,draft.description,value=>update('description',value));
+	const actions=changeActions(information,[
+		{label:tr('预览变更','Preview changes'),run:review},
+		{label:tr('直接应用','Apply directly'),run:()=>apply(capture()),primary:true},
+	]);
+	actions.setDisabled(true);
+	const archive=panelGroup(dialog.contentEl,tr('归档状态','Archive status'));
+	dialogContents(archive).facts([[tr('当前状态','Current status'),status(previous.archived)]]);
+	changeActions(archive,[{label:archiveAction,run:origin=>review(origin,!previous.archived)}]);
 	dialog.open();
 }
 
 export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const library=await recheck(plugin.disk,plugin.config,lib);
-	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library));
+	const originals=new Map<string,string>();
+	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library),library.location,originals);
 	const dialog=new Dialog(plugin.app,tr('维护受管文件','Maintain managed files'),owner);
 	dialog.facts([[tr('知识库','Library'),library.location]]);
 	if(manual.length)dialog.lines(manual);
@@ -117,15 +158,20 @@ export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library,o
 		new Setting(dialog.contentEl).setName(item.file).setDesc(item.fields.join('\n')).addButton(button=>{
 			button.setButtonText(tr('预览修复','Preview repair')).onClick(()=>{
 				const preview=new Dialog(plugin.app,tr('预览受管文件修复','Preview managed file repair'),owner);
+				preview.returnFocusTo(button.buttonEl);
 				preview.lines([library.location+'/'+item.file,...item.fields]);
-				preview.contentEl.createEl('pre').createEl('code',{text:item.after});
-				if(!library.identity?.archived)preview.action(tr('应用此修复','Apply this repair'),async()=>{
+				changeComparison(preview.contentEl,[{
+					label:tr('文件内容','File content'),before:item.before===null?tr('文件缺失','File missing'):
+						(originals.get(item.file) ?? tr('预览无旧内容','Previous contents unavailable')),
+					after:item.after,code:true,
+				}]);
+				if(!library.identity?.archived)changeActions(preview.contentEl,[{label:tr('应用此修复','Apply this repair'),primary:true,run:async()=>{
 					await plugin.exclusive(library.location,()=>applyRepair(plugin.disk,plugin.config,library,item,visible(plugin),plugin.templateAssets(library)));
 					preview.close();dialog.close();
 					await plugin.refresh();
 					const fresh=await inspect(plugin.disk,library.location);
 					if(fresh)await maintainBindings(plugin,fresh,owner);
-				}).setCta();
+				}}]);
 				preview.open();
 			});
 		});
@@ -158,9 +204,9 @@ async function reviewMovedLinks(plugin:KnowledgeBaseManager,record:MoveRecord,ow
 	review.open();
 }
 
-function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,owner:Window){
+function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,owner:Window,originals?:ReadonlyMap<string,string>){
 	const dialog=new V3Dialog(plugin.app,title,owner);
-	dialog.facts([[tr('源目录','Source folder'),record.source],[tr('目标目录','Destination folder'),record.destination]]);
+	changeComparison(dialog.contentEl,[{label:tr('知识库目录','Library folder'),before:record.source,after:record.destination}]);
 	dialog.contentEl.createEl('p',{text:tr('移动整个知识库目录，包括目录内的 Git 数据。成功后登记列表指向目标路径。',
 		'Move the entire library folder, including its Git data. After the move, the registry points to the destination.')});
 	if(record.changes.length){
@@ -169,7 +215,10 @@ function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,o
 			const file=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
 			file.createEl('summary',{text:record.destination+'/'+change.file});
 			dialogContents(file).lines(change.fields);
-			file.createEl('pre',{cls:'kb-v3-code'}).createEl('code',{text:change.after});
+			changeComparison(file,[{
+				label:tr('文件内容','File content'),before:originals?.get(change.file) ??
+					tr('恢复记录未保留旧内容','Original contents unavailable in recovery record'),after:change.after,code:true,
+			}]);
 		}
 	}
 	if(record.warnings.length){
@@ -190,11 +239,11 @@ export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord,
 		dialog.lines(record.references.filter(edit=>edit && typeof edit.file==='string')
 			.map(edit=>moveVaultPath(edit.file,record.source,record.destination)));
 	}
-	dialog.action(tr('继续移动','Resume move'),async()=>{
+	changeActions(dialog.contentEl,[{label:tr('继续移动','Resume move'),primary:true,run:async()=>{
 		await resumeMove(plugin,record);
 		dialog.close();
 		await reviewMovedLinks(plugin,record,owner);
-	}).setCta();
+	}}]);
 	dialog.open();
 }
 
@@ -205,23 +254,25 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 	let parent:string|null=null;
 	const showPaths=()=>{
 		selectedTarget.empty();
-		dialogContents(selectedTarget).facts([[tr('源目录','Source folder'),lib.location],
-			[tr('目标目录','Destination folder'),parent!==null && name ? [parent,name].filter(Boolean).join('/') : tr('待填写','Pending')]]);
+		changeComparison(selectedTarget,[{label:tr('知识库目录','Library folder'),before:lib.location,
+			after:parent!==null && name ? [parent,name].filter(Boolean).join('/') : tr('待填写','Pending')}]);
 	};
 	showPaths();
 	const getParent=destinationParentField(dialog,plugin.app,plugin.config,plugin.disk.registry,{
 		title:tr('选择目标父目录','Choose destination parent folder'),onSelect:path=>{parent=path;showPaths();},
 	});
 	dialog.text(tr('目标目录名',"Destination folder name"),name,v=>{name=v;showPaths();});
-	dialog.action(tr('预览',"Preview"),async()=>{
+	dialog.action(tr('预览目录移动',"Preview directory move"),async origin=>{
 		const target=getParent(), targetName=name;
 		const skeleton=plugin.templateAssets(lib);
 		const store=vaultExclusions(plugin.app,plugin.disk.registry);
-		const plan=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
+		const originals=new Map<string,string>();
+		const plan=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store,originals);
 		const references=await planMoveReferences(plugin,plan);
-		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"),owner);
+		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"),owner,originals);
+		confirm.returnFocusTo(origin);
 		const selectedReferences=selectMoveReferences(confirm.contentEl,plugin.app.vault,plan,references);
-		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
+		changeActions(confirm.contentEl,[{label:tr('移动完整目录',"Move entire directory"),primary:true,run:async()=>{
 			const selected=selectedReferences();
 			const fresh=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
 			const stale=()=>new Error(tr('预览已变化，请重新预览',"Preview has changed. Open a new preview."));
@@ -242,6 +293,6 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 			confirm.close();dialog.close();
 			await resumeMove(plugin,record);
 			await reviewMovedLinks(plugin,record,owner);
-		}).setCta();confirm.open();
+		}}]);confirm.open();
 	}).setCta();dialog.open();
 }

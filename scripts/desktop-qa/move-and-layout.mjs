@@ -32,7 +32,7 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 			const input=[...modal.querySelectorAll('.setting-item')].find(row=>row.textContent.includes('Destination folder name')).querySelector('input');
 			input.value='Renamed';input.dispatchEvent(new Event('input',{bubbles:true}));
 		});
-		await modalButton('Preview');
+		await modalButton('Preview directory move');
 		const groups=await observe('reference group choices',()=>{
 			const controls=[...document.querySelectorAll('.kb-move-reference-group input')];
 			if(controls.length<3)return;
