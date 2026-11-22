@@ -103,9 +103,10 @@ const state=StateField.define<RangeSet<GutterMarker>>({
 	},
 });
 
-const listeners=new WeakMap<KnowledgeBaseManager,Set<()=>void>>();
+type EditorRefreshes=Map<()=>void,()=>string|undefined>;
+const listeners=new WeakMap<KnowledgeBaseManager,EditorRefreshes>();
 const commandLabels=new WeakMap<KnowledgeBaseManager,string>();
-export function refreshSourceEditors(plugin:KnowledgeBaseManager){
+export function refreshSourceEditors(plugin:KnowledgeBaseManager,include?:(path:string)=>boolean){
 	const language=plugin.t('中','en');
 	if(commandLabels.get(plugin)!==language){
 		for(const action of Object.keys(commands) as HunkCommand[]){
@@ -117,11 +118,14 @@ export function refreshSourceEditors(plugin:KnowledgeBaseManager){
 		}
 		commandLabels.set(plugin,language);
 	}
-	for(const update of listeners.get(plugin) ?? [])update();
+	for(const [update,path] of listeners.get(plugin) ?? []){
+		const file=path();
+		if(!include || (file && include(file)))update();
+	}
 }
 
 export function registerSourceEditor(plugin:KnowledgeBaseManager){
-	const updates=new Set<()=>void>();
+	const updates:EditorRefreshes=new Map();
 	registerConflictEditor(plugin,updates);
 	listeners.set(plugin,updates);
 	const status=plugin.addStatusBarItem();status.hide();
@@ -136,7 +140,7 @@ export function registerSourceEditor(plugin:KnowledgeBaseManager){
 			private libId?:string;
 			private view:EditorView;
 			private refresh=()=>{this.path=undefined;this.schedule();};
-			constructor(view:EditorView){this.view=view;updates.add(this.refresh);this.schedule();}
+			constructor(view:EditorView){this.view=view;updates.set(this.refresh,()=>this.file()?.path);this.schedule();}
 			update(update:ViewUpdate){
 				if(update.docChanged || update.focusChanged || update.startState.field(editorInfoField,false)?.file?.path!==this.file()?.path)this.schedule();
 			}
@@ -191,5 +195,5 @@ export function registerSourceEditor(plugin:KnowledgeBaseManager){
 			}
 			destroy(){this.version++;window.clearTimeout(this.timer);updates.delete(this.refresh);}
 		})]);
-	plugin.registerEvent(plugin.app.workspace.on('active-leaf-change',()=>{status.hide();for(const update of updates)update();}));
+	plugin.registerEvent(plugin.app.workspace.on('active-leaf-change',()=>{status.hide();for(const update of updates.keys())update();}));
 }

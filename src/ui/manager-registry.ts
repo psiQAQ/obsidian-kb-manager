@@ -104,7 +104,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 }
 
 export function relocateRegistryEntry(plugin:KnowledgeBaseManager, location:string) {
-	const id = Object.entries(plugin.known).find(([,previous])=>location === previous)?.[0];
+	const id = plugin.previousLibraryId(location);
 	const {t,app} = plugin;
 	const dialog = new Dialog(app,t('重新定位已登记知识库','Relocate registered library'));
 	dialog.facts([[t('失联路径','Missing path'),location],[t('原知识库 ID','Previous library ID'),id ?? t('暂无记录','Unavailable')]]);

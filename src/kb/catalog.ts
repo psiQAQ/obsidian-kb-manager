@@ -43,14 +43,19 @@ export async function inspect(disk: VaultDisk, location: string): Promise<Librar
 function markDuplicates(result:Library[]) {
 	const ids = new Map<string,number>();
 	for (const {identity} of result) if (identity) ids.set(identity.id,(ids.get(identity.id) ?? 0)+1);
-	for (const lib of result) if (lib.identity) lib.duplicate = (ids.get(lib.identity.id) ?? 0) > 1;
-	return result;
+	return result.map(lib=>{
+		if(!lib.identity)return lib;
+		const duplicate=(ids.get(lib.identity.id) ?? 0)>1;
+		return lib.duplicate===duplicate?lib:{...lib,duplicate};
+	});
 }
 
-export async function discover(disk: VaultDisk, config: Config): Promise<Library[]> {
-	const {paths}=await readVaultRegistry(disk);
+export async function discover(disk: VaultDisk, config: Config, registered?:readonly string[],
+	previous?:{libraries:readonly Library[]; changed:ReadonlySet<string>}): Promise<Library[]> {
+	const paths=registered ?? (await readVaultRegistry(disk)).paths;
+	const cached=new Map(previous?.libraries.filter(lib=>!previous.changed.has(lib.location)).map(lib=>[lib.location,lib]));
 	const result=await Promise.all(paths.map(async(location):Promise<Library>=>
-		await registryCandidate(disk,config,location) ?? {location,git:'missing',missing:true}));
+		cached.get(location) ?? await registryCandidate(disk,config,location) ?? {location,git:'missing',missing:true}));
 	return markDuplicates(result);
 }
 

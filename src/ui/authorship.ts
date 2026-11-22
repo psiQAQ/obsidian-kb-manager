@@ -44,13 +44,16 @@ function formatDate(credit: LineCredit, prefs: GitPreferences, locale: string) {
 	}
 }
 
-const subscriptions = new WeakMap<KnowledgeBaseManager, Set<() => void>>();
-export function refreshAuthorship(plugin: KnowledgeBaseManager) {
-	for (const notify of subscriptions.get(plugin) ?? []) notify();
+const subscriptions = new WeakMap<KnowledgeBaseManager, Map<()=>void,()=>string|undefined>>();
+export function refreshAuthorship(plugin: KnowledgeBaseManager,include?:(path:string)=>boolean) {
+	for (const [notify,path] of subscriptions.get(plugin) ?? []){
+		const file=path();
+		if(!include || (file && include(file)))notify();
+	}
 }
 
 export function registerAuthorship(plugin: KnowledgeBaseManager) {
-	const watchers = new Set<() => void>();
+	const watchers = new Map<()=>void,()=>string|undefined>();
 	subscriptions.set(plugin,watchers);
 	const controller = ViewPlugin.fromClass(class {
 		private revision = 0;
@@ -59,7 +62,7 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 		private running = false;
 		private file?: string;
 		constructor(private view: EditorView) {
-			watchers.add(this.schedule); this.schedule();
+			watchers.set(this.schedule,()=>this.view.state.field(editorInfoField,false)?.file?.path); this.schedule();
 		}
 		update(change: ViewUpdate) {
 			const file = change.state.field(editorInfoField,false)?.file?.path;

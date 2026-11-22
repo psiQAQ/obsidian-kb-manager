@@ -77,14 +77,14 @@ class ConflictButtons extends WidgetType {
 	}
 }
 
-export function registerConflictEditor(plugin:KnowledgeBaseManager,updates:Set<()=>void>){
+export function registerConflictEditor(plugin:KnowledgeBaseManager,updates:Map<()=>void,()=>string|undefined>){
 	plugin.registerEditorExtension([field,ViewPlugin.fromClass(class{
 		private view:EditorView;
 		private generation=0;
 		private timer?:number;
 		private cached?:{path:string;lib?:Library};
 		private refresh=()=>{this.cached=undefined;this.schedule();};
-		constructor(view:EditorView){this.view=view;updates.add(this.refresh);this.schedule();}
+		constructor(view:EditorView){this.view=view;updates.set(this.refresh,()=>this.file()?.path);this.schedule();}
 		update(update:ViewUpdate){
 			if(update.startState.field(editorInfoField,false)?.file?.path!==this.file()?.path ||
 				update.startState.field(editorLivePreviewField,false)!==this.view.state.field(editorLivePreviewField,false))this.refresh();

@@ -1,8 +1,23 @@
 import { tr } from '../i18n.ts';
 import { parseRegistry, serializeRegistry } from './paths.ts';
 import type {ExclusionState} from '../kb/template-exclusions.ts';
+import { readPreferences } from '../preferences.ts';
+import type { GitPreferences, Language } from '../preferences.ts';
 
 type Data = Record<string, unknown>;
+const retired = ['parents','templates','grants','moves','saves','known','pendingLibraryPreferences','libraries','prefs','author','email'] as const;
+
+function fields(value:unknown):Data {
+	return value && typeof value==='object' && !Array.isArray(value) ? value as Data : {};
+}
+
+function shared(data:Data) {
+	const legacy=fields(data.prefs);
+	return {
+		language:data.language ?? legacy.language,
+		defaults:{...fields(legacy.defaults),...fields(data.defaults)},
+	};
+}
 
 export interface PluginDataIO {
 	load(): Promise<unknown>;
@@ -44,9 +59,9 @@ export class PluginDataRegistry {
 		return data as Data;
 	}
 
-	private enqueue(action: () => Promise<void>) {
+	private enqueue<T>(action: () => Promise<T>) {
 		const task = this.pending.then(action);
-		this.pending = task.catch(() => {});
+		this.pending = task.then(()=>{},()=>{});
 		return task;
 	}
 
@@ -91,15 +106,40 @@ export class PluginDataRegistry {
 		});
 	}
 
-	savePreferences(prefs: {language: unknown; defaults: unknown}) {
+	async readSettings() {
+		const data=await this.document();
+		const raw=registryField(data);
+		return {prefs:readPreferences(shared(data)),paths:raw===null?[]:parseRegistry(raw,this.configDir)};
+	}
+
+	savePreferences(patch: {language?: Language; defaults?: Partial<GitPreferences>; remove?: readonly (keyof GitPreferences)[]}) {
 		return this.enqueue(async () => {
 			const data = await this.document();
-			const next = {...data, language: prefs.language, defaults: prefs.defaults} as Data;
-			// Callers have already transferred the retired device settings and verified pending overrides.
-			for (const key of ['parents','templates','grants','moves','saves','known','pendingLibraryPreferences','libraries','prefs','author','email']) {
-				delete next[key];
+			const next={...data};
+			if(patch.language!==undefined)next.language=patch.language;
+			if(patch.defaults || patch.remove?.length){
+				const defaults={...fields(data.defaults),...patch.defaults};
+				for(const key of patch.remove ?? [])delete defaults[key];
+				next.defaults=defaults;
 			}
 			if (JSON.stringify(next) !== JSON.stringify(data)) await this.io.save(next);
+			return readPreferences(shared(next));
+		});
+	}
+
+	/** Remove retired fields only after their source values were transferred to this device. */
+	migratePreferences(source:unknown) {
+		return this.enqueue(async()=>{
+			const data=await this.document(), previous=fields(source);
+			if(retired.some(key=>key in data) && retired.every(key=>JSON.stringify(data[key])===JSON.stringify(previous[key]))){
+				const prefs=shared(data);
+				for(const key of ['author','email','backend'])delete prefs.defaults[key];
+				const next={...data,language:readPreferences(prefs).language,defaults:prefs.defaults};
+				for(const key of retired)delete (next as Data)[key];
+				await this.io.save(next);
+				return readPreferences(prefs);
+			}
+			return readPreferences(shared(data));
 		});
 	}
 

@@ -41,9 +41,32 @@ test('retired device data and legacy preferences do not replace or leak into the
 	const {registry,persisted} = fixture({data:oldData});
 	assert.deepEqual(readPendingLibraryPreferences(undefined,oldData),{[id]:{historyDate:false}});
 	assert.deepEqual((await registry.read()).paths,['Books/Library']);
+	await registry.migratePreferences(oldData);
 	await registry.savePreferences({language:'zh',defaults:{tree:false}});
 	assert.deepEqual(persisted.data,{language:'zh',defaults:{tree:false},extension:{author:'keep this separate value'},registeredLibraries:['Books/Library']});
 	assert.deepEqual((await registry.read()).paths,['Books/Library']);
+});
+
+test('a settings form changes its own defaults without reverting synced defaults, language, or registry',async()=>{
+	const {registry,persisted}=fixture({data:{language:'en',defaults:{tree:false,showStatusBar:true,extension:{enabled:true}}}});
+	persisted.data.language='zh';
+	persisted.data.defaults.tree=true;
+	persisted.data.registeredLibraries=['Books/Synced'];
+	const saved=await registry.savePreferences({defaults:{showStatusBar:false,historyDate:false}});
+	assert.equal(saved.language,'zh');
+	assert.deepEqual(saved.defaults,{tree:true,showStatusBar:false,historyDate:false});
+	await registry.savePreferences({remove:['historyDate']});
+	assert.deepEqual(persisted.data,{language:'zh',defaults:{tree:true,showStatusBar:false,extension:{enabled:true}},registeredLibraries:['Books/Synced']});
+	assert.deepEqual((await registry.readSettings()).paths,['Books/Synced']);
+});
+
+test('migration skips retired settings that were replaced externally after device recovery was saved',async()=>{
+	const before={grants:{old:'copy'},prefs:{language:'en',defaults:{tree:false}}};
+	const {registry,persisted}=fixture({data:{...before,grants:{external:'preserve'},language:'zh'}});
+	assert.equal((await registry.migratePreferences(before)).language,'zh');
+	assert.deepEqual(persisted.data.grants,{external:'preserve'});
+	await registry.savePreferences({language:'en'});
+	assert.deepEqual(persisted.data.grants,{external:'preserve'});
 });
 
 test('an invalid shared registry is rejected',async()=>{

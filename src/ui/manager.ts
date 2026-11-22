@@ -4,7 +4,6 @@ import { cloneWizard } from './clone.ts';
 import { ItemView, Menu, Notice, Setting, TFile, Vault, WorkspaceLeaf } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
-import { discover } from '../kb/catalog.ts';
 import { adopt, legacyBinding, adoptionWarnings } from '../kb/create.ts';
 import { resolveDuplicate } from './identity.ts';
 import { createWizard } from './create.ts';
@@ -18,6 +17,7 @@ import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportP
 import { builtinPacks } from '../kb/template-pack.ts';
 import { checkLibrary } from './v3-health.ts';
 import { createPanelTabs } from './panel-tabs.ts';
+import { captureInputSelection } from './input-selection.ts';
 
 export const managerType='knowledge-base-manager-view';
 type WorkspaceTab='changes'|'remote';
@@ -27,7 +27,8 @@ export class ManagerView extends ItemView {
 	private expanded?: string;
 	private readonly drafts = new Map<string,string>();
 	private readonly workspaceTabs = new Map<string,WorkspaceTab>();
-	private rendering?: AbortController;
+	private generation=0;
+	private rows=new Map<string,{host:HTMLElement; controller?:AbortController}>();
 	private networkReady?: Promise<void>;
 	private networkActions=new Map<string,()=>Promise<void>>();
 	async runNetworkAction(id:string,action:string){
@@ -43,7 +44,9 @@ export class ManagerView extends ItemView {
 		await this.render();
 	}
 	async onClose(){
-		this.rendering?.abort();
+		this.generation++;
+		for(const row of this.rows.values())row.controller?.abort();
+		this.rows.clear();
 		this.contentEl.empty();
 		await super.onClose();
 	}
@@ -52,12 +55,20 @@ export class ManagerView extends ItemView {
 	getDisplayText(){return tr('知识库管理器',"Knowledge base manager");}
 	getIcon(){return 'library';}
 	async onOpen(){await this.render();}
-	async render(focusToggle?:string){
-		this.rendering?.abort();
+	get selectedLibrary(){
+		const id=this.expanded;
+		return id?this.plugin.catalog.find(lib=>lib.identity?.id===id && !lib.duplicate && !lib.problem):undefined;
+	}
+	async render(focusToggle?:string,libraries?:readonly Library[]){
+		const generation=++this.generation;
+		let problem='';
+		if(!libraries)try{libraries=await this.plugin.refreshCatalog();}catch(error){problem=String(error);}
+		if(generation!==this.generation)return;
+		const selectedInput=this.rememberCommitSelection(this.contentEl);
+		for(const row of this.rows.values())row.controller?.abort();
+		this.rows.clear();
 		this.networkActions.clear();
 		this.networkReady=undefined;
-		this.rendering=new AbortController();
-		const signal=this.rendering.signal;
 		const el=this.contentEl;
 		el.addClass('kb-manager-sidebar');
 		el.empty();
@@ -74,17 +85,39 @@ export class ManagerView extends ItemView {
 					.setDesc(record.source+' → '+record.destination)
 					.addButton(b=>b.setButtonText(tr('复核并继续',"Review and continue")).onClick(()=>reviewPendingMove(this.plugin,record)));
 			}
-			const libraries=await discover(this.plugin.disk,this.plugin.config);
-			if(signal.aborted)return;
-			if (!libraries.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有库可选择 kb.toml 或扫描目录。',
+			if(problem)throw new Error(problem);
+			if (!libraries?.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有库可选择 kb.toml 或扫描目录。',
 				'No libraries are registered. Create from a template, clone from a Git remote, or register existing libraries by selecting kb.toml or scanning a folder.')});
-			this.plugin.observeLibraries(libraries);
-			for(const lib of libraries)this.row(lib,signal,focusToggle);
-		} catch(error) { if(!signal.aborted)el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
+			for(const lib of libraries ?? []){
+				this.rows.set(lib.location,{host:el.createDiv({cls:'kb-library-row'})});
+				this.drawRow(lib,focusToggle,selectedInput);
+			}
+		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
 	}
-	row(lib: Library,signal:AbortSignal,focusToggle?:string){
+	async refreshRows(libraries:readonly Library[],changed:ReadonlySet<string>){
+		if(libraries.length!==this.rows.size || libraries.some(lib=>!this.rows.has(lib.location))){
+			await this.render(undefined,libraries);return;
+		}
+		for(const lib of libraries)if(changed.has(lib.location))this.drawRow(lib);
+	}
+	private rememberCommitSelection(host:HTMLElement){
+		const selection=captureInputSelection(host.querySelector<HTMLTextAreaElement>('.kb-workspace-commit textarea'));
+		const id=host.querySelector<HTMLElement>('[data-kb-library-id]')?.dataset.kbLibraryId;
+		if(selection && id)this.drafts.set(id,selection.value);
+		return selection && id ? {id,...selection} : undefined;
+	}
+	private drawRow(lib:Library,focusToggle?:string,previousInput?:ReturnType<ManagerView['rememberCommitSelection']>){
+		const row=this.rows.get(lib.location)!;
+		const selection=previousInput ?? this.rememberCommitSelection(row.host);
+		row.controller?.abort();
+		const controller=row.controller=new AbortController();
+		row.host.empty();
+		this.row(lib,row.host,controller.signal,focusToggle,selection);
+	}
+	private row(lib: Library,host:HTMLElement,signal:AbortSignal,focusToggle?:string,
+		selection?:ReturnType<ManagerView['rememberCommitSelection']>){
 		if(lib.missing){
-			new Setting(this.contentEl).setName(lib.location).setDesc(tr('登记路径下找不到 kb.toml','The registered path has no kb.toml'))
+			new Setting(host).setName(lib.location).setDesc(tr('登记路径下找不到 kb.toml','The registered path has no kb.toml'))
 				.addButton(b=>b.setButtonText(tr('重新定位','Relocate')).onClick(()=>relocateRegistryEntry(this.plugin,lib.location)))
 				.addButton(b=>b.setButtonText(tr('移除登记','Remove')).onClick(async()=>{
 					try{await removeRegistryEntry(this.plugin,lib.location);}catch(error){new Notice(String(error));}
@@ -94,7 +127,7 @@ export class ManagerView extends ItemView {
 		const template=builtinPacks().find(pack=>pack.id===lib.identity?.template.id);
 		const detail=[lib.location,template?.name ?? lib.identity?.template.id ?? tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
-		const row=new Setting(this.contentEl).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
+		const row=new Setting(host).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
 		if(!gitDisabled(this.plugin))row.addButton(button=>{
 			button.buttonEl.setAttribute('aria-expanded',String(this.expanded===key));
@@ -106,7 +139,7 @@ export class ManagerView extends ItemView {
 		});
 		if(this.expanded===key && (!lib.identity || lib.problem || lib.duplicate) && !gitDisabled(this.plugin)){
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
-			this.contentEl.createDiv({cls:'kb-library-git',text:reason});
+			host.createDiv({cls:'kb-library-git',text:reason});
 		}
 		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('检验',"Check library")).onClick(async()=>{try{await checkLibrary(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(lib.problem){
@@ -194,8 +227,8 @@ export class ManagerView extends ItemView {
 			} catch(error){new Notice(String(error));}
 		}));
 		if(this.expanded===id && !gitDisabled(this.plugin)){
-			const panel=this.contentEl.createDiv({cls:'kb-library-git'});
-			watchLibraryChanges(this.plugin,lib,panel,signal,()=>this.render());
+			const panel=host.createDiv({cls:'kb-library-git',attr:{'data-kb-library-id':id}});
+			watchLibraryChanges(this.plugin,lib,panel,signal,async()=>this.drawRow(lib));
 			panel.createEl('h3',{text:tr('Git 工作区','Git workspace')+' · '+lib.identity.displayName});
 			const tabs: {id:WorkspaceTab;label:string}[]=[{id:'changes',label:tr('更改','Changes')}];
 			if(!lib.identity.archived && lib.git==='local')tabs.push({id:'remote',label:tr('远端与分支','Remote and branches')});
@@ -212,7 +245,11 @@ export class ManagerView extends ItemView {
 					networkPanel(this.plugin,lib,content,(icon,action)=>{if(!signal.aborted)this.networkActions.set(icon,action);});
 				const done=work.catch(error=>{
 					if(!signal.aborted)content.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});
-				}).finally(()=>loading.remove());
+				}).finally(()=>{
+					loading.remove();
+					if(tab==='changes' && !signal.aborted && selection?.id===id)
+						selection.restore(content.querySelector('.kb-workspace-commit textarea'));
+				});
 				if(tab==='remote')this.networkReady=done;
 			};
 			const {panels,getActive}=createPanelTabs(panel,tr('Git 工作区','Git workspace'),tabs,initial,tab=>load(tab));

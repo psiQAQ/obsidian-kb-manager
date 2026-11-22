@@ -7,9 +7,8 @@ import { registerSourceEditor, refreshSourceEditors } from './ui/source-editor.t
 import { attachLibraryStatus } from './ui/library-status.ts';
 import { readGrants } from './git/network-automation.ts';
 import { registerSourceDiff, refreshSourceTabs } from './ui/source-diff.ts';
-import { migrateGitSettings } from './git/settings-migration.ts';
 import { effectivePreferences, readPendingLibraryPreferences, readPreferences } from './preferences.ts';
-import type { GitPreferences, PreferenceStore } from './preferences.ts';
+import type { GitPreferences, Language, PreferenceStore } from './preferences.ts';
 import { identityFile, readManifest, writePreferences } from './kb/identity-core.ts';
 import { readManifestFile, replaceLibraryManifest } from './kb/manifest-disk.ts';
 import { previewPreferenceMigration } from './kb/preference-migration.ts';
@@ -29,6 +28,7 @@ import type { MoveRecord } from './kb/move.ts';
 import { activeVersion } from './ui/versions.ts';
 import { ManagerSettings } from './settings.ts';
 import { ManagerView, managerType } from './ui/manager.ts';
+import { watchExternalLibraryState } from './ui/external-refresh.ts';
 
 import {packText} from './kb/template-pack.ts';
 
@@ -43,17 +43,31 @@ export default class KnowledgeBaseManager extends Plugin {
 	pendingLibraryPreferences:PreferenceStore['libraries']={};
 	grants: Record<string,AutomationGrant> = {};
 	private registeredLocations = new Set<string>();
+	private missingIds=new Map<string,string>();
+	private libraries:Library[]=[];
+	private pendingCatalog:Promise<unknown>=Promise.resolve();
+	private disposed=false;
+	private settingTab?:ManagerSettings;
 	preferences(id?:string){return effectivePreferences(this.prefs,id);}
-	observeLibraries(libraries:Library[]) {
+	get catalog():readonly Library[]{return this.libraries;}
+	private observeLibraries(libraries:Library[]) {
+		for(const lib of libraries){
+			if(!lib.missing){this.missingIds.delete(lib.location);continue;}
+			const previous=this.libraries.find(item=>item.location===lib.location && !item.problem && !item.duplicate)?.identity;
+			if(previous)this.missingIds.set(lib.location,previous.id);
+		}
+		this.libraries=libraries;
 		const overrides:typeof this.prefs.libraries={};
 		this.registeredLocations=new Set(libraries.map(lib=>lib.location));
-		for(const [id,location] of Object.entries(this.known))if(!this.registeredLocations.has(location))delete this.known[id];
+		for(const location of this.missingIds.keys())if(!this.registeredLocations.has(location))this.missingIds.delete(location);
+		this.known={};
 		for(const lib of libraries)if(lib.identity && !lib.duplicate && !lib.problem){
 			this.known[lib.identity.id]=lib.location;
 			overrides[lib.identity.id]=lib.preferences ?? {};
 		}
 		this.prefs.libraries=overrides;
 	}
+	previousLibraryId(location:string){return this.missingIds.get(location);}
 	async saveLibraryPreferences(lib:Library, overrides:Partial<GitPreferences>) {
 		await this.exclusive(lib.location,()=>this.writeLibraryPreferences(lib,overrides));
 	}
@@ -110,10 +124,41 @@ export default class KnowledgeBaseManager extends Plugin {
 			const stored=this.app.loadLocalStorage(key) as Record<string,unknown>|null;
 			if(JSON.stringify(readPendingLibraryPreferences(stored?.pendingLibraryPreferences,undefined))!==JSON.stringify(pendingLibraryPreferences))
 				throw new Error(tr('无法核验本设备暂存的旧版每库设置','Could not verify the legacy library preferences saved on this device'));
-			await this.disk.registry.savePreferences({language:this.prefs.language,defaults:this.prefs.defaults});
 		});
 		this.pendingSave=save.catch(()=>undefined);
 		return save;
+	}
+	saveSharedPreferences(patch:{language?:Language;defaults?:Partial<GitPreferences>;remove?:readonly (keyof GitPreferences)[]}){
+		return this.updateCatalog(async()=>{
+			const prefs=await this.disk.registry.savePreferences(patch);
+			Object.assign(this.prefs,{language:prefs.language,defaults:prefs.defaults});
+		});
+	}
+	private updateCatalog<T>(action:()=>Promise<T>){
+		const update=this.pendingCatalog.then(action);
+		this.pendingCatalog=update.catch(()=>undefined);
+		return update;
+	}
+	refreshCatalog(changed?:ReadonlySet<string>, reloadShared=false){
+		return this.updateCatalog(async()=>{
+			if(this.disposed)return this.libraries;
+			const shared=reloadShared?await this.disk.registry.readSettings():undefined;
+			const libraries=await discover(this.disk,this.config,shared?.paths,
+				changed?{libraries:this.libraries,changed}:undefined);
+			if(this.disposed)return this.libraries;
+			if(shared)Object.assign(this.prefs,{language:shared.prefs.language,defaults:shared.prefs.defaults});
+			this.observeLibraries(libraries);
+			return libraries;
+		});
+	}
+	override async onExternalSettingsChange(){
+		if(this.disposed || !this.disk)return;
+		try {
+			const libraries=await this.refreshCatalog(undefined,true);
+			if(this.disposed)return;
+			this.settingTab?.update();
+			await this.refreshViews(libraries);
+		} catch(error) { if(!this.disposed)new Notice(String(error)); }
 	}
 	async exclusiveGit<T>(location:string, action:()=>Promise<T>){
 		if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
@@ -133,27 +178,28 @@ export default class KnowledgeBaseManager extends Plugin {
 		try { configureGitExecutable(deviceGitPath(this),this.disk.root); }
 		catch (error) { configureGitExecutable('',this.disk.root); new Notice(String(error)); }
 		const saved=await this.loadData() as Partial<Config> & {prefs?:unknown; grants?:Record<string,AutomationGrant>; known?: Record<string,string>; moves?:Record<string,MoveRecord>; saves?:Record<string,SaveRecord>} | null;
-		migrateGitSettings(saved);
 		const device=this.app.loadLocalStorage(this.manifest.id+':device-v3') as (NonNullable<typeof saved> & {pendingLibraryPreferences?:unknown})|null;
 		const state=device ?? saved;
 		this.config={parents:state?.parents ?? [...defaults.parents],templates:state?.templates ?? []};
-		this.prefs=readPreferences(saved?.prefs ?? saved);
-		this.prefs.libraries={};
 		this.pendingLibraryPreferences=readPendingLibraryPreferences(device?.pendingLibraryPreferences,saved);
 		this.grants=readGrants(state?.grants);
 		if(!device)for(const grant of Object.values(this.grants))grant.paused='review';
 		this.moves=Object.fromEntries(Object.entries(state?.moves ?? {}).filter(([,record])=>record.phase!=='complete'));
 		this.saves=state?.saves ?? {};
 		await this.persist();
-		try{this.observeLibraries(await discover(this.disk,this.config));}catch(error){new Notice(String(error));}
+		this.prefs=await this.disk.registry.migratePreferences(saved);
+		try{await this.refreshCatalog();}catch(error){new Notice(String(error));}
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		registerSourceDiff(this);
 		this.updateLanguage();
-		this.addSettingTab(new ManagerSettings(this));
+		this.settingTab=new ManagerSettings(this);
+		this.addSettingTab(this.settingTab);
 		this.ribbon=this.addRibbonIcon('library',tr('打开知识库管理器','Open knowledge base manager'),()=>this.openManager());
 		registerSourceEditor(this);
 		registerAuthorship(this);
 		this.refreshStatus=attachLibraryStatus(this);
+		this.register(()=>{this.disposed=true;});
+		watchExternalLibraryState(this);
 		startAutomation(this);
 		this.app.workspace.onLayoutReady(()=>{
 			if(this.app.workspace.getLeavesOfType(managerType).some(leaf=>leaf.getRoot()!==this.app.workspace.rightSplit)){
@@ -235,12 +281,16 @@ export default class KnowledgeBaseManager extends Plugin {
 		return right.view;
 	}
 	async refresh(){
+		await this.refreshViews(await this.refreshCatalog());
+	}
+	private async refreshViews(libraries:Library[]){
+		if(this.disposed)return;
 		this.updateLanguage();
-		this.observeLibraries(await discover(this.disk,this.config));
 		await refreshSourceTabs(this);
 		refreshAuthorship(this);
 		refreshSourceEditors(this);
 		this.refreshStatus?.();
-		for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render();
+		for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render(undefined,libraries);
 	}
+	refreshStatusBar(){this.refreshStatus?.();}
 }

@@ -16,6 +16,7 @@ import { renderHistoryDetail } from './history-detail.ts';
 import type { HistoryComparisonControl } from './history-detail.ts';
 import { renderHistorySearch } from './history-search.ts';
 import type { HistorySearch } from './history-search.ts';
+import { captureInputSelection } from './input-selection.ts';
 
 export const historyType='knowledge-base-manager-history';
 const batchSize=96;
@@ -60,6 +61,8 @@ class SourceHistory extends ItemView {
 	async setState(state:unknown,result:ViewStateResult){
 		const generation=++this.generation;
 		const previous=this.anchor?.();
+		const input=captureInputSelection(this.searchInput);
+		if(input)this.search.query=input.value;
 		this.dispose?.();
 		this.dispose=undefined;this.anchor=undefined;this.searchInput=undefined;
 		await super.setState(state,result);
@@ -246,6 +249,7 @@ class SourceHistory extends ItemView {
 			const search=renderHistorySearch(searchBar,graph,t,this.search,prefs.historyAuthor,date,live,()=>this.selected,
 				oid=>{void jump(oid).catch(report);},()=>window.focusVisible(),report);
 			this.searchInput=search.search;
+			if(restore)input?.restore(search.search);
 			this.dispose=()=>{window.destroy();search.close();};
 			this.anchor=()=>{
 				const index=Math.floor(list.scrollTop/historyRowHeight);

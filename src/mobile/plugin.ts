@@ -31,7 +31,7 @@ export default class MobilePlugin extends Plugin {
 		const registry=new PluginDataRegistry(configDir,{load:()=>this.loadData(),save:data=>this.saveData(data)});
 		this.ctx={disk,configDir,registry,parents:device.parents,templates:device.templates};
 		if((old || local) && JSON.stringify(local)!==JSON.stringify(device))this.persistDevice(device);
-		if(old)await registry.savePreferences(saved);
+		if(old)this.saved=await registry.migratePreferences(old);
 		this.updateLanguage();
 		const localKey=this.manifest.id+':mobile-identity-key';
 		const existing=this.app.loadLocalStorage(localKey) as unknown;
@@ -61,10 +61,10 @@ export default class MobilePlugin extends Plugin {
 	}
 	async saveConfig(parents:string[],templates:string[],language:string){
 		validateFolderSettings(parents,templates,this.ctx.configDir);
-		const saved={...this.saved,language:readPreferences({language}).language};
+		const next=readPreferences({language}).language;
 		this.persistDevice({...this.device,parents,templates});
 		Object.assign(this.ctx,{parents,templates});
-		await this.ctx.registry.savePreferences(saved);
+		const saved=await this.ctx.registry.savePreferences({language:next});
 		this.saved=saved;this.updateLanguage();await this.refresh();
 	}
 	private persistDevice(device:Device){

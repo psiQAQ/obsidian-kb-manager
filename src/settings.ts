@@ -167,7 +167,8 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 				['输入 #RRGGBB，或用 var(--text-muted) 跟随主题的次要文字颜色。','Enter #RRGGBB or use var(--text-muted) to follow the theme’s muted text color.']);
 			break;
 		case 'views':
-			toggle('refreshSourceControl',['文件变化后自动刷新 Git 状态','Refresh Git status after file changes']);
+			toggle('refreshSourceControl',['自动刷新 Git 状态','Refresh Git status automatically'],
+				['库内文件变化或切回 Obsidian 窗口时检查。','Check after library file changes or when returning to an Obsidian window.']);
 			number('refreshSourceControlTimer',['刷新延时（毫秒）','Refresh delay (milliseconds)'],['最短 500 毫秒。','Minimum 500 milliseconds.']);
 			toggle('tree',['以目录树显示改动','Show changes as a tree']);
 			choice('diffStyle',['差异视图','Diff style'],{split:t('并排','Side by side'),unified:t('统一','Unified')});
@@ -223,13 +224,19 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 			}
 			// Update only controls edited on this page; another open settings surface may have saved other fields.
 			if (executable !== undefined) await saveDeviceGitPath(plugin,executable);
-			const merged = {...source()};
+			const merged:Partial<GitPreferences> = {};
+			const remove:(keyof GitPreferences)[]=[];
 			for (const key of touched) {
 				if (key in draft) Object.assign(merged,{[key]:draft[key]});
-				else delete merged[key];
+				else remove.push(key);
 			}
-			if (id && lib) await plugin.saveLibraryPreferences(lib,merged);
-			else plugin.prefs.defaults = merged;
+			if (id && lib && touched.size) {
+				const overrides={...source(),...merged};
+				for(const key of remove)delete overrides[key];
+				await plugin.saveLibraryPreferences(lib,overrides);
+			} else if (!id && touched.size) {
+				await plugin.saveSharedPreferences({defaults:merged,remove});
+			}
 		});
 	}});
 	return items;
@@ -309,6 +316,7 @@ function folderSettings(plugin: KnowledgeBaseManager, refresh: () => void): Sett
 				validateFolderSettings(parents,templates,plugin.disk.configDir);
 				for (const name of [...parents,...templates]) await plugin.disk.folder(name,true);
 				Object.assign(plugin.config,{parents,templates});
+				await plugin.persist();
 			});
 		},
 	});
@@ -320,7 +328,7 @@ function renderSave(plugin: KnowledgeBaseManager, setting: Setting, refresh: () 
 		.onClick(async () => {
 			button.setDisabled(true);
 			try {
-				await apply(); await plugin.persist(); await plugin.refresh(); refresh();
+				await apply(); await plugin.refresh(); refresh();
 				new Notice(plugin.t('设置已保存','Settings saved'));
 			} catch (error) { new Notice(String(error)); }
 			finally { button.setDisabled(false); }
@@ -343,8 +351,7 @@ export class ManagerSettings extends PluginSettingTab {
 				setting.addDropdown(input => input
 					.addOptions({system:t('跟随 Obsidian','Follow Obsidian'),zh:'简体中文',en:'English'})
 					.setValue(plugin.prefs.language).onChange(async value => {
-						plugin.prefs.language = value as Language;
-						try { await plugin.persist(); await plugin.refresh(); refresh(); }
+						try { await plugin.saveSharedPreferences({language:value as Language}); await plugin.refresh(); refresh(); }
 						catch (error) { new Notice(String(error)); }
 					}));
 			},

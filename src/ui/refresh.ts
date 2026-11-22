@@ -9,12 +9,13 @@ export function watchLibraryChanges(plugin: KnowledgeBaseManager, lib: Library, 
 	const prefs = plugin.preferences(lib.identity.id);
 	if (!prefs.refreshSourceControl) return;
 	const vault = plugin.app.vault;
+	const owner=panel.win;
 	const inScope = (path: string) => path === lib.location || path.startsWith(lib.location + '/');
 	let timer: number | undefined;
 	let pending = false;
 	const schedule = () => {
-		window.clearTimeout(timer);
-		timer = window.setTimeout(() => {
+		owner.clearTimeout(timer);
+		timer = owner.setTimeout(() => {
 			if (signal.aborted || !panel.isConnected) return;
 			const focus = panel.ownerDocument.activeElement;
 			// Preserve the selection and focus while someone types a commit message.
@@ -32,7 +33,7 @@ export function watchLibraryChanges(plugin: KnowledgeBaseManager, lib: Library, 
 	const events = [vault.on('create',change), vault.on('modify',change), vault.on('delete',change), vault.on('rename',change)];
 	panel.addEventListener('focusout',resume);
 	signal.addEventListener('abort',() => {
-		window.clearTimeout(timer);
+		owner.clearTimeout(timer);
 		for (const event of events) vault.offref(event);
 		panel.removeEventListener('focusout',resume);
 	},{once:true});

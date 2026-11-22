@@ -16,9 +16,20 @@ import { assertGitEnabled, pluginNotice } from './device.ts';
 
 const diffType='knowledge-base-manager-file-diff';
 const snapshotType='knowledge-base-manager-file-snapshot';
-export async function refreshSourceTabs(plugin:KnowledgeBaseManager){
-	for(const type of [diffType,historyType,snapshotType])for(const leaf of plugin.app.workspace.getLeavesOfType(type)){
+const sourceTypes=()=>[diffType,historyType,snapshotType];
+
+export function sourceTabId(leaf:WorkspaceLeaf) {
+	const view=leaf.getViewState();
+	if(!sourceTypes().includes(view.type))return;
+	const id:unknown=view.state?.id;
+	return typeof id==='string'?id:undefined;
+}
+
+export async function refreshSourceTabs(plugin:KnowledgeBaseManager,ids?:ReadonlySet<string>,owner?:Window){
+	for(const type of sourceTypes())for(const leaf of plugin.app.workspace.getLeavesOfType(type)){
 		if(leaf.view.getViewType()!==type)continue;
+		if(owner && leaf.view.containerEl.win!==owner)continue;
+		if(ids && !ids.has(sourceTabId(leaf) ?? ''))continue;
 		await leaf.view.setState(leaf.view.getState(),{history:false}).catch(error=>pluginNotice(plugin,'error',String(error)));
 	}
 }
