@@ -58,7 +58,9 @@ export function watchExternalLibraryState(plugin:KnowledgeBaseManager){
 			void updateManifest(paths).catch(report);
 		},120);
 	};
-	for(const event of [vault.on('create',manifest),vault.on('modify',manifest),vault.on('delete',manifest),vault.on('rename',manifest)])
+	// Obsidian emits create for existing files during startup. The initial catalog already reads them.
+	workspace.onLayoutReady(()=>{if(!disposed)plugin.registerEvent(vault.on('create',manifest));});
+	for(const event of [vault.on('modify',manifest),vault.on('delete',manifest),vault.on('rename',manifest)])
 		plugin.registerEvent(event);
 
 	function watch(owner:Window,container?:WorkspaceContainer){
