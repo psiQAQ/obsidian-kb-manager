@@ -9,7 +9,7 @@ import { existingDirectory } from '../fs/paths.ts';
 import { guardGit } from '../git/guard.ts';
 import { repository } from '../git/repository.ts';
 import { ancestorWarnings } from './create.ts';
-import { discover, identityFile, parseIdentity, recheck, writeIdentity } from './catalog.ts';
+import { discover, identityFile, parseIdentity, readManifest, recheck, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
 import { examine } from './maintenance.ts';
 import type { Repair, VisibleFiles } from './maintenance.ts';
@@ -101,8 +101,8 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		throw new Error(tr('无效的库目录或文件系统','Invalid library folder or filesystem'));
 	const manifestPath=path.join(current,identityFile);
 	const {raw:manifest,signature}=await readManifestFile(manifestPath);
-	const identity=parseIdentity(manifest);
-	if(identity.archived || identity.id!==record.id || (await gitStamp(current))!==record.git)
+	const {identity,templateFiles}=readManifest(manifest);
+	if(!identity || identity.archived || identity.id!==record.id || (await gitStamp(current))!==record.git)
 		throw new Error(tr('知识库已归档，或 ID、HEAD、索引变化，请人工复核','The library was archived, or its ID, HEAD or index changed. Review the library before continuing.'));
 	const assertUnreserved=async()=>{
 		const allowed=current===destination && record.phase==='moved'?[record.source,record.destination]:[record.source];
@@ -136,7 +136,8 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}
-	const references=await prepareReferenceWrites(disk,config,record,libraries,current,current===destination);
+	const references=await prepareReferenceWrites(disk,config,record,libraries,current,
+		{location:record.source,identity,templateFiles},current===destination);
 	await disk.registry.assertWritable();
 	if(current!==destination){
 		await assertUnreserved();

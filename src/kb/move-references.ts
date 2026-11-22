@@ -9,17 +9,25 @@ import type { VaultDisk } from '../fs/vault.ts';
 import { guardGit } from '../git/guard.ts';
 import { compareRegistryPaths, sameOrBelow } from '../registry/paths.ts';
 import type { Config, Library } from './catalog.ts';
+import { managedBaseFile, moveBaseFields } from './move-base-paths.ts';
+import type { BaseFieldOwner, MoveBaseToken } from './move-base-paths.ts';
 import { moveVaultPath, relocateCanvasReferences, relocateMarkdownReference } from './move-link-text.ts';
 
 interface Scope { source: string; destination: string }
 interface Owner { id: string; location: string }
 export interface MoveToken { offset: number; original: string; target: string }
+export type MoveLinks = { kind: 'markdown'; tokens: MoveToken[]; base?: MoveBaseToken[] } |
+	{ kind: 'canvas'; targets: string[] };
 export interface ReferenceEdit {
 	file: string;
 	owner: Owner | null;
 	before: string;
 	result: string;
-	references: { kind: 'markdown'; tokens: MoveToken[] } | { kind: 'canvas'; targets: string[] };
+	references: MoveLinks | { kind: 'base'; base: MoveBaseToken[] };
+}
+
+export function baseMoveTokens(references: ReferenceEdit['references']) {
+	return references.kind==='canvas' ? [] : references.base ?? [];
 }
 
 export function affectedByMove(file: string, target: string, scope: Scope): boolean {
@@ -74,14 +82,27 @@ function invalidEdit(file: string) {
 
 function transform(text: string, file: string, scope: Scope, references: ReferenceEdit['references']) {
 	if (references.kind==='canvas') return relocateCanvasReferences(text,scope.source,scope.destination,references.targets);
+	const base=baseMoveTokens(references);
+	const fields=base.length ? new Map(moveBaseFields(text,file,scope,false).fields.map(field=>[field.token.offset,field])) : undefined;
+	const patches=base.map(token=>{
+		const field=fields?.get(token.offset);
+		if (!field || field.token.original!==token.original) throw invalidEdit(file);
+		return {...token,replacement:field.replacement};
+	});
+	if (references.kind==='markdown') {
+		for (const token of references.tokens) {
+			const replacement=relocateMarkdownReference(token.original,file,token.target,scope.source,scope.destination);
+			if (!replacement || replacement===token.original) throw invalidEdit(file);
+			patches.push({...token,replacement});
+		}
+	}
 	let next=text, end=text.length;
-	for (const token of references.tokens) {
-		if (token.offset+token.original.length>end || text.slice(token.offset,token.offset+token.original.length)!==token.original)
+	for (const patch of patches.sort((a,b)=>b.offset-a.offset)) {
+		const stop=patch.offset+patch.original.length;
+		if (stop>end || text.slice(patch.offset,stop)!==patch.original)
 			throw invalidEdit(file);
-		const replacement=relocateMarkdownReference(token.original,file,token.target,scope.source,scope.destination);
-		if (!replacement || replacement===token.original) throw invalidEdit(file);
-		next=next.slice(0,token.offset)+replacement+next.slice(token.offset+token.original.length);
-		end=token.offset;
+		next=next.slice(0,patch.offset)+patch.replacement+next.slice(stop);
+		end=patch.offset;
 	}
 	return next;
 }
@@ -110,13 +131,18 @@ function assertEdit(edit: ReferenceEdit, disk: VaultDisk, config: Config, record
 	if (moving && record.changes.some(change=>record.source+'/'+change.file===edit.file)) throw invalidEdit(edit.file);
 	if (![edit.before,edit.result].every(value=>typeof value==='string' && /^[a-f0-9]{64}$/u.test(value)) ||
 		edit.before===edit.result || !edit.references) throw invalidEdit(edit.file);
+	const validToken=(token: MoveBaseToken)=>token && typeof token.original==='string' && !!token.original &&
+		Number.isSafeInteger(token.offset) && token.offset>=0;
+	const validBase=(tokens: MoveBaseToken[])=>Array.isArray(tokens) && tokens.length && tokens.every(validToken);
 	if (edit.references.kind==='markdown' && edit.file.toLowerCase().endsWith('.md') &&
-		Array.isArray(edit.references.tokens) && edit.references.tokens.length) {
+		Array.isArray(edit.references.tokens) && (edit.references.tokens.length || edit.references.base!==undefined) &&
+		(edit.references.base===undefined || validBase(edit.references.base))) {
 		for (const token of edit.references.tokens) {
-			if (!token || typeof token.target!=='string' || typeof token.original!=='string' || !token.original ||
-				!Number.isSafeInteger(token.offset) || token.offset<0 || !affectedByMove(edit.file,token.target,record)) throw invalidEdit(edit.file);
+			if (!validToken(token) || typeof token.target!=='string' || !affectedByMove(edit.file,token.target,record)) throw invalidEdit(edit.file);
 			disk.validate(token.target);
 		}
+	} else if (edit.references.kind==='base' && edit.file.toLowerCase().endsWith('.base')) {
+		if (!validBase(edit.references.base)) throw invalidEdit(edit.file);
 	} else if (edit.references.kind==='canvas' && edit.file.toLowerCase().endsWith('.canvas') &&
 		Array.isArray(edit.references.targets) && edit.references.targets.length) {
 		for (const path of edit.references.targets) {
@@ -130,7 +156,7 @@ function assertEdit(edit: ReferenceEdit, disk: VaultDisk, config: Config, record
 // Re-derive text from verified file contents. Recovery persists offsets and known
 // targets, never an executable replacement or a second copy of every document.
 export async function prepareReferenceWrites(disk: VaultDisk, config: Config, record: MoveContext,
-	libraries: readonly Library[], currentSource: string, moved: boolean) {
+	libraries: readonly Library[], currentSource: string, movingLibrary: BaseFieldOwner, moved: boolean) {
 	if (record.references===undefined) return [];
 	if (!Array.isArray(record.references)) throw invalidEdit(record.source);
 	const writes: { file: string; before: string; after: string }[] = [];
@@ -141,6 +167,8 @@ export async function prepareReferenceWrites(disk: VaultDisk, config: Config, re
 		seen.add(key(edit.file));
 		const inside=assertEdit(edit,disk,config,record);
 		const owner=inside ? undefined : referenceOwner(libraries,edit.file);
+		if (baseMoveTokens(edit.references).length && managedBaseFile(inside ? movingLibrary : owner,edit.file))
+			throw invalidEdit(edit.file);
 		const expectedLocation=inside ? record.source : owner?.location;
 		const expectedId=inside ? record.id : owner?.identity?.id;
 		if (expectedLocation ? !edit.owner || edit.owner.location!==expectedLocation || edit.owner.id!==expectedId : edit.owner!==null)
@@ -154,7 +182,8 @@ export async function prepareReferenceWrites(disk: VaultDisk, config: Config, re
 		const signature=digest(text);
 		if (moved && signature===edit.result) continue;
 		if (signature!==edit.before) throw invalidEdit(edit.file);
-		const targets=edit.references.kind==='canvas' ? edit.references.targets : edit.references.tokens.map(token=>token.target);
+		const targets=edit.references.kind==='canvas' ? edit.references.targets :
+			edit.references.kind==='markdown' ? edit.references.tokens.map(token=>token.target) : [];
 		for (const target of new Set<string>(targets)) {
 			const stat=sameOrBelow(target,record.source) ? await fs.lstat(await resolvedSourceItem(currentSource,target,record.source)) :
 				await fs.lstat(await disk.path(target));

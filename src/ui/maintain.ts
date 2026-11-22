@@ -16,7 +16,7 @@ import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { changeActions, changeComparison, panelGroup } from './change-preview.ts';
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
-import { planMoveReferences, selectMoveReferences, verifyMoveReferences } from './move-links.ts';
+import { moveReferencesMatch, planMoveReferences, selectMoveReferences, verifyMoveReferences } from './move-links.ts';
 import { showAddedIgnoreRules } from './registry-ignore.ts';
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
@@ -278,10 +278,8 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 			const stale=()=>new Error(tr('预览已变化，请重新预览',"Preview has changed. Open a new preview."));
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw stale();
 			if(selected.length){
-				const latest=await planMoveReferences(plugin,fresh);
-				const byPath=new Map(latest.groups.flatMap(group=>group.files.map(edit=>[edit.file,edit] as const)));
+				if(!await moveReferencesMatch(plugin,fresh,selected))throw stale();
 				for(const edit of selected){
-					if(JSON.stringify(byPath.get(edit.file))!==JSON.stringify(edit))throw stale();
 					const file=plugin.app.vault.getFileByPath(edit.file);
 					const editors=file ? editorContents(plugin,file) : [];
 					if(editors.length)verifyEditors(edit.file,await readMoveReference(plugin.disk,edit.file),editors);

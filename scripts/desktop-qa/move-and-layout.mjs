@@ -6,11 +6,15 @@ import {managerType, pluginId} from '../desktop-qa-host.mjs';
 export async function verifyMoveAndLayout({fixture,scenario,command,observe,modalButton,libraryMenu,evaluate}) {
 	await scenario('moveWhileEditing',async()=>{
 		const untouched='[[Alpha/Detail#Detail|leave this file alone]]\n';
+		const baseFilters='filters:\n  and:\n    - file.inFolder("Alpha/Notes")\n    - file.path.startsWith("Alpha/Other/")\nviews:\n  - type: table\n    name: Personal\n';
+		const embeddedBase='[[Alpha/Detail#Detail|section]]\n\n```base\n'+baseFilters+'```\n';
 		const sources={
 			'Alpha/Inside.md':'[[Alpha/Detail#Detail|section]]\n',
 			'Beta/References.md':'[[Alpha/Detail#^place|paragraph]]\n![[Alpha/pic.svg|40]]\n[details](../Alpha/Detail.md#Detail)\n',
 			'Beta/Links.canvas':'{"nodes":[{"id":"a","type":"file","file":"Alpha/Detail.md","x":0,"y":0,"width":200,"height":80}],"edges":[]}\n',
 			'Keep.md':untouched,
+			'Alpha/Personal.base':baseFilters,
+			'Alpha/Embedded.md':embeddedBase,
 			'Same name.md':'[[Detail|ambiguous short name]]\n',
 		};
 		await evaluate(async sources=>{
@@ -41,6 +45,20 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 		assert.deepEqual(groups,{Alpha:true,Beta:false,'Unregistered Vault files':false});
 		assert(await evaluate(()=>[...document.querySelectorAll('.modal details li')].some(el=>el.textContent.includes('Same name.md') && el.textContent.includes('ambiguous wikilink'))));
 		await evaluate(()=>document.querySelector('.kb-move-reference-group input[aria-label="Beta"]').click());
+		const selectedFields=await evaluate(()=>{
+			const fields=[...document.querySelectorAll('input[data-base-file]')];
+			const selections=fields.filter(input=>input.dataset.basePath==='Alpha/Notes');
+			const initial=fields.map(input=>input.checked);
+			for(const input of selections){
+				const section=input.closest('details');
+				if(section && !section.open)section.querySelector('summary').click();
+				if(!input.checkVisibility())throw new Error('Base path choice is not visible in the expanded section');
+				input.click();
+			}
+			return {initial,files:selections.map(input=>input.dataset.baseFile).sort()};
+		});
+		assert.deepEqual(selectedFields.initial,[false,false,false,false]);
+		assert.deepEqual(selectedFields.files,['Alpha/Embedded.md','Alpha/Personal.base']);
 		await modalButton('Move entire directory');
 		const moveState=id=>{
 			const plugin=window.app.plugins.getPlugin(id);
@@ -63,6 +81,8 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 		assert.equal(await read('Beta/References.md'),sources['Beta/References.md'].replaceAll('Alpha/','Renamed/'));
 		assert.equal(await read('Beta/Links.canvas'),sources['Beta/Links.canvas'].replace('Alpha/','Renamed/'));
 		assert.equal(await read('Renamed/Inside.md'),sources['Alpha/Inside.md'].replace('Alpha/','Renamed/'));
+		assert.equal(await read('Renamed/Personal.base'),baseFilters.replace('Alpha/Notes','Renamed/Notes'));
+		assert.equal(await read('Renamed/Embedded.md'),embeddedBase.replace('Alpha/Notes','Renamed/Notes').replace('Alpha/Detail','Renamed/Detail'));
 		await observe('resolved destinations after the rename',()=>{
 			const links=window.app.metadataCache.resolvedLinks;
 			return links['Renamed/Inside.md']?.['Renamed/Detail.md'] && links['Beta/References.md']?.['Renamed/Detail.md']
