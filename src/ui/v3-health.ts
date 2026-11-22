@@ -27,13 +27,14 @@ const checkLabels: Record<string,readonly [string,string]> = {
 };
 const checkName=(id:string,fallback:string)=>checkLabels[id]?tr(...checkLabels[id]):fallback;
 
-function linkOptions(plugin:KnowledgeBaseManager, location:string, registeredPaths:readonly string[], allVault:boolean):
+function linkOptions(plugin:KnowledgeBaseManager, location:string, registeredPaths:readonly string[], allVault:boolean, signal:AbortSignal):
 	Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'|'linkCandidateScope'|'linkTargetVisibility'> {
 	const {vault,metadataCache}=plugin.app;
 	const vaultCandidates=linkCandidateIndex(function* () {for(const file of vault.getFiles())yield file.path;});
 	function* candidatePaths(folders:TFolder[]) {
 		const seen=new Set<string>();
 		while(folders.length){
+			signal.throwIfAborted();
 			const folder=folders.pop()!;
 			if(folder.path===location || seen.has(folder.path))continue;
 			seen.add(folder.path);
@@ -47,13 +48,14 @@ function linkOptions(plugin:KnowledgeBaseManager, location:string, registeredPat
 		const folders:TFolder[]=[];
 		const missingLibraries:string[]=[],unavailableLibraries:string[]=[];
 		for(const path of registeredPaths){
+			signal.throwIfAborted();
 			if(path===location)continue;
 			const folder=vault.getFolderByPath(path);
 			if(folder){folders.push(folder);continue;}
 			try {
 				const status=await statIfPresent(await plugin.disk.path(path));
 				(status?.isDirectory() ? unavailableLibraries : missingLibraries).push(path);
-			} catch {unavailableLibraries.push(path);}
+			} catch {signal.throwIfAborted();unavailableLibraries.push(path);}
 		}
 		return {lookup:linkCandidateIndex(()=>candidatePaths(folders)),missingLibraries,unavailableLibraries};
 	}
@@ -99,6 +101,8 @@ function statusInfo(status:string):{label:string;color:string;icon:string} {
 		case 'partial': return {label:tr('部分完成','Partial'),color:'partial',icon:'circle-dashed'};
 		case 'info': return {label:tr('提示','Info'),color:'info',icon:'info'};
 		case 'skipped': return {label:tr('已跳过','Skipped'),color:'neutral',icon:'circle-minus'};
+		case 'cancelled': return {label:tr('已取消','Cancelled'),color:'neutral',icon:'circle-stop'};
+		case 'not-run': return {label:tr('未运行','Not run'),color:'neutral',icon:'circle'};
 		default: return {label:tr('尚未运行','Not run'),color:'neutral',icon:'circle'};
 	}
 }
@@ -154,8 +158,9 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		log.createEl('code',{cls:'kb-check-location',text:report.logPath});
 	}
 	if(report.logError)results.createEl('p',{cls:'kb-git-error',text:tr('日志保存失败','Could not save log')+' · '+report.logError});
+	if(report.status==='cancelled')results.createEl('p',{text:tr('已保留完成的检查结果。本次取消未写入历史。','Completed results are shown here. This cancelled run was not saved to history.')});
 	const scope=results.createEl('details',{cls:'kb-v3-detail'});
-	scope.open=report.checks.some(check=>check.status==='partial'||check.status==='failed');
+	scope.open=report.status==='cancelled'||report.checks.some(check=>check.status==='partial'||check.status==='failed');
 	scope.createEl('summary',{text:tr('各项检查范围','Coverage by check')});
 	for(const check of report.checks){
 		const row=scope.createDiv({cls:'kb-check-scope'});
@@ -218,19 +223,57 @@ export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
 	dialog.open();
 }
 
+const activeDialogs=new WeakMap<KnowledgeBaseManager,Set<HealthDialog>>();
+
+class HealthDialog extends V3Dialog {
+	readonly lifetime=new AbortController();
+	private opened=false;
+	private readonly peers:Set<HealthDialog>;
+
+	constructor(plugin:KnowledgeBaseManager){
+		super(plugin.app,tr('检验知识库','Check library'));
+		let peers=activeDialogs.get(plugin);
+		if(!peers){
+			const dialogs=new Set<HealthDialog>();
+			activeDialogs.set(plugin,dialogs);
+			plugin.register(()=>{for(const dialog of dialogs)dialog.dispose();});
+			peers=dialogs;
+		}
+		this.peers=peers;
+		peers.add(this);
+	}
+	onOpen(){this.opened=true;}
+	onClose(){
+		this.opened=false;
+		this.dispose();
+		super.onClose();
+	}
+	dispose(){
+		this.lifetime.abort();
+		this.peers.delete(this);
+		if(this.opened)this.close();
+	}
+}
+
 export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
-	const root=await plugin.disk.path(lib.location);
-	const dialog=new V3Dialog(plugin.app,tr('检验知识库','Check library'));
+	const dialog=new HealthDialog(plugin);
+	const lifetime=dialog.lifetime.signal;
+	let root:string;
+	try {root=await plugin.disk.path(lib.location);}
+	catch(error){dialog.dispose();throw error;}
+	if(lifetime.aborted)return;
 	dialog.modalEl.addClass('kb-v3-health');
 	dialog.facts([[tr('范围','Scope'),lib.location],[tr('模板','Template'),lib.identity?`${lib.identity.template.id} · ${lib.identity.template.version}`:tr('未知','Unknown')]]);
 	const tabs=createPanelTabs(dialog.contentEl,tr('检验面板','Library checks'),[
 		{id:'run',label:tr('运行检验','Run checks')},{id:'history',label:tr('历史报告','History')},{id:'tools',label:tr('检验工具','Tools')},
-	] as const,'run',page=>{if(page==='history')void loadHistory();});
+	] as const,'run',page=>{if(page==='history')void loadHistory();else history?.abort();});
 	const selected=new Set<string>();
 	const official=officialCheckDigests();
 	const commonSources=commonRuleSources();
 	let installed=false;
-	let running=false;
+	let running:AbortController|undefined;
+	let history:AbortController|undefined;
+	lifetime.addEventListener('abort',()=>{running?.abort();history?.abort();},{once:true});
 	let custom=false;
 	let allVaultCandidates=false;
 	let candidateScope:HTMLDivElement|undefined;
@@ -244,7 +287,10 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const runRow=new Setting(form).setClass('kb-controls-only');
 	const errorEl=form.createEl('p',{cls:'kb-git-error',attr:{role:'alert'}});
 	const runButton=new ButtonComponent(runRow.controlEl).setButtonText(tr('开始检验','Start check')).setCta().onClick(()=>{
-		void run(custom?[...selected]:'all').catch((e:unknown)=>{errorEl.setText(String(e));});
+		void run(custom?[...selected]:'all').catch((e:unknown)=>{if(!lifetime.aborted)errorEl.setText(String(e));});
+	});
+	const cancel=new ButtonComponent(runRow.controlEl).setButtonText(tr('取消检验','Cancel check')).onClick(()=>{
+		running?.abort();update();
 	});
 	const output=tabs.panels.run.createDiv({cls:'kb-v3-check-output',attr:{'aria-live':'polite'}});
 	const back=new ButtonComponent(tabs.panels.run).setButtonText(tr('重新选择检查项','Choose checks again')).onClick(()=>{
@@ -256,15 +302,16 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const updateRow=new Setting(tools).setName(tr('本库检验工具','Installed check kit')).addButton(b=>b
 		.setButtonText(tr('查看版本与差异','Review version and changes')).onClick(()=>{void showCheckKitUpdate(plugin,lib.location,renderChoices).catch((e:unknown)=>new Notice(String(e)));}));
 	new Setting(tools).setName(tr('导出离线入口','Export offline runner')).addButton(b=>b.setButtonText(tr('选择保存位置','Choose a destination')).onClick(()=>exportDiagnosticRunner(plugin)));
-	let historyRequest=0;
 	async function loadHistory(){
-		const request=++historyRequest;
+		history?.abort();
+		const request=new AbortController();
+		history=request;
 		const panel=tabs.panels.history;
 		panel.empty();
 		panel.createEl('p',{text:tr('正在读取报告…','Loading reports…')});
 		try {
-			const reports=await listDiagnosticHistory(root);
-			if(request!==historyRequest)return;
+			const reports=await listDiagnosticHistory(root,request.signal);
+			if(request.signal.aborted)return;
 			panel.empty();
 			if(!reports.length)panel.createEl('p',{text:tr('尚无检验报告。运行一次检验后可在这里查看。','Run a check to see its report here.')});
 			for(const report of reports){
@@ -276,7 +323,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 					reportView(panel.createDiv(),report,plugin,lib);
 				}));
 			}
-		} catch(e){if(request===historyRequest)panel.setText(String(e));}
+		} catch(e){if(!request.signal.aborted)panel.setText(String(e));}
 	}
 	function display(report:Report){
 		reportView(output,report,plugin,lib);form.hidden=true;back.buttonEl.hidden=false;
@@ -284,10 +331,13 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		if(tabs.getActive()==='run')output.querySelector('h3')?.focus();
 	}
 	function update(){
-		runButton.setDisabled(running||(custom&&!selected.size));
+		runButton.setDisabled(!!running||(custom&&!selected.size));
 		runButton.setButtonText(running?tr('正在检验…','Running…'):tr('开始检验','Start check'));
-		for(const control of controls) control.setDisabled(running);
-		form.querySelectorAll('input,select').forEach(field=>{(field as HTMLInputElement).disabled=running;});
+		cancel.buttonEl.hidden=!running;
+		cancel.setDisabled(running?.signal.aborted ?? false);
+		cancel.setButtonText(running?.signal.aborted ? tr('正在取消…','Cancelling…') : tr('取消检验','Cancel check'));
+		for(const control of controls) control.setDisabled(!!running);
+		form.querySelectorAll('input,select').forEach(field=>{(field as HTMLInputElement).disabled=!!running;});
 		choices.hidden=!custom;
 		if(candidateScope)candidateScope.hidden=!selected.has(portabilityCheck.id);
 		updateRow.settingEl.hidden=!installed;
@@ -295,8 +345,10 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			tr('此库沿用内置通用检验。可导出独立入口供命令行使用。','This library uses built-in general checks. Export a runner for command-line use.'));
 	}
 	async function renderChoices(){
+		if(lifetime.aborted)return;
 		choices.empty();controls.length=0;candidateScope=undefined;
-		const [common,special]=await Promise.all([listCommonChecks(root),listSpecialChecks(root)]);
+		const [common,special]=await Promise.all([listCommonChecks(root,lifetime),listSpecialChecks(root,lifetime)]);
+		if(lifetime.aborted)return;
 		installed=common.mode==='kit';
 		const general=installed?common.checks:[...generalChecks,portabilityCheck];
 		guidance.setText(tr('常规检查 '+generalChecks.length+' 项，模板专项 '+special.checks.length+' 项。可移植性和脚本授权见「自选检查项」。',generalChecks.length+' general checks and '+special.checks.length+' template checks. Choose individual checks for portability or script approval.'));
@@ -344,21 +396,27 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		update();
 	}
 	async function run(checks:readonly string[]|'all'){
-		if(running)return;
-		running=true;errorEl.empty();update();
+		if(running||lifetime.aborted)return;
+		running=new AbortController();
+		const {signal}=running;
+		errorEl.empty();update();
 		output.empty();
 		output.createEl('p',{text:tr('正在检验…','Running checks…'),attr:{role:'status'}});
 		try{
 			const registry=await readVaultRegistry(plugin.disk).catch(()=>undefined);
 			const report=await runDiagnostics({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,
-				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,
-				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin,lib.location,registry?.paths ?? [],allVaultCandidates)});
-			display(report);
+				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,signal,
+				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin,lib.location,registry?.paths ?? [],allVaultCandidates,signal)});
+			if(!lifetime.aborted)display(report);
 		} catch(error) {
-			output.empty();
+			if(!lifetime.aborted)output.empty();
 			throw error;
-		} finally {running=false;update();}
+		} finally {running=undefined;if(!lifetime.aborted)update();}
 	}
-	await renderChoices();
-	dialog.open();
+	try {
+		await renderChoices();
+		if(!lifetime.aborted)dialog.open();
+	} catch(error) {
+		if(!lifetime.aborted){dialog.dispose();throw error;}
+	}
 }

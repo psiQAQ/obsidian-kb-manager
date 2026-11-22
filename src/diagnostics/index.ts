@@ -6,7 +6,7 @@ import {commonEvidence} from './common-evidence.ts';
 import {addReason} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
-import {checkContext, inventory, libraryLocation, manifestSnapshot, templateSnapshot} from './snapshot.ts';
+import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelectedTemplateScripts, templateSnapshot} from './snapshot.ts';
 import {runSpecial} from './special.ts';
 import {inspectBases, inspectBindings, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
@@ -18,14 +18,17 @@ export {commonCheckTrusted, listCommonChecks, readDiagnosticScript} from './comm
 export {listDiagnosticHistory} from './history.ts';
 export type * from './types.ts';
 
-export async function listSpecialChecks(libraryRoot: string): Promise<{template?: TemplateIdentity; checks: SpecialCheck[]; reason?: string}> {
+export async function listSpecialChecks(libraryRoot: string, signal?: AbortSignal): Promise<{template?: TemplateIdentity; checks: SpecialCheck[]; reason?: string}> {
 	try {
-		const {root} = await libraryLocation({libraryRoot});
-		const list = await templateSnapshot(root, true);
+		const {root} = await libraryLocation({libraryRoot, signal});
+		const list = await templateSnapshot(root, true, signal);
 		const template = list.template ? {id: list.template.id, version: list.template.version} : undefined;
 		return {template, checks: list.checks.map(({id,name,path,description,digest,reason}) => ({id,name,path,description,digest,reason})),
 			reason: list.reason ?? (list.missing ? tr('本库未配置模板专项检查。','This library has no template checks configured.') : undefined)};
-	} catch {return {checks: [], reason: tr('无法访问知识库根目录。','Could not access the library folder.')};}
+	} catch {
+		signal?.throwIfAborted();
+		return {checks: [], reason: tr('无法访问知识库根目录。','Could not access the library folder.')};
+	}
 }
 
 function aggregate(checks: DiagnosticCheckResult[]): DiagnosticStatus {
@@ -44,6 +47,11 @@ function failure(check: DiagnosticCheckResult, code: string, message: string) {
 }
 
 export async function runDiagnostics(options: DiagnosticOptions): Promise<DiagnosticReport> {
+	const {signal, selected} = options;
+	const all = !selected || selected === 'all';
+	const names = new Map([...generalChecks, portabilityCheck].map(rule => [rule.id as string,rule.name]));
+	const active = all ? generalChecks.map(item => item.id as string) : [...new Set(selected)];
+	const describe = (id: string) => ({id,name:names.get(id) ?? tr('专项检查','Template check')});
 	const startedAt = new Date().toISOString();
 	const report: DiagnosticReport = {schemaVersion:1, runId:randomUUID(), startedAt, finishedAt:startedAt,
 		environment: options.resolveLink ? 'desktop' : 'offline', library:{}, status:'skipped', checks:[]};
@@ -52,23 +60,30 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const located = await libraryLocation(options);
 		location = located;
 		const {root, relative, vault, configDir, identifiedVault} = located;
-		const selected = options.selected;
-		const all = !selected || selected === 'all';
 		const needsScripts = all || selected.some(id => !generalIds.has(id));
-		const [manifest, template, found] = await Promise.all([manifestSnapshot(root), templateSnapshot(root, needsScripts), inventory(root, configDir)]);
+		const template = await templateSnapshot(root, false, signal);
+		const specials = new Map(template.checks.map(check => [check.id,check]));
+		for (const check of specials.values()) names.set(check.id,check.name);
+		if (all) active.push(...specials.keys());
+		if (needsScripts) await readSelectedTemplateScripts(root, template, active, signal);
+		const manifest = await manifestSnapshot(root, signal);
 		const identity = manifest.parsed?.identity;
 		report.library = {id:identity?.id, template:template.template ? {id:template.template.id, version:template.template.version} : identity?.template};
+		const found = await inventory(root, configDir, signal);
 		const dirs = new Set(template.template?.pageTemplates ?? []);
 		if (manifest.parsed?.mapping?.templates) dirs.add(manifest.parsed.mapping.templates);
 		const templateDirs = [...dirs];
-		const specials = new Map(template.checks.map(check => [check.id,check]));
-		const available = new Map([...generalChecks, portabilityCheck].map(rule => [rule.id as string,rule]));
-		const active = all ? [...generalChecks.map(item => item.id), ...specials.keys()] : [...new Set(selected)];
-		const checks = new Map(active.map(id => [id, result({id,name:available.get(id)?.name ?? specials.get(id)?.name ?? tr('专项检查','Template check')})]));
-		const common = await commonSnapshot(root,manifest.checkKit,active);
+		const checks = new Map(active.map(id => [id, result(describe(id))]));
+		const common = await commonSnapshot(root,manifest.checkKit,active,signal);
 		const commonRules = new Map(common?.map(rule => [rule.id,rule]));
 		let readCommonEvidence: ReturnType<typeof commonEvidence> | undefined;
 		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
+		const completed = new Set<string>();
+		const push = (check: DiagnosticCheckResult) => {
+			signal?.throwIfAborted();
+			completed.add(check.id);
+			report.checks.push(settle(check));
+		};
 		if (!common) {
 			const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
 			if (links.portability && options.linkCandidateScope) {
@@ -82,50 +97,81 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 			}
 			if (Object.values(links).some(Boolean)) {
 				try {await inspectLinks(linkOptions, found, root, relative, links);}
-				catch {for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));}
+				catch {
+					signal?.throwIfAborted();
+					for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));
+				}
+				if (links.links) push(links.links);
+				if (links.anchors) push(links.anchors);
 			}
 			const canvas = {canvas:checks.get('canvas'), portability:links.portability};
 			if (canvas.canvas || canvas.portability) {
 				try {await inspectCanvas(canvas, root, found, linkOptions, relative);}
-				catch {for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));}
+				catch {
+					signal?.throwIfAborted();
+					for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));
+				}
+				for (const check of Object.values(canvas)) if (check) push(check);
 			}
 		}
 		const context = needsScripts && template.template && manifest.parsed ? checkContext(relative,template.template,manifest,found.notes) : undefined;
 		let linkEvidence: ReturnType<typeof collectCheckLinkEvidence> | undefined;
 		const readLinks = () => linkEvidence ??= collectCheckLinkEvidence({...options,vaultRoot:identifiedVault ? vault : undefined}, found, root, relative);
 		for (const check of checks.values()) {
+			signal?.throwIfAborted();
+			if (completed.has(check.id)) continue;
 			const special = specials.get(check.id);
 			const rule = commonRules.get(check.id);
 			try {
 				if (rule) {
-					report.checks.push(await runCommon(rule, check, options, vault, () => {
+					push(await runCommon(rule, check, options, vault, () => {
 						readCommonEvidence ??= commonEvidence(options,located,found,manifest,template,templateDirs,new Set(commonRules.keys()));
 						return readCommonEvidence(check);
 					}));
 					continue;
 				}
 				if (special) {
-					report.checks.push(await runSpecial(special, options, vault, context, found, identifiedVault, readLinks));
+					push(await runSpecial(special, options, vault, context, found, identifiedVault, readLinks));
 					continue;
 				}
 				switch (check.id) {
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
-				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined); break;
-				case 'bases': await inspectBases(check, root, found); break;
+				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined, signal); break;
+				case 'bases': await inspectBases(check, root, found, signal); break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}
-			} catch {failure(check, 'check-run-failed', tr('检查未能完成。','Could not complete the check.'));}
-			report.checks.push(settle(check));
+			} catch {
+				signal?.throwIfAborted();
+				failure(check, 'check-run-failed', tr('检查未能完成。','Could not complete the check.'));
+			}
+			push(check);
 		}
 	} catch {
+		if (signal?.aborted) return cancelled();
 		const message = location ? tr('无法扫描知识库。','Could not scan the library.') : tr('无法访问指定的知识库根目录。','Could not access the selected library folder.');
 		report.checks.push(failure(result(generalChecks[0]), 'library-unavailable', message));
 	}
 	report.status = aggregate(report.checks);
 	report.finishedAt = new Date().toISOString();
-	if (location) await saveDiagnosticReport(location.root, location.vault, report);
-	else report.logError = tr('知识库根目录不可用，无法写入日志。','Could not save the log because the library folder is unavailable.');
+	orderChecks();
+	if (location) {
+		try {await saveDiagnosticReport(location.root, location.vault, report, signal);}
+		catch (error) {if (signal?.aborted) return cancelled(); throw error;}
+	} else report.logError = tr('知识库根目录不可用，无法写入日志。','Could not save the log because the library folder is unavailable.');
 	return report;
+
+	function orderChecks() {
+		report.checks.sort((a,b) => active.indexOf(a.id) - active.indexOf(b.id));
+	}
+	function cancelled() {
+		report.status = 'cancelled';
+		report.finishedAt = new Date().toISOString();
+		for (const id of active) if (!report.checks.some(item => item.id === id)) report.checks.push({
+			...result(describe(id)), status:'not-run', reason:tr('检查取消时此项尚未完成。','This check had not finished when the run was cancelled.'),
+		});
+		orderChecks();
+		return report;
+	}
 }

@@ -34,16 +34,20 @@ export function validConfigDir(value: string) {
 	return printable(value, 128) && value.trim() === value && value !== '.' && value !== '..' && !/[<>:"/\\|?*]/u.test(value);
 }
 
-export async function libraryLocation(options: Pick<DiagnosticOptions,'libraryRoot'|'vaultRoot'|'configDir'>) {
+export async function libraryLocation(options: Pick<DiagnosticOptions,'libraryRoot'|'vaultRoot'|'configDir'|'signal'>) {
+	const {signal} = options;
+	signal?.throwIfAborted();
 	const requested = path.resolve(options.libraryRoot);
 	const stat = await fs.lstat(requested);
+	signal?.throwIfAborted();
 	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('invalid-root');
 	const root = await fs.realpath(requested);
 	const configDir = options.configDir ?? defaultConfigDir;
 	if (!validConfigDir(configDir)) throw new Error('invalid-config-directory');
 	const identifiedVault = options.vaultRoot ? await fs.realpath(options.vaultRoot) :
 		// The CLI can discover a conventional ancestor by checking the directory name alone.
-		('configDir' in options ? await findVault(root, configDir) : undefined);
+		('configDir' in options ? await findVault(root, configDir, signal) : undefined);
+	signal?.throwIfAborted();
 	const vault = identifiedVault ?? root;
 	const relative = path.relative(vault, root).split(path.sep).join('/');
 	if (relative && (!relativePath(relative) || relative.split('/').some(part => key(part) === key(configDir))))
@@ -51,9 +55,10 @@ export async function libraryLocation(options: Pick<DiagnosticOptions,'libraryRo
 	return {root, vault, relative, configDir, identifiedVault: identifiedVault !== undefined};
 }
 
-async function findVault(root: string, configDir: string) {
+async function findVault(root: string, configDir: string, signal?: AbortSignal) {
 	let dir = root;
 	while (true) {
+		signal?.throwIfAborted();
 		const marker = await statIfPresent(path.join(dir, configDir)).catch(() => undefined);
 		if (marker?.isDirectory() && !marker.isSymbolicLink()) return dir;
 		const parent = path.dirname(dir);
@@ -62,11 +67,13 @@ async function findVault(root: string, configDir: string) {
 	}
 }
 
-export async function readRelative(root: string, relative: string, limit = bytesPerFile): Promise<Buffer> {
+export async function readRelative(root: string, relative: string, limit = bytesPerFile, signal?: AbortSignal): Promise<Buffer> {
+	signal?.throwIfAborted();
 	const parts = segments(relative);
 	const target = path.join(root, ...parts);
 	let filename = root;
 	for (const part of parts) {
+		signal?.throwIfAborted();
 		filename = path.join(filename, part);
 		const stat = await fs.lstat(filename);
 		if (stat.isSymbolicLink() || (filename !== target && !stat.isDirectory())) throw new Error('linked-path');
@@ -74,6 +81,7 @@ export async function readRelative(root: string, relative: string, limit = bytes
 	const before = await fs.lstat(filename);
 	if (!before.isFile() || before.nlink !== 1 || before.size > limit) throw new Error('unsafe-file');
 	if (await fs.realpath(filename) !== target) throw new Error('linked-path');
+	signal?.throwIfAborted();
 	const file = await fs.open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	try {
 		const stat = await file.stat();
@@ -82,11 +90,13 @@ export async function readRelative(root: string, relative: string, limit = bytes
 		const buffer = Buffer.allocUnsafe(stat.size + 1);
 		let offset = 0;
 		while (offset < buffer.length) {
+			signal?.throwIfAborted();
 			const {bytesRead} = await file.read(buffer, offset, buffer.length - offset, offset);
 			if (!bytesRead) break;
 			offset += bytesRead;
 		}
 		const after = await file.stat();
+		signal?.throwIfAborted();
 		if (offset !== stat.size || after.mtimeMs !== stat.mtimeMs || after.size !== stat.size) throw new Error('changed-file');
 		return buffer.subarray(0, offset);
 	} finally {await file.close();}
@@ -104,23 +114,35 @@ function readDeclaration(raw: string): TemplateSnapshot {
 	return {checks: []};
 }
 
-export async function templateSnapshot(root: string, withScripts: boolean): Promise<TemplateSnapshot> {
+export async function templateSnapshot(root: string, withScripts: boolean, signal?: AbortSignal): Promise<TemplateSnapshot> {
 	try {
+		signal?.throwIfAborted();
 		if (!await statIfPresent(path.join(root, templateFile))) return {checks: [], missing: true};
-		const snapshot = readDeclaration(decode(await readRelative(root, templateFile)));
-		if (withScripts) for (const check of snapshot.checks) {
-			try {
-				const {source,digest} = await readChecker(root, check.path);
-				check.source = source;
-				check.digest = digest;
-			} catch {check.reason = tr('专项脚本不可读，或不符合独立 UTF-8 文件要求。','Check that the script is a readable, standalone UTF-8 file.');}
-		}
+		const snapshot = readDeclaration(decode(await readRelative(root, templateFile, undefined, signal)));
+		if (withScripts) await readSelectedTemplateScripts(root, snapshot, snapshot.checks.map(check => check.id), signal);
 		return snapshot;
-	} catch {return {checks: [], reason: tr('模板声明或专项检查列表无效。','Review the template declaration and its check list. They contain an invalid field.')};}
+	} catch {
+		signal?.throwIfAborted();
+		return {checks: [], reason: tr('模板声明或专项检查列表无效。','Review the template declaration and its check list. They contain an invalid field.')};
+	}
 }
 
-export async function readChecker(root: string, path: string) {
-	const source = await readRelative(root, path, 512 * 1024);
+export async function readSelectedTemplateScripts(root: string, snapshot: TemplateSnapshot, selected: readonly string[], signal?: AbortSignal) {
+	for (const check of snapshot.checks) {
+		if (!selected.includes(check.id)) continue;
+		try {
+			const {source,digest} = await readChecker(root, check.path, signal);
+			check.source = source;
+			check.digest = digest;
+		} catch {
+			signal?.throwIfAborted();
+			check.reason = tr('专项脚本不可读，或不符合独立 UTF-8 文件要求。','Check that the script is a readable, standalone UTF-8 file.');
+		}
+	}
+}
+
+export async function readChecker(root: string, path: string, signal?: AbortSignal) {
+	const source = await readRelative(root, path, 512 * 1024, signal);
 	const text = decode(source);
 	return {source, text, digest:hash(source)};
 }
@@ -182,11 +204,12 @@ export interface Inventory {
 	skipped: number;
 }
 
-export async function inventory(root: string, configDir: string): Promise<Inventory> {
+export async function inventory(root: string, configDir: string, signal?: AbortSignal): Promise<Inventory> {
 	const found: Inventory = {files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [],
 		unreadableDirectories: new Set(), skipped: 0};
 	let remaining = bytesPerLibrary;
 	async function visit(relative: string) {
+		signal?.throwIfAborted();
 		const directory = path.join(root, relative);
 		let entries;
 		try {
@@ -204,6 +227,7 @@ export async function inventory(root: string, configDir: string): Promise<Invent
 		}
 		found.directories.add(relative);
 		for (const entry of entries) {
+			signal?.throwIfAborted();
 			const file = relative ? relative + '/' + entry.name : entry.name;
 			if (!relativePath(file) || key(entry.name) === key(configDir) || ['node_modules','__pycache__'].includes(key(entry.name)) ||
 				key(file) === 'checks' || entry.isSymbolicLink()) {found.excluded.add(file); found.skipped++; continue;}
@@ -212,13 +236,14 @@ export async function inventory(root: string, configDir: string): Promise<Invent
 			found.files.add(file);
 			if (!/\.md$/iu.test(file)) continue;
 			try {
-				const bytes = await readRelative(root, file, Math.min(remaining, bytesPerFile));
+				const bytes = await readRelative(root, file, Math.min(remaining, bytesPerFile), signal);
 				remaining -= bytes.length;
 				found.notes.push(noteRecord(file, decode(bytes)));
-			} catch {found.unreadable.push(file);}
+			} catch {signal?.throwIfAborted(); found.unreadable.push(file);}
 		}
 	}
 	await visit('');
+	signal?.throwIfAborted();
 	return found;
 }
 
@@ -230,11 +255,11 @@ interface ManifestData {
 }
 type ManifestSnapshot = ManifestData & ({parsed: ReturnType<typeof readManifest>; reason?:undefined} | {parsed?:undefined; reason:string});
 
-export async function manifestSnapshot(root: string): Promise<ManifestSnapshot> {
+export async function manifestSnapshot(root: string, signal?: AbortSignal): Promise<ManifestSnapshot> {
 	let checkKit: CheckKitRecord | null | undefined;
 	const invalid = () => ({checkKit, reason:tr('知识库清单缺失、无效或不可读。','Check that kb.toml exists, is readable, and contains a valid library manifest.')});
 	try {
-		const raw = decode(await readRelative(root, 'kb.toml'));
+		const raw = decode(await readRelative(root, 'kb.toml', undefined, signal));
 		// Keep a malformed kit declaration out of the legacy path even if TOML parsing fails.
 		if (/\bcheckKit\b/u.test(raw)) checkKit = null;
 		const {version, paths, variables, checkKit: kit} = parse(raw);
@@ -247,7 +272,7 @@ export async function manifestSnapshot(root: string): Promise<ManifestSnapshot> 
 			return {checkKit, reason: tr('本库 [variables] 须使用名称与字符串、有限数字或布尔值。','Use named strings, finite numbers, or booleans in [variables].')};
 		return {checkKit, parsed, version, paths: safePaths, variables};
 	}
-	catch {return invalid();}
+	catch {signal?.throwIfAborted(); return invalid();}
 }
 
 export function checkContext(root: string, template: Declaration, manifest: Awaited<ReturnType<typeof manifestSnapshot>>, notes: NoteRecord[]): CheckContext {

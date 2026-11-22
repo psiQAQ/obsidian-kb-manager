@@ -5,8 +5,10 @@ import fsPromises, * as fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
+import {setTimeout as delay} from 'node:timers/promises';
 import {build} from 'esbuild';
 import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from '../src/diagnostics/index.ts';
+import {saveDiagnosticReport} from '../src/diagnostics/history.ts';
 import {setLanguage} from '../src/i18n.ts';
 import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
 import {writeCheckKit} from '../src/kb/identity-core.ts';
@@ -497,6 +499,125 @@ test('trusted check executes approved bytes on portable context and writes one l
 	assert.equal(result(rejected,'fixture.check').coverage.unknown,1);
 	assert.deepEqual(codes(result(rejected,'fixture.check')),['checker-untrusted']);
 	assert.ok(rejected.logPath);
+});
+
+test('cancelling trusted common and template checks waits for child exit and keeps completed results', async t => {
+	for (const [checkId,scriptPath] of [['properties','checks/common/properties.mjs'],['fixture.check','checks/checker.mjs']]) {
+		await t.test(checkId,async t => {
+			const {options, root, put} = await fixture(t);
+			const completed = await runDiagnostics({...options,selected:['manifest']});
+			const pidFile = path.join(root,'checks','child.pid');
+			const source = `import {writeFileSync} from 'node:fs';
+				import {spawn} from 'node:child_process';
+				export default () => {
+					const child = spawn(process.execPath,['--eval','setInterval(() => {}, 10000)'],{stdio:'ignore',windowsHide:true});
+					writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid,child.pid]));
+					for (;;) {}
+				};`;
+			await put(scriptPath,source);
+			if (checkId === 'properties') {
+				const officialManifest = checkKitFiles()['checks/common/manifest.mjs'];
+				await put('checks/common/manifest.mjs',officialManifest);
+				await put('kb.toml',writeCheckKit(manifest,{protocol:1,version:checkKitVersion,digests:{
+					'checks/common/manifest.mjs':digest(officialManifest),[scriptPath]:digest(source),
+				}}));
+			}
+			const controller = new AbortController();
+			const running = runDiagnostics({...options,selected:['manifest',checkId,'bindings'],
+				trustedDigests:[digest(source)],signal:controller.signal,timeoutMs:8000});
+			let pids;
+			try {
+				for (let attempt=0; attempt<160 && !pids; attempt++) {
+					const text = await fs.readFile(pidFile,'utf8').catch(error => {
+						if (error.code !== 'ENOENT') throw error;
+					});
+					if (text?.endsWith(']')) pids = JSON.parse(text);
+					if (!pids) await delay(25);
+				}
+				assert.ok(pids?.every(Number.isSafeInteger),'the selected checker and its child started');
+				for (const pid of pids) assert.doesNotThrow(()=>process.kill(pid,0));
+			} finally {
+				controller.abort();
+				await running;
+			}
+			const cancelled = await running;
+			assert.equal(cancelled.status,'cancelled');
+			assert.deepEqual(cancelled.checks.map(row=>[row.id,row.status]),[
+				['manifest','passed'],[checkId,'not-run'],['bindings','not-run'],
+			]);
+			for (const pid of pids) {
+				// Linux can briefly retain a dead grandchild as a zombie while its new parent reaps it.
+				let running = true;
+				for (let attempt=0; attempt<100 && running; attempt++) {
+					try {
+						process.kill(pid,0);
+						if (process.platform === 'linux') {
+							const stat = await fs.readFile(`/proc/${pid}/stat`,'utf8');
+							running = stat.slice(stat.lastIndexOf(')')+2,stat.lastIndexOf(')')+3) !== 'Z';
+						}
+					} catch (error) {
+						if (error.code !== 'ESRCH' && error.code !== 'ENOENT') throw error;
+						running = false;
+					}
+					if (running) await delay(10);
+				}
+				assert.equal(running,false,`process ${pid} stopped`);
+			}
+			assert.equal(cancelled.logPath,undefined);
+			assert.deepEqual((await listDiagnosticHistory(root)).map(report=>report.runId),[completed.runId]);
+		});
+	}
+});
+
+test('cancelling during scan or before history publication leaves existing reports intact', async t => {
+	const {options, root} = await fixture(t);
+	const selected = ['manifest','properties','fixture.check'];
+	const complete = await runDiagnostics({...options,selected:['manifest']});
+	const readdir = fs.readdir;
+	const scan = new AbortController();
+	const mockScan = t.mock.method(fsPromises,'readdir',async (target,...args) => {
+		if (target === path.join(root,'notes')) scan.abort();
+		return await readdir(target,...args);
+	});
+	syncBuiltinESMExports();
+	try {
+		const cancelled = await runDiagnostics({...options,selected,signal:scan.signal});
+		assert.equal(cancelled.status,'cancelled');
+		assert.deepEqual(cancelled.checks.map(row=>[row.id,row.status]),selected.map(id=>[id,'not-run']));
+	} finally {mockScan.mock.restore();syncBuiltinESMExports();}
+	const realpath = fs.realpath;
+	const publish = new AbortController();
+	const mockLog = t.mock.method(fsPromises,'realpath',async (target,...args) => {
+		const resolved = await realpath(target,...args);
+		if (target === path.join(root,'.log')) publish.abort();
+		return resolved;
+	});
+	syncBuiltinESMExports();
+	try {
+		const cancelled = await runDiagnostics({...options,selected:['manifest'],signal:publish.signal});
+		assert.equal(cancelled.status,'cancelled');
+		assert.equal(cancelled.checks[0].status,'passed');
+		assert.equal(cancelled.logPath,undefined);
+		assert.deepEqual(await fs.readdir(path.join(root,'.log')),[path.basename(complete.logPath)]);
+		await assert.rejects(listDiagnosticHistory(root,publish.signal),{name:'AbortError'});
+	} finally {mockLog.mock.restore();syncBuiltinESMExports();}
+});
+
+test('log writes work without hard links and never replace an existing report', async t => {
+	const {options,root,vault} = await fixture(t);
+	const unsupported = t.mock.method(fsPromises,'link',() => {
+		throw Object.assign(new Error('This volume does not support hard links'),{code:'ENOTSUP'});
+	});
+	syncBuiltinESMExports();
+	try {
+		const existing = await runDiagnostics({...options,selected:['manifest']});
+		assert.ok(existing.logPath);
+		const duplicate = {...existing,logPath:undefined,checks:[]};
+		await saveDiagnosticReport(root,vault,duplicate);
+		assert.ok(duplicate.logError);
+		assert.deepEqual((await listDiagnosticHistory(root))[0],JSON.parse(JSON.stringify(existing)));
+		assert.equal(unsupported.mock.callCount(),0);
+	} finally {unsupported.mock.restore();syncBuiltinESMExports();}
 });
 
 test('selecting only an approved special check identifies files and directories omitted from its input', async t => {

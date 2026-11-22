@@ -14,37 +14,44 @@ const commonRules = [...generalChecks, portabilityCheck];
 const rulePath = (id: string) => `checks/common/${id}.mjs`;
 type KitDeclaration = Awaited<ReturnType<typeof manifestSnapshot>>['checkKit'];
 
-async function localKit(root: string) {
+async function localKit(root: string, signal?: AbortSignal) {
 	// A plain Git checkout has tracked rule files but may not have a private kb.toml.
-	const stat = async (file: string) => fs.lstat(join(root,file)).catch(() => undefined);
+	const stat = async (file: string) => {
+		signal?.throwIfAborted();
+		return fs.lstat(join(root,file)).catch(() => undefined);
+	};
 	if (!(await stat('checks'))?.isDirectory() || !(await stat('checks/kb-check.cjs'))?.isFile() || !(await stat('checks/common'))?.isDirectory()) return false;
 	for (const {id} of commonRules) if (await stat(rulePath(id))) return true;
 	return false;
 }
 
-export async function commonSnapshot(root: string, kit: KitDeclaration, selected?: readonly string[]) {
-	if (kit === undefined && !await localKit(root)) return;
-	return Promise.all(commonRules.filter(rule => !selected || selected.includes(rule.id)).map(async rule => {
+export async function commonSnapshot(root: string, kit: KitDeclaration, selected?: readonly string[], signal?: AbortSignal) {
+	if (kit === undefined && !await localKit(root, signal)) return;
+	const checks: DeclaredCheck[] = [];
+	for (const rule of commonRules) {
+		signal?.throwIfAborted();
+		if (selected && !selected.includes(rule.id)) continue;
 		const check: DeclaredCheck = {...rule, path:rulePath(rule.id)};
-		if (kit === null) {check.reason = invalidKit(); return check;}
-		if (kit && !Object.prototype.hasOwnProperty.call(kit.digests, check.path)) {check.reason = unavailable(); return check;}
+		checks.push(check);
+		if (kit === null) {check.reason = invalidKit(); continue;}
+		if (kit && !Object.prototype.hasOwnProperty.call(kit.digests, check.path)) {check.reason = unavailable(); continue;}
 		try {
-			const {source, digest} = await readChecker(root, check.path);
+			const {source, digest} = await readChecker(root, check.path, signal);
 			check.source = source;
 			check.digest = digest;
-		} catch {check.reason = unavailable();}
-		return check;
-	}));
+		} catch {signal?.throwIfAborted(); check.reason = unavailable();}
+	}
+	return checks;
 }
 
-export async function listCommonChecks(libraryRoot: string): Promise<{mode:'legacy'|'kit'; checks:SpecialCheck[]; reason?:string}> {
+export async function listCommonChecks(libraryRoot: string, signal?: AbortSignal): Promise<{mode:'legacy'|'kit'; checks:SpecialCheck[]; reason?:string}> {
 	try {
-		const {root} = await libraryLocation({libraryRoot});
-		const {checkKit} = await manifestSnapshot(root);
-		const checks = await commonSnapshot(root, checkKit);
+		const {root} = await libraryLocation({libraryRoot,signal});
+		const {checkKit} = await manifestSnapshot(root, signal);
+		const checks = await commonSnapshot(root, checkKit, undefined, signal);
 		if (!checks) return {mode:'legacy', checks:[]};
 		return {mode:'kit', checks:checks.map(({id,name,path,digest,reason}) => ({id,name,path,digest,reason})), reason:checkKit === null ? invalidKit() : undefined};
-	} catch {return {mode:'kit', checks:[], reason:unavailable()};}
+	} catch {signal?.throwIfAborted(); return {mode:'kit', checks:[], reason:unavailable()};}
 }
 
 export async function readDiagnosticScript(libraryRoot: string, scriptPath: string) {

@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import type {ChildProcessByStdio} from 'node:child_process';
 import * as path from 'node:path';
 import type {Readable, Writable} from 'node:stream';
@@ -29,32 +29,52 @@ try {
 `;
 const outputLimit = 512 * 1024;
 const inputLimit = 32 * 1024 * 1024;
+const windows = process.platform === 'win32';
 
 type ChildResult = {error: string} | {data: unknown};
-function execute(node: string, input: string, timeout: number, maxOutput: number): Promise<ChildResult> {
+async function stopChecker(child: ChildProcessByStdio<Writable, Readable, Readable>) {
+	const {pid} = child;
+	if (!pid) return;
+	if (windows) {
+		const system = process.env.SystemRoot || process.env.WINDIR;
+		if (system && path.isAbsolute(system)) {
+			const stopped = await new Promise<boolean>(resolve => {
+				execFile(path.join(system,'System32','taskkill.exe'), ['/pid',String(pid),'/t','/f'],
+					{windowsHide:true, timeout:5000}, error => resolve(!error));
+			});
+			if (stopped) return;
+		}
+	} else {
+		try {process.kill(-pid, 'SIGKILL'); return;}
+		catch (error) {if (!isRecord(error) || error.code !== 'ESRCH') throw error;}
+	}
+	child.kill('SIGKILL');
+}
+
+function execute(node: string, input: string, timeout: number, maxOutput: number, signal?: AbortSignal): Promise<ChildResult> {
 	return new Promise(resolve => {
+		signal?.throwIfAborted();
 		const env: NodeJS.ProcessEnv = {};
 		for (const name of ['SystemRoot','WINDIR']) if (process.env[name]) env[name] = process.env[name];
 		let child: ChildProcessByStdio<Writable, Readable, Readable>;
 		try {
 			child = spawn(node, ['--max-old-space-size=128','--input-type=module','--eval',childSource], {
-				cwd: path.dirname(node), env, stdio: ['pipe','pipe','pipe','pipe'], windowsHide: true, shell: false,
+				cwd: path.dirname(node), env, stdio: ['pipe','pipe','pipe','pipe'], windowsHide: true, shell: false, detached: !windows,
 			});
 		} catch {resolve({error: 'checker-launch'}); return;}
 		const channel = child.stdio[3] as Readable;
 		const parts: Buffer[] = [];
-		let bytes = 0, finished = false;
+		let bytes = 0;
+		let stopped: string | undefined;
+		let termination: Promise<void> | undefined;
 		const timer = setTimeout(() => stop('checker-timeout'), timeout);
-		function finish(value: ChildResult) {
-			if (finished) return;
-			finished = true;
-			clearTimeout(timer);
-			resolve(value);
-		}
+		const abort = () => stop('checker-cancelled');
+		signal?.addEventListener('abort', abort, {once:true});
 		function stop(error: string) {
-			if (finished) return;
-			finish({error});
-			child.kill('SIGKILL');
+			if (stopped) return;
+			stopped = error;
+			clearTimeout(timer);
+			termination = stopChecker(child).catch(() => {child.kill('SIGKILL');});
 			child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); channel.destroy();
 		}
 		function count(chunk: Buffer) {
@@ -63,18 +83,23 @@ function execute(node: string, input: string, timeout: number, maxOutput: number
 		}
 		child.stdout.on('data', count);
 		child.stderr.on('data', count);
-		channel.on('data', (chunk: Buffer) => {count(chunk); if (!finished) parts.push(chunk);});
+		channel.on('data', (chunk: Buffer) => {count(chunk); if (!stopped) parts.push(chunk);});
 		for (const stream of [child.stdout, child.stderr, channel]) stream.on('error', () => stop('checker-transport'));
 		child.once('error', () => stop('checker-launch'));
 		child.once('close', code => {
-			if (finished) return;
-			if (code !== 0) {finish({error: 'checker-execution'}); return;}
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', abort);
+			if (stopped || code !== 0) {
+				const failure = {error:stopped ?? 'checker-execution'};
+				void Promise.resolve(termination).then(() => resolve(failure));
+				return;
+			}
 			try {
 				const response: unknown = JSON.parse(Buffer.concat(parts).toString('utf8'));
-				if (!isRecord(response)) {finish({error: 'checker-output'}); return;}
-				if (response.error === 'checker-export' || response.error === 'checker-execution') finish({error: response.error});
-				else finish({data: response.result});
-			} catch {finish({error: 'checker-output'});}
+				if (!isRecord(response)) {resolve({error: 'checker-output'}); return;}
+				if (response.error === 'checker-export' || response.error === 'checker-execution') resolve({error: response.error});
+				else resolve({data: response.result});
+			} catch {resolve({error: 'checker-output'});}
 		});
 		child.stdin.on('error', () => {/* The child may have exited before consuming input. */});
 		child.stdin.end(input);
@@ -83,12 +108,18 @@ function execute(node: string, input: string, timeout: number, maxOutput: number
 
 export async function runChecker(source: Buffer, options: DiagnosticOptions, vault: string,
 	readContext: () => Promise<unknown>, common = false): Promise<ChildResult> {
+	const {signal} = options;
+	signal?.throwIfAborted();
 	const node = await findLocalExecutable('node', [options.vaultRoot, vault], options.nodeExecutable);
+	signal?.throwIfAborted();
 	if (!node) return {error:'checker-node'};
 	const context = await readContext();
+	signal?.throwIfAborted();
 	const input = JSON.stringify({source:source.toString('base64'), context, chinese:common ? tr('1','0') === '1' : undefined});
 	if (Buffer.byteLength(input) > inputLimit) return {error:'checker-input-limit'};
-	return execute(node, input, Math.max(1, Math.min(options.timeoutMs ?? 10000, 60000)), common ? 4 * 1024 * 1024 : outputLimit);
+	const response = await execute(node, input, Math.max(1, Math.min(options.timeoutMs ?? 10000, 60000)), common ? 4 * 1024 * 1024 : outputLimit, signal);
+	signal?.throwIfAborted();
+	return response;
 }
 
 const errors: Record<string, readonly [string, string]> = {

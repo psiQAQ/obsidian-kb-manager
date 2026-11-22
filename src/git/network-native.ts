@@ -34,9 +34,11 @@ function environment():NodeJS.ProcessEnv{
 		GIT_NO_REPLACE_OBJECTS:'1',GIT_LITERAL_PATHSPECS:'1',GIT_ALLOW_PROTOCOL:'http:https:ssh',GIT_PAGER:'',PAGER:''});
 }
 
-async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEnv,input?:Buffer|string,allowed=[0]){
+async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEnv,input?:Buffer|string,allowed=[0],signal?:AbortSignal){
+	signal?.throwIfAborted();
 	return new Promise<{stdout:Buffer;code:number}>((resolve,reject)=>{
 		const child=execFile(file,args,{cwd,env,encoding:'buffer',windowsHide:true,shell:false,timeout:120000,maxBuffer:64*1024*1024},(error,stdout,stderr)=>{
+			if(signal?.aborted){reject(new Error('Git command cancelled'));return;}
 			const code=error ? error.code : 0;
 			if(typeof code==='number' && allowed.includes(code)){resolve({stdout,code});return;}
 			const reason=stderr.toString().toLowerCase();
@@ -48,7 +50,10 @@ async function execute(file:string,args:string[],cwd:string,env:NodeJS.ProcessEn
 				:tr('命令未完成','command did not complete');
 			reject(new Error('Git · '+category+' ('+(typeof code==='number'?code:'process')+')'));
 		});
-		child.stdin?.on('error',(error:NodeJS.ErrnoException)=>{if(error.code!=='EPIPE')reject(new Error('Git stdin · '+String(error.code)));});
+		const abort=()=>{child.kill('SIGKILL');};
+		signal?.addEventListener('abort',abort,{once:true});
+		child.once('close',()=>signal?.removeEventListener('abort',abort));
+		child.stdin?.on('error',(error:NodeJS.ErrnoException)=>{if(!signal?.aborted && error.code!=='EPIPE')reject(new Error('Git stdin · '+String(error.code)));});
 		child.stdin?.end(input);
 	});
 }
@@ -69,10 +74,12 @@ export interface RunOptions{
 	author?:{name:string;email:string;date:string};
 	network?:{url:string;basic?:string};
 	vaultRoot?:string;
+	signal?:AbortSignal;
 }
 const defaults=['-c','core.hooksPath=/dev/null','-c','http.followRedirects=false','-c','protocol.ext.allow=never',
 	'-c','gc.auto=0','-c','maintenance.auto=false','-c','core.fsmonitor=false','-c','submodule.recurse=false','-c','commit.gpgsign=false'];
 export async function gitResult(dir:string|undefined,args:string[],options:RunOptions={}){
+	options.signal?.throwIfAborted();
 	const roots=[configuredVault,options.vaultRoot,dir];
 	const binary=await program('git',configured,roots);
 	const cwd=dir??path.dirname(binary),env=environment();
@@ -94,7 +101,7 @@ export async function gitResult(dir:string|undefined,args:string[],options:RunOp
 		if(stat && !identityQuery){
 			const bytes=await fs.readFile(file),fingerprint=createHash('sha256').update(bytes).digest('hex');
 			if(checkedConfigs.get(file)!==fingerprint){
-				const result=await execute(binary,[...base,...defaults,'config','--file','-','--no-includes','--null','--name-only','--list'],cwd,env,bytes);
+				const result=await execute(binary,[...base,...defaults,'config','--file','-','--no-includes','--null','--name-only','--list'],cwd,env,bytes,undefined,options.signal);
 				for(const key of result.stdout.toString().split('\0').filter(Boolean))if(!allowedConfig.test(key))
 					throw new Error(tr('此库包含需要手动核对的 Git 配置','This repository has Git configuration that needs manual review'));
 				if(checkedConfigs.size>=128)checkedConfigs.clear();
@@ -122,7 +129,7 @@ export async function gitResult(dir:string|undefined,args:string[],options:RunOp
 		}
 	}
 	return execute(binary,[...base,...defaults,...extra,...args],cwd,env,
-		typeof options.stdin==='string'?options.stdin:options.stdin&&Buffer.from(options.stdin),options.allowedExitCodes);
+		typeof options.stdin==='string'?options.stdin:options.stdin&&Buffer.from(options.stdin),options.allowedExitCodes,options.signal);
 }
 
 export async function sshRoute(url:URL,dir?:string){

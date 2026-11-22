@@ -1,5 +1,5 @@
 export type Severity = 'error' | 'warning' | 'info';
-export type DiagnosticStatus = 'passed' | 'findings' | 'partial' | 'skipped' | 'failed';
+export type DiagnosticStatus = 'passed' | 'findings' | 'partial' | 'skipped' | 'failed' | 'cancelled' | 'not-run';
 
 export interface Diagnostic {
 	severity: Severity;
@@ -82,6 +82,7 @@ export interface DiagnosticOptions {
 	officialDigests?: readonly string[];
 	nodeExecutable?: string;
 	timeoutMs?: number;
+	signal?: AbortSignal;
 }
 
 export interface SpecialCheck { id: string; name: string; path: string; description?: string; digest?: string; reason?: string }

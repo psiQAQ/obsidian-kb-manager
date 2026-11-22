@@ -82,13 +82,14 @@ export function inspectProperties(check: DiagnosticCheckResult, inventory: Inven
 
 async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string, inventory: Inventory, extension: string,
 	inspect: (file: string, text: string) => void | Promise<void>,
-	options: {inventoryCoverage?: false; countFiles?: false; onUnreadable?: (diagnostic: Diagnostic) => void} = {}) {
+	options: {inventoryCoverage?: false; countFiles?: false; onUnreadable?: (diagnostic: Diagnostic) => void; signal?: AbortSignal} = {}) {
 	if (options.inventoryCoverage !== false) reportInventoryCoverage(check, inventory);
 	for (const file of inventory.files) {
 		if (!file.toLowerCase().endsWith(extension)) continue;
 		let text: string;
-		try {text = decode(await readRelative(root, file));}
+		try {text = decode(await readRelative(root, file, undefined, options.signal));}
 		catch {
+			options.signal?.throwIfAborted();
 			check.coverage.unknown++;
 			const diagnostic: Diagnostic = {severity:'info', code:'unreadable-file', file,
 				message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')};
@@ -114,6 +115,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 	root: string, inventory: Inventory, options: DiagnosticOptions, location: string) {
 	const check = canvas ?? portability;
 	if (!check) return;
+	const checkpoint = diagnosticCheckpoint(options.signal);
 	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
 	const selected = [canvas, portability].filter((item): item is DiagnosticCheckResult => !!item);
 	let deferred = false;
@@ -182,6 +184,8 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		}
 		async function textLinks(body: string, node: string) {
 			for (const occurrence of staticOccurrences({path:file,body,lineOffset:0})) {
+				const pause = checkpoint?.();
+				if (pause) await pause;
 				const details = occurrence.line ? `${node} · ${tr('文本行','Text line')} ${occurrence.line}` : node;
 				let link: LinkRequest | undefined;
 				try {
@@ -193,6 +197,8 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		}
 		const ids = new Set<string>();
 		for (const node of (data.nodes ?? []) as unknown[]) {
+			const pause = checkpoint?.();
+			if (pause) await pause;
 			if (!isRecord(node) || !nonempty(node.id) || typeof node.type !== 'string' || !type.has(node.type) ||
 				!['x','y','width','height'].every(key => Number.isSafeInteger(node[key])) || !color(node.color)) {
 				uninspectable('canvas-node',tr('Canvas 节点的 ID、类型、坐标、尺寸或颜色无效。','Check the Canvas node’s ID, type, coordinates, dimensions, and color.')); continue;
@@ -217,6 +223,8 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		if (!canvas || !Array.isArray(data.edges)) return;
 		const edges = new Set<string>();
 		for (const edge of data.edges as unknown[]) {
+			const pause = checkpoint?.();
+			if (pause) await pause;
 			if (!isRecord(edge) || !nonempty(edge.id) || !nonempty(edge.fromNode) || !nonempty(edge.toNode) ||
 				!color(edge.color) || !optionalEnum(edge.fromSide, side) || !optionalEnum(edge.toSide, side) ||
 				!optionalEnum(edge.fromEnd, arrow) || !optionalEnum(edge.toEnd, arrow) || (edge.label !== undefined && typeof edge.label !== 'string')) {
@@ -227,6 +235,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 			if (!ids.has(edge.fromNode) || !ids.has(edge.toNode)) fail('canvas-dangling-edge',tr('Canvas 连线引用不存在的节点。','Update or remove the edge that points to a missing Canvas node.'));
 		}
 	}, {
+		signal: options.signal,
 		inventoryCoverage: canvas ? undefined : false,
 		countFiles: canvas ? undefined : false,
 		onUnreadable: diagnostic => {
@@ -253,7 +262,8 @@ function validFilter(value: unknown, depth = 0): boolean {
 	return ['and','or','not'].includes(operator) && Array.isArray(operands) && operands.every(item => validFilter(item, depth + 1));
 }
 
-export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory) {
+export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory, signal?: AbortSignal) {
+	const checkpoint = diagnosticCheckpoint(signal);
 	let dynamicExpressions = 0;
 	function inspect(file: string, text: string, line?: number) {
 		let base: unknown;
@@ -280,9 +290,11 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 			else dynamicExpressions++;
 		}
 	}
-	await inspectStructuredFiles(check, root, inventory, '.base', inspect);
+	await inspectStructuredFiles(check, root, inventory, '.base', inspect, {signal});
 	reportUnreadableNotes(check, inventory);
 	for (const note of inventory.notes) {
+		const pause = checkpoint?.();
+		if (pause) await pause;
 		if (note.problem?.code === 'unclosed-frontmatter') {
 			check.coverage.unknown++;
 			const message = tr('未找到 YAML 属性的结束标记，无法检查正文中的 Base 代码块。','Could not scan the body for Base blocks because the frontmatter has no closing delimiter.');
@@ -299,17 +311,18 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 	if (dynamicExpressions) addReason(check, tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.'));
 }
 
-export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string) {
+export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string, signal?: AbortSignal) {
 	if (!manifest.parsed) {check.coverage.unknown++; check.reason = manifest.reason; return;}
 	for (const binding of manifest.parsed.identity?.managed ?? []) {
 		try {
-			const contents = await readRelative(root, binding.path);
+			const contents = await readRelative(root, binding.path, undefined, signal);
 			check.coverage.checked++;
 			if (hash(contents) !== binding.fingerprint) check.diagnostics.push({severity:'warning', code:'binding-drift', file:binding.path, message:tr('受管文件内容与登记指纹不同，请复核绑定。','The managed file differs from its saved fingerprint. Review its bindings.')});
 			if (binding.root && location !== undefined && binding.root !== location)
 				check.diagnostics.push({severity:'warning', code:'binding-root-drift', file:binding.path, message:tr('受管绑定仍记录其他 Vault 路径。','The managed binding still records a different vault path. Review it before repairing the binding.')});
 			if (binding.root && location === undefined) check.coverage.unknown++;
 		} catch (error) {
+			signal?.throwIfAborted();
 			const missing = isRecord(error) && error.code === 'ENOENT';
 			check.coverage[missing ? 'checked' : 'unknown']++;
 			check.diagnostics.push({severity:missing ? 'warning' : 'info', code:missing ? 'missing-binding' : 'binding-unverified',
@@ -319,3 +332,4 @@ export async function inspectBindings(check: DiagnosticCheckResult, manifest: Ma
 	}
 	if (check.coverage.unknown) check.reason = tr('受管文件不可读或当前入口没有提供 Vault 相对位置。','Some managed files were unreadable or their vault-relative location was unavailable.');
 }
+import {diagnosticCheckpoint} from './checkpoint.ts';

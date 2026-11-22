@@ -1,6 +1,7 @@
 import {parse} from 'yaml';
 import {tr} from '../i18n.ts';
 import {prose} from '../kb/audit-markdown.ts';
+import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, maskLiterals, staticOccurrences} from './links.ts';
@@ -13,16 +14,16 @@ import type {DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkReque
 type Manifest = Awaited<ReturnType<typeof manifestSnapshot>>;
 type Location = Awaited<ReturnType<typeof libraryLocation>>;
 
-async function* readStructured(root: string, inventory: Inventory, extension: string) {
+async function* readStructured(root: string, inventory: Inventory, extension: string, signal?: AbortSignal) {
 	let remaining = 24 * 1024 * 1024;
 	for (const file of inventory.files) {
 		if (!file.toLowerCase().endsWith(extension)) continue;
 		let text: string | undefined;
 		try {
-			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024));
+			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024),signal);
 			remaining -= bytes.length;
 			text = decode(bytes);
-		} catch {/* Report unavailable text to the rule. */}
+		} catch {signal?.throwIfAborted();}
 		yield {file,text};
 	}
 }
@@ -35,12 +36,12 @@ function baseData(text: string) {
 	} catch {return undefined;}
 }
 
-async function bindings(root: string, manifest: Manifest) {
+async function bindings(root: string, manifest: Manifest, signal?: AbortSignal) {
 	const entries = [];
 	for (const {path,fingerprint,root:bindingRoot} of manifest.parsed?.identity?.managed ?? []) {
 		const binding = {path,fingerprint,root:bindingRoot};
-		try {entries.push({...binding,status:'readable',digest:hash(await readRelative(root,path))});}
-		catch (error) {entries.push({...binding,status:isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'unreadable'});}
+		try {entries.push({...binding,status:'readable',digest:hash(await readRelative(root,path,undefined,signal))});}
+		catch (error) {signal?.throwIfAborted(); entries.push({...binding,status:isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'unreadable'});}
 	}
 	return entries;
 }
@@ -48,6 +49,8 @@ async function bindings(root: string, manifest: Manifest) {
 export function commonEvidence(options: DiagnosticOptions, location: Location, inventory: Inventory,
 	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>) {
 	const {root, relative, vault, identifiedVault} = location;
+	const {signal} = options;
+	const checkpoint = diagnosticCheckpoint(signal);
 	const {resolve, vaultPath, outsideTarget, candidates} = linkResolver({...options,vaultRoot:identifiedVault ? vault : undefined}, inventory, root, relative);
 
 	async function reference(file: string, link: LinkRequest, line?: number) {
@@ -57,6 +60,8 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 			evidence:found.path ?? (relativePath(link.target) ? link.target : undefined)};
 	}
 	async function occurrence(file: string, item: LinkOccurrence) {
+		const pause = checkpoint?.();
+		if (pause) await pause;
 		let link: LinkRequest | undefined;
 		try {link = linkRequest(vaultPath(file), item);}
 		catch {return {kind:'invalid-encoding' as const, line:item.line};}
@@ -65,6 +70,8 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 	async function readLinks() {
 		const notes = [];
 		for (const note of inventory.notes) {
+			const pause = checkpoint?.();
+			if (pause) await pause;
 			const {path:file, body, lineOffset, problem} = note;
 			const dynamic = fencedBlocks(body).filter(block => /^(?:base|dataview(?:js)?|tasks|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language))
 				.map(({language,line,endLine}) => ({language,line:line+lineOffset,endLine:endLine+lineOffset}));
@@ -83,12 +90,14 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 	}
 	async function readCanvases() {
 		const canvases = [];
-		for await (const {file,text} of readStructured(root,inventory,'.canvas')) {
+		for await (const {file,text} of readStructured(root,inventory,'.canvas',signal)) {
 			if (text === undefined) {canvases.push({file, unreadable:true}); continue;}
 			let data: unknown;
 			try {data = JSON.parse(text);} catch {canvases.push({file, malformed:true}); continue;}
 			const references = [];
 			if (isRecord(data) && Array.isArray(data.nodes)) for (const node of data.nodes as unknown[]) {
+				const pause = checkpoint?.();
+				if (pause) await pause;
 				if (!isRecord(node)) {references.push([]); continue;}
 				if (node.type === 'text' && typeof node.text === 'string') {
 					const links = [];
@@ -121,14 +130,20 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 				registration:{registered:options.registered,duplicate:options.duplicate}, inventory:{files:[...inventory.files],
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
-		case 'bindings': return {result:check, manifest:{parsed:!!manifest.parsed,reason:manifest.reason}, bindings:await bindings(root,manifest), libraryPath:identifiedVault ? relative : undefined};
+		case 'bindings': return {result:check, manifest:{parsed:!!manifest.parsed,reason:manifest.reason}, bindings:await bindings(root,manifest,signal), libraryPath:identifiedVault ? relative : undefined};
 		case 'bases': {
 			const noteCoverage = result({id:check.id,name:check.name});
 			reportUnreadableNotes(noteCoverage,inventory);
 			const files = [];
-			for await (const {file,text} of readStructured(root,inventory,'.base')) files.push({file,data:text === undefined ? undefined : baseData(text),unreadable:text === undefined});
-			const notes = inventory.notes.map(({path:file,problem,body,lineOffset}) => ({file,problem,blocks:fencedBlocks(body).filter(block => block.language === 'base')
-				.map(({source,line}) => ({data:baseData(source),line:line+lineOffset}))}));
+			for await (const {file,text} of readStructured(root,inventory,'.base',signal)) files.push({file,data:text === undefined ? undefined : baseData(text),unreadable:text === undefined});
+			const notes = [];
+			for (const {path:file,problem,body,lineOffset} of inventory.notes) {
+				const pause = checkpoint?.();
+				if (pause) await pause;
+				const blocks = fencedBlocks(body).filter(block => block.language === 'base')
+					.map(({source,line}) => ({data:baseData(source),line:line+lineOffset}));
+				notes.push({file,problem,blocks});
+			}
 			return {result:check, files, notes, noteCoverage};
 		}
 		case 'links': case 'anchors':

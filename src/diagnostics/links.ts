@@ -76,6 +76,7 @@ export function linkCandidateIndex(paths: () => Iterable<string>) {
 }
 
 export function linkResolver(options: DiagnosticOptions, inventory: Inventory, root: string, location: string) {
+	const {signal} = options;
 	const files = new Set(inventory.files);
 	const notes = new Map(inventory.notes.map(note => [note.path, note]));
 	const anchors = new Map<string, {headings: Set<string>; blocks: Set<string>}>();
@@ -86,7 +87,10 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		if (!within(vaultFile, location) || !files.has(file)) return 'unknown';
 		let views = baseViews.get(file);
 		if (!views) {
-			views = readRelative(root, file).then(bytes => baseViewNames(decode(bytes))).catch(() => undefined);
+			views = readRelative(root, file, undefined, signal).then(bytes => baseViewNames(decode(bytes))).catch(() => {
+				signal?.throwIfAborted();
+				return undefined;
+			});
 			baseViews.set(file, views);
 		}
 		const names = await views;
@@ -111,18 +115,20 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		return marks.headings.has(heading) ? 'resolved' : 'unknown';
 	}
 	async function resolve(file: string, link: LinkRequest): Promise<LinkResolution> {
+		signal?.throwIfAborted();
 		if (link.fragment?.startsWith('##')) return {status: 'unknown', reason: tr('链接搜索依赖 Obsidian 的全 Vault 索引。','This search link depends on Obsidian’s vault-wide index.')};
 		const {target, fragment, syntax, canvasPath} = link;
 		if (options.resolveLink) {
 			try {
 				const found = await options.resolveLink(link);
+				signal?.throwIfAborted();
 				if (found.status === 'resolved') {
 					if (!relativePath(found.path)) return {status: 'unknown'};
 					if (fragment && /\.base$/iu.test(found.path) && (!found.anchor || found.anchor === 'unknown'))
 						return {...found, anchor:await baseAnchor(found.path, fragment)};
 				}
 				return found;
-			} catch {return {status: 'unknown'};}
+			} catch {signal?.throwIfAborted(); return {status: 'unknown'};}
 		}
 		const explicit = syntax === 'markdown' && /^(?:\.\.?\/)/u.test(target);
 		let candidate: string;
@@ -154,6 +160,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		if (!check.reason?.includes(unavailableIndex)) {
 			try {
 				const host = await options.linkCandidates?.(link) ?? [];
+				signal?.throwIfAborted();
 				if ('paths' in host) {
 					if (host.missingLibraries.length && addReason(check, tr('已跳过不存在的登记目录','Skipped missing registered folders') + ' · ' + host.missingLibraries.join(', ')))
 						check.coverage.skipped += host.missingLibraries.length;
@@ -162,6 +169,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 				}
 				for (const path of 'paths' in host ? host.paths : host) candidates.add(path);
 			} catch {
+				signal?.throwIfAborted();
 				if (addReason(check, unavailableIndex)) check.coverage.unknown++;
 			}
 		}
@@ -209,6 +217,7 @@ function reasonForUnknown(check: DiagnosticCheckResult) {
 export async function inspectLinks(options: DiagnosticOptions, inventory: Inventory, root: string, location: string,
 	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}) {
 	const {links, anchors, portability} = checks;
+	const checkpoint = diagnosticCheckpoint(options.signal);
 	const all = [links, anchors, portability].filter((item): item is DiagnosticCheckResult => !!item);
 	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
 	for (const check of all) {
@@ -216,6 +225,8 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 		reportUnreadableNotes(check, inventory);
 	}
 	for (const note of inventory.notes) {
+		const pause = checkpoint?.();
+		if (pause) await pause;
 		const footnotes = links ?? anchors;
 		if (footnotes && (note.body.includes('[^') || note.body.includes('^[')))
 			inspectFootnotes(footnotes,maskLiterals(prose(note.body)),note.path,note.lineOffset);
@@ -231,6 +242,7 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 		let native: LinkOccurrence[] | undefined;
 		if (options.collectLinks) {
 			try {native = await options.collectLinks(source);} catch {/* Treat a cache failure as partial. */}
+			options.signal?.throwIfAborted();
 			if (native === undefined) for (const check of all) check.coverage.unknown++;
 		}
 		if (note.problem) for (const check of all) {
@@ -242,6 +254,8 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 			addReason(check, tr('部分 Markdown 属性中的链接未能验证。','Some links in Markdown frontmatter could not be verified.'));
 		}
 		for (const occurrence of native ?? staticOccurrences(note)) {
+			const pause = checkpoint?.();
+			if (pause) await pause;
 			const line = occurrence.line;
 			if (native && line !== undefined && dynamic.some(block => line >= block.line + note.lineOffset && line <= block.endLine + note.lineOffset))
 				continue;
@@ -299,3 +313,4 @@ export async function inspectLinks(options: DiagnosticOptions, inventory: Invent
 	}
 	for (const check of all) reasonForUnknown(check);
 }
+import {diagnosticCheckpoint} from './checkpoint.ts';
