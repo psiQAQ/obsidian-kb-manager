@@ -45,7 +45,8 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 		const moveState=id=>{
 			const plugin=window.app.plugins.getPlugin(id);
 			if(plugin.catalog.some(lib=>lib.location==='Renamed') && !plugin.catalog.some(lib=>lib.location==='Alpha'))return 'complete';
-			if(window.kbQANotices.some(message=>message.includes('EBUSY')) && document.querySelector('.kb-manager-sidebar')?.innerText.includes('Review and continue'))return 'busy';
+			const renameBlocked=window.kbQANotices.some(message=>/\b(?:EBUSY|EPERM):[^\n]*\brename\b/u.test(message));
+			if(renameBlocked && document.querySelector('.kb-manager-sidebar')?.innerText.includes('Review and continue'))return 'busy';
 		};
 		const first=await observe('move result or Windows file lock',moveState,pluginId);
 		if(first==='busy'){
