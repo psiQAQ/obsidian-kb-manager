@@ -85,8 +85,8 @@ function comparison(parent:HTMLElement,current:DiagnosticReport,previous:readonl
 			if(!items.length)continue;
 			const list=group.createEl('ul');
 			for(const {checkId,diagnostic} of items){
-				const location=diagnostic.file ? diagnostic.file+(diagnostic.line ? ':'+diagnostic.line : '') : undefined;
-				list.createEl('li',{text:[names.get(checkId)??checkId,location,diagnostic.message].filter(Boolean).join(' · ')});
+				const location=diagnostic.file ? [diagnostic.file,diagnostic.line,diagnostic.column].filter(value=>value!==undefined).join(':') : undefined;
+				list.createEl('li',{text:[names.get(checkId)??checkId,location,diagnostic.field,diagnostic.message].filter(Boolean).join(' · ')});
 			}
 		}
 	}

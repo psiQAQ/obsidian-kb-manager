@@ -134,6 +134,8 @@ function reportFromLog(value: unknown, filename: string): DiagnosticReport | und
 			if (!isRecord(item) || typeof item.severity !== 'string' || !allowedSeverity.has(item.severity) || typeof item.code !== 'string' ||
 				typeof item.message !== 'string' || (item.file !== undefined && !relativePath(item.file)) ||
 				(item.evidence !== undefined && typeof item.evidence !== 'string') ||
+				(item.field !== undefined && typeof item.field !== 'string') ||
+				(item.column !== undefined && (item.line === undefined || typeof item.column !== 'number' || !Number.isSafeInteger(item.column) || item.column < 1)) ||
 				(item.line !== undefined && (typeof item.line !== 'number' || !Number.isSafeInteger(item.line) || item.line < 1))) return;
 		}
 	}

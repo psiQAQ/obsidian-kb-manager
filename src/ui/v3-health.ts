@@ -189,13 +189,14 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			for(const {item,name} of group){
 				const finding=list.createDiv({cls:'kb-v3-finding'});
 				finding.createEl('p',{text:item.message});
-				if(item.file)finding.createEl('code',{cls:'kb-check-location',text:item.line?item.file+':'+item.line:item.file});
+				const location=[item.file,item.line,item.column].filter(value=>value!==undefined).join(':');
+				if(item.file)finding.createEl('code',{cls:'kb-check-location',text:location});
 				const detail=finding.createEl('details',{cls:'kb-check-evidence'});
 				detail.createEl('summary',{text:tr('规则与证据','Rule and evidence')});
 				detail.createEl('code',{text:name+' · '+item.code});
+				if(item.field)detail.createEl('code',{text:item.field});
 				if(item.evidence)detail.createEl('p',{text:item.evidence});
 				if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile) {
-					const location=item.line?item.file+':'+item.line:item.file;
 					finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button',
 						'aria-label':tr('定位文件','Open file')+' · '+location}}).addEventListener('click',()=>{
 						void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));

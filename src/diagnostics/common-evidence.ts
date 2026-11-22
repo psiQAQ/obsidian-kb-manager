@@ -1,6 +1,6 @@
-import {parse} from 'yaml';
 import {tr} from '../i18n.ts';
 import {prose} from '../kb/audit-markdown.ts';
+import {readBaseEvidence} from './base-evidence.ts';
 import {bindingEvidence} from './binding-evidence.ts';
 import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
@@ -10,7 +10,7 @@ import {footnoteEvidence} from './references.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, libraryLocation, manifestSnapshot} from './snapshot.ts';
-import {isRecord, result} from './types.ts';
+import {isRecord} from './types.ts';
 import type {DiagnosticCheckResult, LinkOccurrence, LinkRequest} from './types.ts';
 
 type Manifest = Awaited<ReturnType<typeof manifestSnapshot>>;
@@ -28,14 +28,6 @@ async function* readStructured(root: string, inventory: Inventory, extension: st
 		} catch {signal?.throwIfAborted();}
 		yield {file,text};
 	}
-}
-
-function baseData(text: string) {
-	try {
-		const data: unknown = parse(text);
-		// Bridge only plain JSON values. YAML aliases can create cyclic objects.
-		return JSON.parse(JSON.stringify(data)) as unknown;
-	} catch {return undefined;}
 }
 
 export function commonEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
@@ -127,21 +119,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
 		case 'bindings': return {result:check,...await bindingEvidence(options,location,manifest,bundled)};
-		case 'bases': {
-			const noteCoverage = result({id:check.id,name:check.name});
-			reportUnreadableNotes(noteCoverage,inventory);
-			const files = [];
-			for await (const {file,text} of readStructured(root,inventory,'.base',options)) files.push({file,data:text === undefined ? undefined : baseData(text),unreadable:text === undefined});
-			const notes = [];
-			for (const {path:file,problem,body,lineOffset} of inventory.notes) {
-				const pause = checkpoint?.();
-				if (pause) await pause;
-				const blocks = fencedBlocks(body).filter(block => block.language === 'base')
-					.map(({source,line}) => ({data:baseData(source),line:line+lineOffset}));
-				notes.push({file,problem,blocks});
-			}
-			return {result:check, files, notes, noteCoverage};
-		}
+		case 'bases': return readBaseEvidence(options,location,inventory,check);
 		case 'links': case 'anchors':
 			return {result:check, notes:await getLinks(), linksSelected:selected.has('links'), anchorsSelected:selected.has('anchors'), desktop:!!options.resolveLink};
 		case 'canvas': return {result:check, canvases:await getCanvases(), portabilitySelected:selected.has('portability')};

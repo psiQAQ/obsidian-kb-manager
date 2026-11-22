@@ -2,19 +2,21 @@ import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
 import {checkKitVersion} from '../kb/check-kit.ts';
 import {diagnosticEngineVersion} from '../kb/common-rules.ts';
+import checkBases from '../../assets/checks/common/bases.mjs';
 import checkBindings from '../../assets/checks/common/bindings.mjs';
+import {readBaseEvidence} from './base-evidence.ts';
 import {bindingEvidence} from './binding-evidence.ts';
 import {bundledCommonDigest, bundledCommonRule} from './bundled-common.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
 import {commonCheckTrusted, commonSnapshot, runCommon} from './common.ts';
 import {commonEvidence} from './common-evidence.ts';
-import {addReason} from './coverage.ts';
+import {addReason, reportInventoryCoverage} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
 import {traceDiagnosticInputs} from './provenance.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelectedTemplateScripts, templateSnapshot} from './snapshot.ts';
 import {runSpecial, specialCheckTrusted} from './special.ts';
-import {inspectBases, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
+import {inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
 import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticRuleVersion, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
 
@@ -179,7 +181,10 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
 				case 'bindings': checkBindings({result:check,...await bindingEvidence(linkOptions,located,manifest)},{tr}); break;
-				case 'bases': await inspectBases(check, root, found, signal, trace); break;
+				case 'bases':
+					reportInventoryCoverage(check,found);
+					checkBases(await readBaseEvidence(linkOptions,located,found,check),{tr,addReason});
+					break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}

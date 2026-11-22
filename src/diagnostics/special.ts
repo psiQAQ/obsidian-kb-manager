@@ -145,8 +145,11 @@ export function readFindings(data: unknown, common = false): Diagnostic[] | unde
 			typeof row.code !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/u.test(row.code) || !printable(row.message, 1000) ||
 			(row.file !== undefined && !relativePath(row.file)) ||
 			(row.line !== undefined && (typeof row.line !== 'number' || !Number.isSafeInteger(row.line) || row.line < 1)) ||
+			(row.column !== undefined && (row.line === undefined || typeof row.column !== 'number' || !Number.isSafeInteger(row.column) || row.column < 1)) ||
+			(row.field !== undefined && !printable(row.field, 512)) ||
 			(row.evidence !== undefined && !printable(row.evidence, common ? 100000 : 1000))) return;
-		diagnostics.push({severity: row.severity, code: row.code, message: row.message, file: row.file, line: row.line, evidence: row.evidence});
+		diagnostics.push({severity: row.severity, code: row.code, message: row.message, file: row.file, line: row.line, evidence: row.evidence,
+			...(row.column !== undefined && {column:row.column}), ...(row.field !== undefined && {field:row.field})});
 	}
 	return diagnostics;
 }

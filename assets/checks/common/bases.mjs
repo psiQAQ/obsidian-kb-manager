@@ -12,6 +12,27 @@ function validFilter(value, depth = 0) {
 
 export default function checkBases({result: check, files, notes, noteCoverage}, {tr, addReason}) {
 	let dynamicExpressions = 0;
+	function inspectPaths(file, paths = []) {
+		for (const {status, kind, field, line, column, expression, value} of paths) {
+			const evidence = Array.from(value === undefined ? expression : JSON.stringify(value), character => {
+				const code = character.charCodeAt(0);
+				return code < 32 || code === 127 ? '\\u' + code.toString(16).padStart(4,'0') : character;
+			}).join('');
+			const position = {file,field,line,column,evidence};
+			if (status === 'unverified') {
+				check.coverage.unknown++;
+				check.diagnostics.push({...position,severity:'info',code:'base-path-unverified',message:tr('此过滤条件的路径无法静态确认。','The filter path could not be verified statically.')});
+				addReason(check,tr('部分过滤器路径需要在 Vault 中确认。','Some filter paths need to be verified in the vault.'));
+				continue;
+			}
+			check.coverage.checked++;
+			if (status === 'relative') check.diagnostics.push({...position,severity:'warning',code:'base-path-relative',message:tr(
+				'Bases 路径以 Vault 根目录为基准。请检查 ./ 或 ../ 开头的路径。','Bases paths are relative to the vault root. Review the path beginning with ./ or ../.')});
+			if (status === 'missing') check.diagnostics.push({...position,severity:'info',code:'base-path-missing-folder',message:kind === 'inFolder'
+				? tr('Vault 中未找到过滤器指定的文件夹。','The folder used by the filter was not found in the vault.')
+				: tr('Vault 中未找到此前缀指向的文件夹。','The folder used as a path prefix was not found in the vault.')});
+		}
+	}
 	function inspect(file, base, line) {
 		function fail(code, message) {check.diagnostics.push({severity:'error', code, message, file, line});}
 		if (base === null) return;
@@ -35,7 +56,7 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 			else dynamicExpressions++;
 		}
 	}
-	for (const {file, data, unreadable} of files) {
+	for (const {file, data, paths, unreadable} of files) {
 		if (unreadable) {
 			check.coverage.unknown++;
 			check.diagnostics.push({severity:'info', code:'unreadable-file', file, message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')});
@@ -43,6 +64,7 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 		} else {
 			check.coverage.checked++;
 			inspect(file, data);
+			inspectPaths(file, paths);
 		}
 	}
 	check.coverage.unknown += noteCoverage.coverage.unknown;
@@ -55,9 +77,10 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 			check.diagnostics.push({severity:'info', code:'unverified-markdown-body', file, line:problem.line, message});
 			addReason(check, tr('部分 Markdown 正文无法与属性分开。','Some Markdown bodies could not be separated from their frontmatter.'));
 		}
-		for (const {data, line} of blocks) {
+		for (const {data, line, paths} of blocks) {
 			check.coverage.checked++;
 			inspect(file, data, line);
+			inspectPaths(file, paths);
 		}
 	}
 	check.coverage.unknown += dynamicExpressions;

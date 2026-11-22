@@ -7,6 +7,8 @@ export interface Diagnostic {
 	message: string;
 	file?: string;
 	line?: number;
+	column?: number;
+	field?: string;
 	evidence?: string;
 }
 

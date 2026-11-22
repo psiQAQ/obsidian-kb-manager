@@ -25,12 +25,14 @@ const rules = new Map<string, (evidence: never, tools: typeof helpers) => unknow
 
 const helpers = {tr, addReason, validText:printable};
 
-const bindingsPath = 'checks/common/bindings.mjs';
-const legacyBindingsDigest = '6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49';
+const previousBundledDigests = new Map([
+	['checks/common/bindings.mjs','6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49'],
+	['checks/common/bases.mjs','9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104'],
+]);
 
 export function bundledCommonDigest(check: SpecialCheck) {
 	const current = commonRuleDigests()[check.path];
-	if (check.digest && (current === check.digest || check.path === bindingsPath && check.digest === legacyBindingsDigest))
+	if (check.digest && (current === check.digest || previousBundledDigests.get(check.path) === check.digest))
 		return current;
 	return undefined;
 }
