@@ -65,9 +65,9 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 				}
 			});
 			await plugin.exclusive(library.location,()=>applyTemplateUpdate(plugin.disk,plugin.config,plan,host,checkEditors));
+			await plugin.refresh();
 			preview.close();
 			dialog.close();
-			await plugin.refresh();
 		}).setCta();
 		preview.open();
 	}).setCta();

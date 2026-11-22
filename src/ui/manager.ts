@@ -214,8 +214,15 @@ export class ManagerView extends ItemView {
 			})); return;
 		}
 		const id=lib.identity.id;
+		const location=lib.location;
 
 		row.addExtraButton(button=>button.setIcon('ellipsis').setTooltip(tr('知识库操作','Library actions')).onClick(()=>{
+			// A catalog update can finish while the visible row is still waiting for a history redraw.
+			const lib=this.plugin.catalog.find(current=>current.location===location && current.identity?.id===id);
+			if(!lib || lib.problem || lib.duplicate){
+				new Notice(tr('知识库已变化，请刷新管理器。','The library changed. Refresh the manager.'));
+				return;
+			}
 			const owner=button.extraSettingsEl.win;
 			const menu=new Menu();
 			const action=(title:string,icon:string,run:()=>void|Promise<void>)=>menu.addItem(item=>item.setTitle(title).setIcon(icon).onClick(async()=>{
