@@ -105,13 +105,13 @@ async function connect(url) {
 		socket.addEventListener('open', () => { cancelDeadline(timer); resolve(); }, { once: true });
 		socket.addEventListener('error', () => { cancelDeadline(timer); reject(new Error('Obsidian debugger connection failed')); }, { once: true });
 	});
-	async function call(method, params = {}) {
+	async function call(method, params = {}, timeout = 45000) {
 		const id = ++sequence;
 		let timer;
 		try {
 			const reply = await new Promise((resolve, reject) => {
 				pending.set(id, { resolve, reject });
-				timer = deadlineTimer(() => reject(new Error('Debugger timed out on ' + method)), 45000);
+				timer = deadlineTimer(() => reject(new Error('Debugger timed out on ' + method)), timeout);
 				socket.send(JSON.stringify({ id, method, params }));
 			});
 			if (reply.error) throw new Error(JSON.stringify(reply.error));
@@ -191,8 +191,8 @@ export async function launchDesktop(fixture, executable, receipt = 'process') {
 			if (verified && !childExited) {
 				const browser = await readDebugger('/json/version');
 				const control = await connect(verifyDebuggerUrl(browser.webSocketDebuggerUrl));
-				try { await control.call('Browser.close'); }
-				catch (error) { if (!/Closed Obsidian debugger/u.test(String(error))) throw error; }
+				try { await control.call('Browser.close', {}, 4000); }
+				catch (error) { if (!/Closed Obsidian debugger|timed out on Browser.close/u.test(String(error))) throw error; }
 				finally { control.disconnect(); }
 			}
 		} finally {
@@ -202,6 +202,7 @@ export async function launchDesktop(fixture, executable, receipt = 'process') {
 			await writeFile(join(fixture.run, receipt + '-output.log'), output);
 			await json(join(fixture.run, receipt + '-exit.json'), { pid: child.pid, exited: childExited, code: child.exitCode });
 		}
+		if (child.pid && !childExited) throw new Error('Isolated Obsidian process did not exit: ' + child.pid);
 	}
 	try {
 		const port = await until(async () => {
@@ -240,7 +241,7 @@ export async function launchDesktop(fixture, executable, receipt = 'process') {
 
 export async function trustFixture(desktop) {
 	await until(() => desktop.evaluate(id => {
-		if (window.app.plugins.plugins[id]) return true;
+		if (window.app?.plugins?.plugins?.[id]) return true;
 		const trust = [...document.querySelectorAll('.modal.mod-trust-folder button')]
 			.find(button => /^(Trust author and enable plugins|信任仓库作者并启用插件)$/iu.test(button.textContent.trim()));
 		if (trust && !window.kbFixtureTrustClicked) {

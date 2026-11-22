@@ -94,9 +94,11 @@ version = "1"
 		await desktop.evaluate(() => {
 			const control = document.querySelector('.kb-manager-sidebar .kb-manager-heading .clickable-icon');
 			if (!control) throw new Error('Manager refresh button unavailable');
+			window.kbDesktopPreviousHeading=control;
 			window.kbDesktopMeasurements.begin();
 			control.click();
 		});
+		await until(()=>desktop.evaluate(()=>!window.kbDesktopPreviousHeading.isConnected),'manual refresh to replace the previous panel');
 		result.panelRefresh = await measurePanel();
 		if (size) {
 			await desktop.evaluate(name => {
