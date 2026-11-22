@@ -43,13 +43,13 @@ function indexedPaths(index, libraryRoot) {
 	const indexed = new Set();
 	const definitions = new Map();
 	const labelKey = label => label.trim().replace(/\s+/gu, ' ').toUpperCase().toLowerCase();
-	const definition = /^ {0,3}\[([^\[\]\n]+)\]:[ \t]*(<[^<>\n]*>|[^\s<>]+?)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gmu;
+	const definition = /^ {0,3}\[([^[\]\n]+)\]:[ \t]*(<[^<>\n]*>|[^\s<>]+?)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gmu;
 	const prose = removeCode(index.body).replace(definition, (_, label, destination) => {
 		const key = labelKey(label);
 		if (!definitions.has(key)) definitions.set(key, destination);
 		return '';
 	});
-	const links = /(?<!!)\[([^\n\[\]]*)\](?:\((<[^>\n]+>|[^\n)]+)\)|\[([^\n\[\]]*)\])|(?<!!)\[\[([^\n\]#|]+)(?:[^\n\]]*)\]\]/gu;
+	const links = /(?<!!)\[([^\n[\]]*)\](?:\((<[^>\n]+>|[^\n)]+)\)|\[([^\n[\]]*)\])|(?<!!)\[\[([^\n\]#|]+)(?:[^\n\]]*)\]\]/gu;
 	for (const [, text, inline, reference, rawWiki] of prose.matchAll(links)) {
 		const rawMarkdown = inline ?? (reference !== undefined ? definitions.get(labelKey(reference || text)) : undefined);
 		if (rawMarkdown) {
