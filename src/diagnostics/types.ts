@@ -21,7 +21,7 @@ export interface DiagnosticCheckResult {
 	rule?: DiagnosticRuleVersion;
 }
 
-export interface DiagnosticRuleVersion {engine:'legacy'|'bundled'|'node'; version:string; path?:string; digest?:string}
+export interface DiagnosticRuleVersion {engine:'legacy'|'bundled'|'node'; version:string; path?:string; digest?:string; sourceDigest?:string}
 export interface DiagnosticInputVersion {schemaVersion:1; libraryPath:string; fingerprint:string; files:string[]; directories:string[]}
 
 export interface TemplateIdentity { id: string; version: string }

@@ -4,10 +4,12 @@ export default function checkBindings({result: check, manifest, bindings, librar
 		check.reason = manifest.reason;
 		return check;
 	}
-	for (const {path, fingerprint, root, status, digest} of bindings) {
+	for (const {path, fingerprint, root, status, digest, verification, evidence} of bindings) {
 		if (status === 'readable') {
-			check.coverage.checked++;
-			if (digest !== fingerprint) check.diagnostics.push({severity:'warning', code:'binding-drift', file:path, message:tr('受管文件内容与登记指纹不同，请复核绑定。','The managed file differs from its saved fingerprint. Review its bindings.')});
+			const binding = verification ?? (digest === fingerprint ? 'verified' : 'unknown');
+			check.coverage[binding === 'unknown' ? 'unknown' : 'checked']++;
+			if (binding === 'changed') check.diagnostics.push({severity:'warning', code:'binding-drift', file:path, evidence, message:tr('受管路径绑定已经改变或目标不可用，请检查原位置的链接或过滤器。','A managed path binding changed or its target is missing. Check the original link or filter.')});
+			if (binding === 'unknown') check.diagnostics.push({severity:'info', code:'binding-unverified', file:path, message:tr('缺少可核对的原始版本，或当前格式无法验证绑定。','Could not verify the binding from the available original version and supported file syntax.')});
 			if (root && libraryPath !== undefined && root !== libraryPath)
 				check.diagnostics.push({severity:'warning', code:'binding-root-drift', file:path, message:tr('受管绑定仍记录其他 Vault 路径。','The managed binding still records a different vault path. Review it before repairing the binding.')});
 			if (root && libraryPath === undefined) check.coverage.unknown++;
@@ -19,6 +21,6 @@ export default function checkBindings({result: check, manifest, bindings, librar
 					tr('无法核对受管文件。','Could not verify the managed file. Check its path and permissions.')});
 		}
 	}
-	if (check.coverage.unknown) check.reason = tr('受管文件不可读或当前入口没有提供 Vault 相对位置。','Some managed files were unreadable or their vault-relative location was unavailable.');
+	if (check.coverage.unknown) check.reason = tr('部分受管绑定需要可读文件、可核对的原始版本或 Vault 相对位置才能验证。','Some managed bindings need readable files, a verifiable original version, or a vault-relative location.');
 	return check;
 }

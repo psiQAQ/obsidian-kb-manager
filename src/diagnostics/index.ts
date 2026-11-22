@@ -1,7 +1,10 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
+import {checkKitVersion} from '../kb/check-kit.ts';
 import {diagnosticEngineVersion} from '../kb/common-rules.ts';
-import {bundledCommonRule} from './bundled-common.ts';
+import checkBindings from '../../assets/checks/common/bindings.mjs';
+import {bindingEvidence} from './binding-evidence.ts';
+import {bundledCommonDigest, bundledCommonRule} from './bundled-common.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
 import {commonCheckTrusted, commonSnapshot, runCommon} from './common.ts';
 import {commonEvidence} from './common-evidence.ts';
@@ -11,7 +14,7 @@ import {inspectLinks} from './links.ts';
 import {traceDiagnosticInputs} from './provenance.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelectedTemplateScripts, templateSnapshot} from './snapshot.ts';
 import {runSpecial, specialCheckTrusted} from './special.ts';
-import {inspectBases, inspectBindings, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
+import {inspectBases, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
 import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticRuleVersion, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
 
@@ -90,8 +93,12 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		function ruleVersion(id: string): DiagnosticRuleVersion | undefined {
 			const commonRule = commonRules.get(id);
 			const specialRule = specials.get(id);
-			if (commonRule) return {engine:bundledCommonRule(commonRule) ? 'bundled' : 'node',
-				version:manifest.checkKit?.version ?? diagnosticEngineVersion, path:commonRule.path, digest:commonRule.digest};
+			if (commonRule) {
+				const digest = bundledCommonDigest(commonRule);
+				const compatible = digest && digest !== commonRule.digest;
+				return {engine:digest ? 'bundled' : 'node', version:compatible ? checkKitVersion : manifest.checkKit?.version ?? diagnosticEngineVersion,
+					path:commonRule.path, digest:digest ?? commonRule.digest, ...(compatible && {sourceDigest:commonRule.digest})};
+			}
 			if (specialRule) return {engine:'node', version:template.template?.version ?? diagnosticEngineVersion,
 				path:specialRule.path, digest:specialRule.digest};
 			if (generalIds.has(id)) return {engine:'legacy', version:diagnosticEngineVersion};
@@ -160,7 +167,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				if (rule) {
 					push(await runCommon(rule, check, options, vault, () => {
 						readCommonEvidence ??= commonEvidence(linkOptions,located,found,manifest,template,templateDirs,new Set(commonRules.keys()));
-						return readCommonEvidence(check);
+						return readCommonEvidence(check,!!bundledCommonRule(rule));
 					}));
 					continue;
 				}
@@ -171,7 +178,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				switch (check.id) {
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
-				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined, signal, trace); break;
+				case 'bindings': checkBindings({result:check,...await bindingEvidence(linkOptions,located,manifest)},{tr}); break;
 				case 'bases': await inspectBases(check, root, found, signal, trace); break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;

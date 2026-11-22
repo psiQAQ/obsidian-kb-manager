@@ -25,8 +25,18 @@ const rules = new Map<string, (evidence: never, tools: typeof helpers) => unknow
 
 const helpers = {tr, addReason, validText:printable};
 
+const bindingsPath = 'checks/common/bindings.mjs';
+const legacyBindingsDigest = '6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49';
+
+export function bundledCommonDigest(check: SpecialCheck) {
+	const current = commonRuleDigests()[check.path];
+	if (check.digest && (current === check.digest || check.path === bindingsPath && check.digest === legacyBindingsDigest))
+		return current;
+	return undefined;
+}
+
 export function bundledCommonRule(check: SpecialCheck) {
-	if (check.digest && commonRuleDigests()[check.path] === check.digest) return rules.get(check.path);
+	if (bundledCommonDigest(check)) return rules.get(check.path);
 	return undefined;
 }
 

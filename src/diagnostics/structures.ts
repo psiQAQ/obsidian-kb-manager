@@ -5,7 +5,7 @@ import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
 import {inspectPdfFragment} from './references.ts';
 import type {EvidenceOptions, InputTrace} from './provenance.ts';
-import {decode, hash, readRelative, relativePath} from './snapshot.ts';
+import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, manifestSnapshot} from './snapshot.ts';
 import {isRecord, printable} from './types.ts';
 import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkRequest} from './types.ts';
@@ -313,25 +313,4 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 	if (dynamicExpressions) addReason(check, tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.'));
 }
 
-export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string, signal?: AbortSignal, trace?: InputTrace) {
-	if (!manifest.parsed) {check.coverage.unknown++; check.reason = manifest.reason; return;}
-	for (const binding of manifest.parsed.identity?.managed ?? []) {
-		try {
-			const contents = await readRelative(root, binding.path, undefined, signal, trace);
-			check.coverage.checked++;
-			if (hash(contents) !== binding.fingerprint) check.diagnostics.push({severity:'warning', code:'binding-drift', file:binding.path, message:tr('受管文件内容与登记指纹不同，请复核绑定。','The managed file differs from its saved fingerprint. Review its bindings.')});
-			if (binding.root && location !== undefined && binding.root !== location)
-				check.diagnostics.push({severity:'warning', code:'binding-root-drift', file:binding.path, message:tr('受管绑定仍记录其他 Vault 路径。','The managed binding still records a different vault path. Review it before repairing the binding.')});
-			if (binding.root && location === undefined) check.coverage.unknown++;
-		} catch (error) {
-			signal?.throwIfAborted();
-			const missing = isRecord(error) && error.code === 'ENOENT';
-			check.coverage[missing ? 'checked' : 'unknown']++;
-			check.diagnostics.push({severity:missing ? 'warning' : 'info', code:missing ? 'missing-binding' : 'binding-unverified',
-				file:binding.path, message:missing ? tr('清单登记的受管文件缺失。','The managed file in the manifest is missing. Restore it or review its binding.') :
-					tr('无法核对受管文件。','Could not verify the managed file. Check its path and permissions.')});
-		}
-	}
-	if (check.coverage.unknown) check.reason = tr('受管文件不可读或当前入口没有提供 Vault 相对位置。','Some managed files were unreadable or their vault-relative location was unavailable.');
-}
 import {diagnosticCheckpoint} from './checkpoint.ts';

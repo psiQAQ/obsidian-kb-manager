@@ -36,6 +36,7 @@ export function traceDiagnosticInputs() {
 	return {
 		file: (path: string, value: string) => record(files,path,value),
 		directory: (path: string, value: string) => record(folders,path,value),
+		untracked: () => {consistent = false;},
 		finish(libraryPath: string): DiagnosticInputVersion | undefined {
 			if (!consistent || !files.size && !folders.size) return;
 			return {schemaVersion:1, libraryPath, fingerprint:fingerprint(libraryPath,files,folders), files:[...files.keys()].sort(), directories:[...folders.keys()].sort()};
@@ -58,7 +59,8 @@ export function validRuleVersion(value: unknown): value is DiagnosticRuleVersion
 	return isRecord(value) && typeof value.version === 'string' && value.version.length <= 512 &&
 		(value.engine === 'legacy' || value.engine === 'bundled' || value.engine === 'node') &&
 		(value.path === undefined || relativePath(value.path)) &&
-		(value.digest === undefined || typeof value.digest === 'string' && digestPattern.test(value.digest));
+		(value.digest === undefined || typeof value.digest === 'string' && digestPattern.test(value.digest)) &&
+		(value.sourceDigest === undefined || typeof value.sourceDigest === 'string' && digestPattern.test(value.sourceDigest));
 }
 
 export type DiagnosticFreshness = 'fresh' | 'stale' | 'unknown';

@@ -1,13 +1,14 @@
 import {parse} from 'yaml';
 import {tr} from '../i18n.ts';
 import {prose} from '../kb/audit-markdown.ts';
+import {bindingEvidence} from './binding-evidence.ts';
 import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, maskLiterals, staticOccurrences} from './links.ts';
 import {footnoteEvidence} from './references.ts';
-import type {EvidenceOptions, InputTrace} from './provenance.ts';
-import {decode, hash, readRelative, relativePath} from './snapshot.ts';
+import type {EvidenceOptions} from './provenance.ts';
+import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, libraryLocation, manifestSnapshot} from './snapshot.ts';
 import {isRecord, result} from './types.ts';
 import type {DiagnosticCheckResult, LinkOccurrence, LinkRequest} from './types.ts';
@@ -35,16 +36,6 @@ function baseData(text: string) {
 		// Bridge only plain JSON values. YAML aliases can create cyclic objects.
 		return JSON.parse(JSON.stringify(data)) as unknown;
 	} catch {return undefined;}
-}
-
-async function bindings(root: string, manifest: Manifest, signal?: AbortSignal, trace?: InputTrace) {
-	const entries = [];
-	for (const {path,fingerprint,root:bindingRoot} of manifest.parsed?.identity?.managed ?? []) {
-		const binding = {path,fingerprint,root:bindingRoot};
-		try {entries.push({...binding,status:'readable',digest:hash(await readRelative(root,path,undefined,signal,trace))});}
-		catch (error) {signal?.throwIfAborted(); entries.push({...binding,status:isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'unreadable'});}
-	}
-	return entries;
 }
 
 export function commonEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
@@ -124,7 +115,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 	const getLinks = () => links ??= readLinks();
 	const getCanvases = () => canvases ??= readCanvases();
 
-	return async (check: DiagnosticCheckResult) => {
+	return async (check: DiagnosticCheckResult, bundled = false) => {
 		const {id} = check;
 		if (['links','anchors','portability','properties','bases','canvas'].includes(id)) reportInventoryCoverage(check,inventory);
 		if (['links','anchors','portability','properties'].includes(id)) reportUnreadableNotes(check,inventory);
@@ -135,7 +126,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 				registration:{registered:options.registered,duplicate:options.duplicate}, inventory:{files:[...inventory.files],
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
-		case 'bindings': return {result:check, manifest:{parsed:!!manifest.parsed,reason:manifest.reason}, bindings:await bindings(root,manifest,signal,options.trace), libraryPath:identifiedVault ? relative : undefined};
+		case 'bindings': return {result:check,...await bindingEvidence(options,location,manifest,bundled)};
 		case 'bases': {
 			const noteCoverage = result({id:check.id,name:check.name});
 			reportUnreadableNotes(noteCoverage,inventory);
