@@ -42,13 +42,10 @@ export function revealSourceTab(plugin: KnowledgeBaseManager, type: string, stat
 		// getViewState also describes restored tabs whose view is still deferred.
 		const existing = workspace.getLeavesOfType(type).find(leaf =>
 			sourceTabKey(type, leaf.getViewState().state ?? {}) === key);
-		if (existing) {
-			await workspace.revealLeaf(existing);
-			return;
-		}
-		const leaf = workspace.getLeaf('tab');
-		await leaf.setViewState({type, state: {...state}, active: true});
+		const leaf = existing ?? workspace.getLeaf('tab');
+		if (!existing) await leaf.setViewState({type, state: {...state}, active: true});
 		await workspace.revealLeaf(leaf);
+		workspace.setActiveLeaf(leaf, {focus: true});
 	};
 	const promise = open().finally(() => pending.delete(key));
 	pending.set(key, promise);
