@@ -1,4 +1,4 @@
-import { gitDisabled } from './ui/device.ts';
+import { assertGitEnabled, gitDisabled } from './ui/device.ts';
 import { registerAuthorship,refreshAuthorship } from './ui/authorship.ts';
 import { registerLibraryCommands } from './ui/library-commands.ts';
 import { registerFileCommands } from './ui/file-commands.ts';
@@ -170,7 +170,7 @@ export default class KnowledgeBaseManager extends Plugin {
 		} catch(error) { if(!this.disposed)new Notice(String(error)); }
 	}
 	async exclusiveGit<T>(location:string, action:()=>Promise<T>){
-		if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
+		assertGitEnabled(this);
 		return this.exclusive(location,action);
 	}
 	private busy = new Set<string>();
@@ -243,14 +243,14 @@ export default class KnowledgeBaseManager extends Plugin {
 		if(this.ribbon)setTooltip(this.ribbon,tr('打开知识库管理器','Open knowledge base manager'));
 		for (const [mode,name] of [['save',tr('保存本库版本',"Save a library version")],['history',tr('查看本库历史',"View library history")]] as const){
 			this.addCommand({id:'version-'+mode,name,callback:async()=>{
-				try{if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));await activeVersion(this,mode);}catch(error){new Notice(String(error),8000);}
+				try{assertGitEnabled(this);await activeVersion(this,mode);}catch(error){new Notice(String(error),8000);}
 			}});
 		}
 		this.addCommand({id:'open-manager',name:tr('打开知识库管理器',"Open knowledge base manager"),callback:()=>this.openManager()});
 		this.addCommand({id:'create-library',name:tr('新建知识库',"Create knowledge base"),callback:async()=>(await this.openManager()).create()});
 		this.addCommand({id:'line-author',name:tr('查看当前行作者','Show current line author'),editorCallback:async(editor,ctx)=>{
 			try {
-				if(gitDisabled(this))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
+				assertGitEnabled(this);
 				const file=ctx.file;
 				const line=editor.getCursor().line+1;
 				if(!file)return;

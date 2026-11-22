@@ -15,6 +15,7 @@ import { createPanelTabs } from './panel-tabs.ts';
 import { Dialog, V3Dialog, dialogContents, showJsonPreview } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
+import { templateIdentityLabel } from './template-labels.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
 
 type Options = Parameters<typeof runDiagnostics>[0];
@@ -116,8 +117,8 @@ function badge(parent:HTMLElement,status:string) {
 
 function summaryStatus(parent:HTMLElement,status:string,diagnostics:readonly Diagnostic[]) {
 	const highest=diagnostics.some(item=>item.severity==='error')?'error':diagnostics.some(item=>item.severity==='warning')?'warning':undefined;
-	badge(parent,status);
-	if(highest && status!=='failed')badge(parent,highest);
+	badge(parent,status==='findings' && highest ? highest : status);
+	if(highest && status!=='findings' && status!=='failed')badge(parent,highest);
 }
 
 function coverage(parent:HTMLElement,value:Report['checks'][number]['coverage']) {
@@ -194,7 +195,9 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 				detail.createEl('code',{text:name+' · '+item.code});
 				if(item.evidence)detail.createEl('p',{text:item.evidence});
 				if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile) {
-					finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button'}}).addEventListener('click',()=>{
+					const location=item.line?item.file+':'+item.line:item.file;
+					finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button',
+						'aria-label':tr('定位文件','Open file')+' · '+location}}).addEventListener('click',()=>{
 						void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
 					});
 				}
@@ -266,7 +269,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	catch(error){dialog.dispose();throw error;}
 	if(lifetime.aborted)return;
 	dialog.modalEl.addClass('kb-v3-health');
-	dialog.facts([[tr('范围','Scope'),lib.location],[tr('模板','Template'),lib.identity?`${lib.identity.template.id} · ${lib.identity.template.version}`:tr('未知','Unknown')]]);
+	const template=lib.identity?.template;
+	dialog.facts([[tr('范围','Scope'),lib.location],[tr('模板','Template'),template?
+		`${templateIdentityLabel(template.id)} · ${template.version}`:tr('未知','Unknown')]]);
 	const tabs=createPanelTabs(dialog.contentEl,tr('检验面板','Library checks'),[
 		{id:'run',label:tr('运行检验','Run checks')},{id:'history',label:tr('历史报告','History')},{id:'tools',label:tr('检验工具','Tools')},
 	] as const,'run',page=>{if(page==='history')void loadHistory();else history?.abort();});
@@ -280,6 +285,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	let choiceRequest=0;
 	lifetime.addEventListener('abort',()=>{running?.abort();history?.abort();},{once:true});
 	let custom=false;
+	let generalCount=0;
+	let templateCount=0;
+	let hasPortability=false;
 	let allVaultCandidates=false;
 	let candidateScope:HTMLDivElement|undefined;
 	const controls:ButtonComponent[]=[];
@@ -287,14 +295,17 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	dialogContents(form).choice(tr('检查范围','Checks to run'),
 		{all:tr('常规与模板专项','General and template checks'),custom:tr('自选检查项','Choose individual checks')},
 		value=>{custom=value==='custom';update();});
-	const guidance=form.createEl('p',{cls:'kb-v3-muted'});
+	const guidance=form.createEl('p',{cls:'kb-v3-muted',attr:{role:'status'}});
 	const choices=form.createDiv();
-	const runRow=new Setting(form).setClass('kb-controls-only');
+	const runActions=form.createDiv({cls:'kb-v3-check-actions'});
 	const errorEl=form.createEl('p',{cls:'kb-git-error',attr:{role:'alert'}});
-	const runButton=new ButtonComponent(runRow.controlEl).setButtonText(tr('开始检验','Start check')).setCta().onClick(()=>{
-		void run(custom?[...selected]:'all').catch((e:unknown)=>{if(!lifetime.aborted)errorEl.setText(String(e));});
+	errorEl.hidden=true;
+	const runButton=new ButtonComponent(runActions).setButtonText(tr('开始检验','Start check')).setCta().onClick(()=>{
+		void run(custom?[...selected]:'all').catch((e:unknown)=>{
+			if(!lifetime.aborted){errorEl.hidden=false;errorEl.setText(String(e));}
+		});
 	});
-	const cancel=new ButtonComponent(runRow.controlEl).setButtonText(tr('取消检验','Cancel check')).onClick(()=>{
+	const cancel=new ButtonComponent(runActions).setButtonText(tr('取消检验','Cancel check')).onClick(()=>{
 		running?.abort();update();
 	});
 	const output=tabs.panels.run.createDiv({cls:'kb-v3-check-output',attr:{'aria-live':'polite'}});
@@ -320,16 +331,20 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			panel.empty();
 			if(!reports.length)panel.createEl('p',{text:tr('尚无检验报告。运行一次检验后可在这里查看。','Run a check to see its report here.')});
 			for(const [index,report] of reports.entries()){
-				const row=new Setting(panel).setName(reportDate(report.startedAt)).setDesc(report.logPath??report.runId);
+				const date=reportDate(report.startedAt),reference=report.logPath??report.runId;
+				const row=new Setting(panel).setName(date).setDesc(reference);
 				badge(row.nameEl,report.status);
-				row.addButton(b=>b.setButtonText(tr('查看报告','View report')).onClick(()=>{
-					panel.empty();
-					new ButtonComponent(panel).setButtonText(tr('返回历史列表','Back to history')).onClick(()=>{void loadHistory();});
-					reportView(panel.createDiv(),report,plugin,lib,{
-						previous:reports.slice(index+1),signal:request.signal,
-						freshness:()=>diagnosticFreshness({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,signal:request.signal},report),
+				row.addButton(b=>{
+					b.buttonEl.setAttribute('aria-label',tr('查看报告','View report')+' · '+date+' · '+reference);
+					b.setButtonText(tr('查看报告','View report')).onClick(()=>{
+						panel.empty();
+						new ButtonComponent(panel).setButtonText(tr('返回历史列表','Back to history')).onClick(()=>{void loadHistory();});
+						reportView(panel.createDiv(),report,plugin,lib,{
+							previous:reports.slice(index+1),signal:request.signal,
+							freshness:()=>diagnosticFreshness({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,signal:request.signal},report),
+						});
 					});
-				}));
+				});
 			}
 		} catch(e){if(!request.signal.aborted)panel.setText(String(e));}
 	}
@@ -348,6 +363,14 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		form.querySelectorAll('input,select').forEach(field=>{(field as HTMLInputElement).disabled=!!running;});
 		choices.hidden=!custom;
 		if(candidateScope)candidateScope.hidden=!selected.has(portabilityCheck.id);
+		const summaries=custom?[tr(`已选 ${selected.size} 项。可选 ${generalCount} 项通用检验和 ${templateCount} 项模板专项。`,
+			`Selected ${selected.size}. Choose from ${generalCount} general checks and ${templateCount} template checks.`)]:
+			[tr(`默认范围包含 ${generalChecks.length} 项常规检验和 ${templateCount} 项模板专项。`,
+				`The default scope includes ${generalChecks.length} general checks and ${templateCount} template checks.`)];
+		if(!custom && hasPortability)summaries.push(tr('如需检验可移植性，请切换到“自选检查项”并勾选。','To check portability, switch to Choose individual checks and select Portability.'));
+		if(!custom && controls.length)summaries.push(tr('可在“自选检查项”中审查并授权脚本。','Choose individual checks to review and approve scripts.'));
+		const summary=summaries.join(tr('',' '));
+		if(guidance.textContent!==summary)guidance.setText(summary);
 		updateRow.settingEl.hidden=!installed;
 		info.setText(installed?tr('本库 README 中有离线命令。规则和运行入口位于 checks/。','The library README contains the offline command. Its runner and rules are in checks/.'):
 			tr('此库沿用内置通用检验。可导出独立入口供命令行使用。','This library uses built-in general checks. Export a runner for command-line use.'));
@@ -364,9 +387,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		installed=common.mode==='kit';
 		knownTemplateChecks=special.checks;
 		const general=installed?common.checks:[...generalChecks,portabilityCheck];
-		const summaries=[tr(`自选列表提供 ${general.length} 项通用检验、${special.checks.length} 项模板专项。`,
-			`The selection list contains ${general.length} general and ${special.checks.length} template checks.`)];
-		if(general.some(check=>check.id===portabilityCheck.id))summaries.push(tr('可移植性检验仅在自选时运行。','Select portability explicitly to run it.'));
+		generalCount=general.length;
+		templateCount=special.checks.length;
+		hasPortability=general.some(check=>check.id===portabilityCheck.id);
 		const approved=trustedDigests(plugin);
 		const specialSources=packText(special.template?.id ?? '');
 		for(const id of selected)if(![...general,...special.checks].some(check=>check.id===id))selected.delete(id);
@@ -376,7 +399,8 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			if(reason || !items.length)choices.createEl('p',{cls:'kb-v3-muted',text:reason ?? (isCommon ?
 				tr('没有可用的通用检验。','No general checks are available.') : tr('没有已声明的专项检验。','No template checks declared.'))});
 			for(const check of items){
-				const row=choices.createEl('label',{cls:'kb-v3-check-choice'});
+				const item=choices.createDiv({cls:'kb-v3-check-choice-row'});
+				const row=item.createEl('label',{cls:'kb-v3-check-choice'});
 				const input=row.createEl('input',{type:'checkbox'});
 				input.checked=selected.has(check.id);
 				input.addEventListener('change',()=>{if(input.checked)selected.add(check.id);else selected.delete(check.id);update();});
@@ -390,10 +414,11 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 					row.title=spec.path+' · '+trust;
 					if(spec.description || spec.reason || !bundled)row.createSpan({cls:'kb-v3-muted',text:[spec.description,spec.reason ?? (bundled?'':trust)].filter(Boolean).join(' · ')});
 					if(spec.digest && !bundled){
-						const review=new ButtonComponent(choices).setButtonText(tr('审查脚本','Review script')).onClick(async()=>{
+						const review=new ButtonComponent(item).setButtonText(tr('审查脚本','Review script')).onClick(async()=>{
 							try {await reviewDiagnosticScript(plugin,lib.location,spec,(isCommon?commonSources:specialSources)[spec.path],renderChoices);}
 							catch(error){new Notice(String(error));}
 						});
+						review.buttonEl.setAttribute('aria-label',tr('审查脚本','Review script')+' · '+name+' · '+spec.path);
 						review.buttonEl.addClass('kb-v3-script-review');controls.push(review);
 					}
 				}
@@ -408,15 +433,13 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 				}
 			}
 		}
-		if(controls.length)summaries.push(tr('可在自选列表中审查并授权脚本。','Choose individual checks to review and approve scripts.'));
-		guidance.setText(summaries.join(tr('',' ')));
 		update();
 	}
 	async function run(checks:readonly string[]|'all'){
 		if(running||lifetime.aborted)return;
 		running=new AbortController();
 		const {signal}=running;
-		errorEl.empty();update();
+		errorEl.hidden=true;errorEl.empty();update();
 		output.empty();
 		output.createEl('p',{text:tr('正在检验…','Running checks…'),attr:{role:'status'}});
 		try{

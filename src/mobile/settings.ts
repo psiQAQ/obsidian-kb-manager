@@ -25,7 +25,7 @@ export class MobileSettings extends PluginSettingTab {
 			aliases:[tr('默认姓名','Default name'),tr('默认邮箱','Default email')],
 			render:setting=>{setting.addButton(c=>c.setButtonText(tr('设置','Configure')).onClick(()=>this.identity()));},
 		},{
-			name:tr('暂停本设备 Git','Pause Git on this device'),
+			name:tr('在本设备暂停知识库 Git','Pause library Git on this device'),
 			render:setting=>{setting.addToggle(c=>c.setValue(p.paused()).onChange(async v=>{
 				p.app.saveLocalStorage(p.manifest.id+':gitDisabled',v);await p.refresh();
 			}));},
@@ -41,7 +41,7 @@ export class MobileSettings extends PluginSettingTab {
 		for(const [label,value,example,change] of [
 			[tr('收藏的父目录（每行一个，可留空）','Favorite parent folders (optional, one per line)'),parents,'knowledge-base',(v:string)=>{parents=v;}],
 			[tr('自定义模板目录（每行一个）','Custom template directories (one per line)'),templates,'templates/wiki',(v:string)=>{templates=v;}]
-		] as const)dlg.multiline(label,value,change,{example});
+		] as const)dlg.multiline(label,value,change,{placeholder:example});
 		const languageLabel=tr('界面语言','Language');
 		new Setting(dlg.contentEl).setName(languageLabel).addDropdown(input=>{
 			input.selectEl.setAttribute('aria-label',languageLabel);

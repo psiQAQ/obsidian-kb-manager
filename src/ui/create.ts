@@ -75,9 +75,10 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	wizard.modalEl.addClass('kb-create-wizard');
 	const frame=wizard.contentEl.createDiv();
 	const progress=frame.createEl('ol',{cls:'kb-wizard-steps',attr:{role:'list','aria-label':tr('创建步骤','Creation steps')}});
-	const steps=[tr('模板','Template'),tr('详情','Details'),tr('确认','Confirm')].map((label,index)=>{
-		const step=progress.createEl('li',{attr:{tabindex:'-1'}});
-		step.createSpan({cls:'kb-wizard-step-number',text:String(index+1)});
+	const stepLabels=[tr('模板','Template'),tr('详情','Details'),tr('确认','Confirm')];
+	const steps=stepLabels.map((label,index)=>{
+		const step=progress.createEl('li');
+		step.createSpan({cls:'kb-wizard-step-number',text:String(index+1),attr:{'aria-hidden':'true'}});
 		step.createSpan({text:label});
 		return step;
 	});
@@ -103,8 +104,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		onSelect:value=>{parent=value;updateDestination();},
 	});
 	details.text(tr('目录名（必填）','Folder name (required)'),'',v=>{input.name=v;updateDestination();},{example:'research-notes'});
-	details.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
-	details.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
+	details.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{placeholder:tr('研究笔记','Research notes')});
+	details.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{placeholder:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	let identityRequired=false;
 	try { requireIdentity(values); } catch { identityRequired=true; }
 	const advanced=detailsPage.createEl('details',{cls:'kb-v3-detail'});
@@ -136,13 +137,15 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	gitFields.text(tr('origin（可选，HTTPS 或 SSH）','Origin (optional, HTTPS or SSH)'),'',v=>{origin=v;});
 
 	function showStep(index:number,page:HTMLElement,focus=true){
+		page.setAttribute('aria-label',stepLabels[index]!);
+		page.tabIndex=-1;
 		pages.replaceChildren(page);
 		for(const [position,step] of steps.entries()){
 			if(position===index)step.setAttribute('aria-current','step');
 			else step.removeAttribute('aria-current');
 		}
 		wizard.contentEl.scrollTop=0;
-		if(focus)steps[index]?.focus();
+		if(focus)page.focus();
 	}
 	function showOutcome(title:string,page:HTMLElement){
 		if(!wizard.contentEl.contains(frame))wizard.contentEl.appendChild(frame);

@@ -90,11 +90,11 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 	const text = (key: 'commitMessage'|'autoCommitMessage'|'commitDateFormat'|'commitHostname'|'blameFormat'|'autoGlobs'|'blameText',
 		label: Label, fallback: string, desc?: Label, multiline = false) =>
 		row(key,label,(setting,state) => addTextField(setting,state.inputValue(key),s => state.updateInput(key,s,s),
-			{example:state.example(key,fallback)},multiline),desc);
+			{placeholder:state.example(key,fallback)},multiline),desc);
 	const number = (key: 'autoCommitMinutes'|'autoPullMinutes'|'autoPushMinutes'|'blameMaxDays'|'refreshSourceControlTimer'|'diffTimeout',
 		label: Label, desc?: Label) =>
 		row(key,label,(setting,state) => addTextField(setting,state.inputValue(key),s => state.updateInput(key,s,/^[0-9]+$/u.test(s)?Number(s):NaN),
-			{example:state.example(key,'0'),numeric:true}),desc);
+			{placeholder:state.example(key,'0'),numeric:true}),desc);
 	const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 		row(key,label,(setting,state) => setting.addToggle(input => input.setValue(state.value(key)).onChange(b => state.set(key,b))),desc);
 	const choice = <K extends ChoiceKey>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
@@ -297,7 +297,7 @@ function folderSettings(plugin: KnowledgeBaseManager, refresh: () => void): Sett
 		render(setting,group) {
 			const draft = form(group);
 			addTextField(setting,draft[field].join('\n'),s=>{draft[field]=s.split('\n').map(line=>line.trim()).filter(Boolean);},
-				{example:field==='parents'?'knowledge-base':'templates/wiki'},true);
+				{placeholder:field==='parents'?'knowledge-base':'templates/wiki'},true);
 			if (field==='templates') draft.templateInput=setting.controlEl.querySelector('textarea');
 		},
 	}));

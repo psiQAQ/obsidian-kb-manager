@@ -17,6 +17,7 @@ interface ComparisonOptions {
 	after:HistorySide;
 	active:()=>boolean;
 	commitParent?:'first'|'other';
+	detached:boolean;
 }
 
 const changeLabel={
@@ -77,7 +78,7 @@ function fileMenu(anchor:HTMLElement,options:ComparisonOptions,file:HistoryFile)
 			const {path}=await toCurrentNote(side,version.file);
 			await showDiff(plugin,{id,file:path,staged:false,comparison:{before:side,after:{kind:'working'},oldFile:version.file}});
 		});
-		add(t('从此版本恢复文件…','Restore file from this version…')+tag,'undo',
+		if(!options.detached)add(t('从此版本恢复文件…','Restore file from this version…')+tag,'undo',
 			()=>reviewHistoryRestore(plugin,lib,dir,side.oid,version.file),lib.identity?.archived);
 	}
 	const rect=anchor.getBoundingClientRect();
@@ -105,6 +106,7 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 	const toolbar=el.createDiv({cls:'kb-comparison-controls'});
 	const toggle=toolbar.createEl('button',{attr:{type:'button'}});
 	const status=toolbar.createSpan({attr:{role:'status'}});
+	const clear=reviewable?toolbar.createEl('button',{text:t('清除本次比较的审阅标记','Clear review marks for this comparison'),attr:{type:'button'}}):undefined;
 	const rows=el.createDiv({cls:'kb-comparison-files'});
 	let tree=plugin.preferences(id).tree;
 	let marks=reviewable?reviewMarks(plugin,storage):new Set<string>();
@@ -112,12 +114,16 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 		if(!reviewable){status.setText(files.length+' '+t('个文件有变更','files changed'));return;}
 		const reviewed=[...keys.values()].filter(key=>marks.has(key)).length;
 		status.setText(t('已审阅','Reviewed')+' '+reviewed+' / '+files.length);
+		if(clear)clear.disabled=reviewed===0;
+	};
+	const saveMarks=(updated:Set<string>)=>{
+		plugin.app.saveLocalStorage(storage,updated.size?[...updated]:null);
+		marks=updated;updateStatus();
 	};
 	const saveMark=(key:string,reviewed:boolean)=>{
 		const updated=reviewMarks(plugin,storage);
 		if(reviewed)updated.add(key);else updated.delete(key);
-		plugin.app.saveLocalStorage(storage,updated.size?[...updated]:null);
-		marks=updated;updateStatus();
+		saveMarks(updated);
 	};
 	const openDiff=async(file:HistoryFile)=>{
 		const oldFile=file.before?.file;
@@ -156,14 +162,15 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 			if(key && review){
 				review.title=t('已审阅','Reviewed');
 				review.checked=marks.has(key);
+				row.dataset.reviewed=String(review.checked);
 				review.onchange=()=>{
-					try{saveMark(key,review.checked);}
+					try{saveMark(key,review.checked);row.dataset.reviewed=String(review.checked);}
 					catch(error){review.checked=marks.has(key);new Notice(String(error));}
 				};
 			}
 			const open=async()=>{
 				await openDiff(file);
-				if(key && review && !review.checked){saveMark(key,true);review.checked=true;}
+				if(key && review && !review.checked){saveMark(key,true);review.checked=true;row.dataset.reviewed='true';}
 			};
 			button.onclick=()=>{if(active())void open().catch(error=>new Notice(String(error)));};
 			const more=row.createEl('button',{cls:'kb-comparison-menu',attr:{type:'button','aria-haspopup':'menu',
@@ -173,6 +180,13 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 			button.oncontextmenu=event=>{event.preventDefault();if(active())fileMenu(button,options,file);};
 		}
 		updateStatus();
+	};
+	if(clear)clear.onclick=()=>{
+		try{
+			const updated=reviewMarks(plugin,storage);
+			for(const key of keys.values())updated.delete(key);
+			saveMarks(updated);render();toggle.focus({preventScroll:true});
+		}catch(error){new Notice(String(error));}
 	};
 	toggle.onclick=()=>{tree=!tree;render();};
 	render();

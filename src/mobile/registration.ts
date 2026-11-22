@@ -87,6 +87,18 @@ export async function discoverMobile(ctx:Catalog){
 	return entries;
 }
 
+export async function previewMobileRemoval(ctx:Catalog,expected:Library){
+	const {location}=expected,{raw,paths}=await ctx.registry.read();
+	const changed=()=>new Error(tr('登记状态已变化，请刷新','Registration state has changed. Refresh the manager.'));
+	if(!paths.includes(location))throw changed();
+	return async()=>{
+		const fresh=(await discoverMobile(ctx)).find(entry=>entry.location===location);
+		if(!fresh || fresh.missing!==expected.missing || fresh.problem!==expected.problem ||
+			fresh.duplicate!==expected.duplicate || fresh.identity?.id!==expected.identity?.id)throw changed();
+		await ctx.registry.write(raw,amendRegistry(paths,{remove:[location]},ctx.configDir));
+	};
+}
+
 export async function verifyLibrary(ctx:Catalog,expected:Library,write=false){
 	const lib=(await discoverMobile(ctx)).find(l=>l.location===expected.location);
 	if(!lib?.identity || lib.problem || lib.duplicate || lib.identity.id!==expected.identity?.id || (write && lib.identity.archived))

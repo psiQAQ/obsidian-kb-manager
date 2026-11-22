@@ -15,7 +15,7 @@ import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
-import { builtinPacks } from '../kb/template-pack.ts';
+import { templateIdentityLabel } from './template-labels.ts';
 import { checkLibrary } from './v3-health.ts';
 import { createPanelTabs } from './panel-tabs.ts';
 import { captureInputSelection } from './input-selection.ts';
@@ -150,10 +150,31 @@ export class ManagerView extends ItemView {
 				}));
 			return;
 		}
-		const template=builtinPacks().find(pack=>pack.id===lib.identity?.template.id);
-		const detail=[lib.location,template?.name ?? lib.identity?.template.id ?? tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
+		const detail=[lib.location,lib.identity?templateIdentityLabel(lib.identity.template.id):tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(host).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
+		if(lib.identity && !lib.problem && !lib.duplicate)row.addButton(b=>b.setButtonText(tr('打开',"Open")).onClick(async ()=>{
+			const entry=lib.identity?.entry ?? lib.mapping?.index;
+			if(!entry){
+				const choices=new Dialog(this.app,lib.location,host.win);
+				const files:TFile[]=[];
+				const folder=this.app.vault.getFolderByPath(lib.location);
+				if(folder)Vault.recurseChildren(folder,file=>{
+					if(file instanceof TFile && file.extension.toLowerCase()==='md')files.push(file);
+				});
+				if(!files.length)choices.lines([tr('目录中没有 Markdown 文件。',"This directory has no Markdown files.")]);
+				for(const file of files)choices.action(file.path.slice(lib.location.length+1),async()=>{
+					await this.plugin.disk.path(file.path);await this.app.workspace.getLeaf(false).openFile(file);choices.close();
+				});
+				choices.open();return;
+			}
+			try {
+				await this.plugin.disk.path(lib.location+'/'+entry);
+				const file=this.app.vault.getAbstractFileByPath(lib.location+'/'+entry);
+				if(file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+				else new Notice(tr('入口不存在：',"Entry not found: ")+entry);
+			} catch(error){new Notice(String(error));}
+		}));
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
 		const expanded=this.expanded===key;
 		const panel=gitDisabled(this.plugin)?undefined:host.createDiv({cls:'kb-library-git',attr:{id:'kb-workspace-panel-'+ ++nextWorkspacePanelId}});
@@ -245,28 +266,6 @@ export class ManagerView extends ItemView {
 			action(tr('移除登记','Remove registration'),'list-x',()=>removeRegistryEntry(this.plugin,lib.location,owner));
 			const bounds=button.extraSettingsEl.getBoundingClientRect();
 			menu.showAtPosition({x:bounds.left,y:bounds.bottom},button.extraSettingsEl.doc);
-		}));
-		row.addButton(b=>b.setButtonText(tr('打开',"Open")).onClick(async ()=>{
-			const entry=lib.identity?.entry ?? lib.mapping?.index;
-			if(!entry){
-				const choices=new Dialog(this.app,lib.location,host.win);
-				const files:TFile[]=[];
-				const folder=this.app.vault.getFolderByPath(lib.location);
-				if(folder)Vault.recurseChildren(folder,file=>{
-					if(file instanceof TFile && file.extension.toLowerCase()==='md')files.push(file);
-				});
-				if(!files.length)choices.lines([tr('目录中没有 Markdown 文件。',"This directory has no Markdown files.")]);
-				for(const file of files)choices.action(file.path.slice(lib.location.length+1),async()=>{
-					await this.plugin.disk.path(file.path);await this.app.workspace.getLeaf(false).openFile(file);choices.close();
-				});
-				choices.open();return;
-			}
-			try {
-				await this.plugin.disk.path(lib.location+'/'+entry);
-				const file=this.app.vault.getAbstractFileByPath(lib.location+'/'+entry);
-				if(file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
-				else new Notice(tr('入口不存在：',"Entry not found: ")+entry);
-			} catch(error){new Notice(String(error));}
 		}));
 		if(panel && expanded){
 			panel.dataset.kbLibraryId=id;

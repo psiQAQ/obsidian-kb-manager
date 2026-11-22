@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {initializeRepository} from '../src/git/repository.ts';
-import {GraphHistory, HistoryLanes, historyRefKey, historyTips, historyTrackColors, historyWorktree, snapshotHistory} from '../src/git/history-graph.ts';
+import {GraphHistory, HistoryLanes, historyRefKey, historyTrackColors, historyWorktree, snapshotHistory} from '../src/git/history-graph.ts';
 import {history} from '../src/git/versions.ts';
 import {committedComparison} from '../src/git/index-history.ts';
 import {historyWindow,historyRowHeight} from '../src/ui/history-window.ts';
@@ -40,7 +40,6 @@ test('fixed branch tips preserve every merge lane across pages and isolate histo
 	for(const all of [false,true]){
 		const snapshot=await snapshotHistory(dir,all);
 		assert.deepEqual(new Set(snapshot.tips),new Set(all?[merge,local,remote,tagged]:[merge]));
-		assert.deepEqual(historyTips(snapshot,['refs/heads/topic','refs/tags/release']),[local,tagged]);
 		const expected=git(['rev-list','--topo-order',...snapshot.tips]).split('\n');
 		const graph=new GraphHistory(dir,snapshot);
 		await graph.load(21);
@@ -52,13 +51,14 @@ test('fixed branch tips preserve every merge lane across pages and isolate histo
 		assert.deepEqual(graph.rows,graph.rows.map(row=>layout.append(row.commit)));
 		assert.equal(graph.rows.find(row=>row.commit.oid===merge).parents.length,2);
 		assert.deepEqual(snapshot.labels.get(merge).map(({kind,name})=>[kind,name]),
-			[['head','HEAD'],['local','main'],['tag','also-main']]);
+			[['local','main'],['tag','also-main']]);
 		assert.deepEqual(snapshot.labels.get(tagged),[{kind:'tag',name:'release',ref:'refs/tags/release',oid:tagged,
 			tagOid:git(['rev-parse','refs/tags/release'])}]);
 		assert(!snapshot.refs.some(ref=>ref.name==='origin/HEAD' || ref.name==='non-commit'));
 		assert(graph.children.get(left).includes(merge));
 		assert(graph.children.get(right).includes(merge));
 	}
+	assert.deepEqual((await snapshotHistory(dir,['refs/heads/topic','refs/tags/release'])).tips,[local,tagged]);
 	const first=await history(dir,undefined,20);
 	git(['update-ref','refs/heads/main',local]);
 	const page2=await history(dir,first.next,20),page3=await history(dir,page2.next,20);
@@ -80,17 +80,32 @@ test('fixed branch tips preserve every merge lane across pages and isolate histo
 	git(['stash','push','--include-untracked','-m','one']);
 	await fs.writeFile(path.join(dir,'note.md'),'second stash\n');
 	git(['stash','push','-m','two']);
-	const snapshot=await snapshotHistory(dir),stashes=snapshot.refs.filter(ref=>ref.kind==='stash');
-	assert.deepEqual(stashes.map(({name,oid})=>[name,oid]),[['stash@{0}',git(['rev-parse','stash@{0}'])],['stash@{1}',git(['rev-parse','stash@{1}'])]]);
-	assert.deepEqual(historyTips(snapshot,'current',true),[merge,...stashes.map(ref=>ref.oid)]);
-	assert.deepEqual(historyTips(snapshot,['refs/heads/topic'],true),[local]);
-	assert.deepEqual(historyTips(snapshot,[historyRefKey(stashes[1])],true),[stashes[1].oid]);
+	git(['switch','topic']);await fs.writeFile(path.join(dir,'note.md'),'topic stash\n');
+	git(['stash','push','-m','topic only']);git(['switch','main']);
+	const snapshot=await snapshotHistory(dir,'current',true),stashes=snapshot.refs.filter(ref=>ref.kind==='stash');
+	assert.deepEqual(stashes.map(({name,oid})=>[name,oid]),[0,1,2].map(i=>['stash@{'+i+'}',git(['rev-parse','stash@{'+i+'}'])]));
+	const [otherStash,...mainStashes]=stashes;
+	assert.deepEqual(snapshot.tips,[merge,...mainStashes.map(ref=>ref.oid)]);
+	assert((await snapshotHistory(dir,'all',true)).tips.includes(otherStash.oid));
+	assert.deepEqual((await snapshotHistory(dir,['refs/heads/topic'],true)).tips,[local]);
+	const customStash=[historyRefKey(otherStash)];
+	assert.deepEqual((await snapshotHistory(dir,customStash,true)).tips,[otherStash.oid]);
+	const hidden=await snapshotHistory(dir,customStash,false);
+	assert.deepEqual(hidden.tips,[]);
+	assert(!hidden.refs.some(ref=>ref.kind==='stash'));assert(!hidden.labels.has(otherStash.oid));
+	git(['branch','-m','topic','renamed-topic']);
+	const stale=await snapshotHistory(dir,['refs/heads/topic'],true);
+	assert.equal(stale.head,merge);assert.deepEqual(stale.tips,[]);
 	assert.equal(await historyWorktree(dir),undefined);
-	const graph=new GraphHistory(dir,snapshot,true);
+	const graph=new GraphHistory(dir,await snapshotHistory(dir),true);
 	assert.equal(graph.workingRow.commit.oid,'worktree');
 	await graph.load(1);
 	assert.equal(graph.rows[0].commit.oid,merge);
 	assert.equal(graph.rows[0].incoming,true);
+	const current=new GraphHistory(dir,snapshot);
+	await current.load(72);
+	assert(!current.indices.has(local));assert(!current.indices.has(otherStash.oid));
+	assert(mainStashes.every(ref=>current.indices.has(ref.oid)));
 });
 
 test('deep history retains native topological order and a bounded rendered window',async t=>{
@@ -141,4 +156,18 @@ test('active history lanes keep distinct palette slots and preserve each continu
 	assert.equal(replacement.color%historyTrackColors,released.color%historyTrackColors);
 	assert.notEqual(replacement.color,released.color);
 	assert.deepEqual(replacement.rails.map(rail=>rail.color),released.rails.map(rail=>rail.color));
+});
+
+test('a merge retains its lane when the first parent already has a track',()=>{
+	const layout=new HistoryLanes();
+	const append=(oid,parents=[])=>layout.append({oid,parents,author:'',timestamp:0,message:''});
+	const worktree=append('worktree',['head']);
+	const merge=append('merge',['head','topic']);
+	assert.equal(merge.parents[0].color,worktree.color);
+	assert.deepEqual(merge.parents[1],{from:merge.lane,to:merge.lane,color:merge.color});
+	const bothActive=append('another-merge',['head','topic']);
+	assert.equal(bothActive.parents[0].startColor,bothActive.color);
+	assert.equal(bothActive.parents[0].color,worktree.color);
+	assert.equal(append('topic').color,merge.color);
+	assert.equal(append('head').color,worktree.color);
 });

@@ -5,9 +5,9 @@ import {constants} from 'node:fs';
 import * as path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {createPreview,destination,instantiate,discoverMobile} from '../src/mobile/catalog.ts';
-import {parseIdentity,readManifest,writePreferences} from '../src/kb/identity-core.ts';
-import {assignMobileCopyId,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
+import {createPreview,destination,instantiate,discoverMobile,newIdentity} from '../src/mobile/catalog.ts';
+import {parseIdentity,readManifest,writeIdentity,writePreferences} from '../src/kb/identity-core.ts';
+import {assignMobileCopyId,previewMobileRemoval,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
 import {applyLibraryBindings,previewBindings,resumeLibraryBindings} from '../src/mobile/bindings.ts';
 import {mobileRepo} from '../src/mobile/disk.ts';
 import {mobileStatus,editIndex,commit,mobileHistory,effectiveAuthor,localAuthor,configure} from '../src/mobile/git.ts';
@@ -249,6 +249,37 @@ test('mobile reads and updates only the plugin data registry',async t=>{
 	assert.equal(await disk.read('.kb-manager/keep.txt'),'keep me');
 	assert.deepEqual(await storage.load(),{language:'en',unrelated:{preserved:true},registeredLibraries:['libs/new']});
 	assert.deepEqual((await discoverMobile(ctx)).map(lib=>lib.location),['libs/new']);
+});
+
+test('mobile removal changes only the registry and refuses stale confirmations',async t=>{
+	const {disk,ctx,storage}=await setup(t);
+	const manifest=writeIdentity('',newIdentity('Healthy'));
+	await disk.mkdir('Healthy');
+	await disk.mkdir('Healthy/.git');
+	await disk.write('Healthy/.git/HEAD','ref: refs/heads/main\n');
+	await disk.write('Healthy/kb.toml',manifest);
+	await disk.write('Healthy/Home.md','Keep this note');
+	await disk.mkdir('Broken');
+	await disk.write('Broken/kb.toml','[broken');
+	await disk.mkdir('Missing');
+	await storage.save({language:'en',registeredLibraries:['Broken','Healthy','Missing']});
+	const entries=await discoverMobile(ctx),healthy=entries.find(lib=>lib.location==='Healthy'),
+		broken=entries.find(lib=>lib.location==='Broken'),missing=entries.find(lib=>lib.location==='Missing');
+	assert.ok(healthy.identity);
+	assert.ok(broken.problem);
+	assert.ok(missing.missing);
+	const stale=await previewMobileRemoval(ctx,healthy);
+	await (await previewMobileRemoval(ctx,broken))();
+	await assert.rejects(stale(),/登记|registry/u);
+	const recovered=await previewMobileRemoval(ctx,missing);
+	await disk.write('Missing/kb.toml',writeIdentity('',newIdentity('Recovered')));
+	await assert.rejects(recovered(),/登记|Registration/u);
+	await (await previewMobileRemoval(ctx,healthy))();
+	assert.deepEqual(await storage.load(),{language:'en',registeredLibraries:['Missing']});
+	assert.equal(await disk.read('Healthy/.git/HEAD'),'ref: refs/heads/main\n');
+	assert.equal(await disk.read('Healthy/Home.md'),'Keep this note');
+	assert.equal(await disk.read('Healthy/kb.toml'),manifest);
+	assert.equal(await disk.read('Broken/kb.toml'),'[broken');
 });
 
 test('mobile root and one-off parent locations work without favorites',async t=>{

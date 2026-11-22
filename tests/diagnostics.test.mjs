@@ -873,14 +873,35 @@ test('compiled CLI uses pure JSON stdout from a Unicode path with no Obsidian ru
 	for (const mode of ['--list','--history']) {
 		const mismatch = invoke('--library',root,'--vault-root',otherVault,mode);
 		assert.equal(mismatch.status,2);
-		assert.equal(JSON.parse(mismatch.stdout).status,'failed');
+		assert.match(JSON.parse(mismatch.stdout).error,/--library/u);
+		assert.ok(!mismatch.stdout.includes('Other vault'));
 		const configFolder = invoke('--library',otherVault,'--vault-root',vault,'--config-dir','Other vault',mode);
 		assert.equal(configFolder.status,2);
 	}
 	const located = invoke('--library',root,'--config-dir','.settings','--checks','fixture.check','--trust-digest',digest(script));
 	assert.equal(located.status,1);
 	assert.equal(JSON.parse(located.stdout).checks[0].diagnostics[0].message,relative);
-	const bad = invoke('--bad');
-	assert.equal(bad.status,2);
-	assert.equal(JSON.parse(bad.stdout).status,'failed');
+	const help = invoke('--help');
+	assert.equal(help.status,0);
+	assert.match(JSON.parse(help.stdout).usage,/kb-check\.cjs --help/u);
+	const secret = 'example-secret-canary';
+	for (const [args,message] of [
+		[['--private-option='+secret],/未知选项|Unknown option/u],
+		[['--library','--list'],/--library.*缺少|Missing value for --library/u],
+		[['--list'],/请使用 --library|library folder with --library/u],
+		[['--help','--history'],/--help.*--list.*--history/u],
+		[['--library',root,'--config-dir','../'+secret],/--config-dir/u],
+		[['--library',root,'--checks',secret+'/?'],/--checks/u],
+		[['--library',root,'--trust-digest',secret],/SHA-256/u],
+		[['--library',path.join(vault,secret),'--list'],/找不到|does not exist/u],
+		[['--library',cli,'--history'],/实际目录|real directory/u],
+	]) {
+		const bad = invoke(...args);
+		assert.equal(bad.status,2);
+		const failure = JSON.parse(bad.stdout);
+		assert.equal(failure.status,'failed');
+		assert.match(failure.error,message);
+		assert.ok(!bad.stdout.includes(secret));
+		assert.ok(!bad.stdout.includes('导出工具.cjs'));
+	}
 });

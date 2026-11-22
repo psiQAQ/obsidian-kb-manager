@@ -41,7 +41,7 @@ export default class MobilePlugin extends Plugin {
 		this.addSettingTab(new MobileSettings(this.app,this));
 		this.addRibbonIcon('library',tr('打开知识库管理器','Open knowledge base manager'),()=>this.open());
 		this.addCommand({id:'open-manager',name:tr('打开知识库管理器','Open knowledge base manager'),callback:()=>this.open()});
-		this.addCommand({id:'create-library',name:tr('创建知识库','Create knowledge base'),callback:()=>createForm(this)});
+		this.addCommand({id:'create-library',name:tr('新建知识库','Create knowledge base'),callback:()=>createForm(this)});
 		registerMobileTemplates(this);
 		this.addCommand({id:'register-library',name:tr('登记知识库清单','Register a library manifest'),callback:()=>manifestForm(this)});
 		this.addCommand({id:'scan-library-registry',name:tr('扫描目录并登记知识库','Scan a folder and register knowledge bases'),callback:()=>scanForm(this)});
@@ -81,7 +81,7 @@ export default class MobilePlugin extends Plugin {
 	}
 	paused(){return this.app.loadLocalStorage(this.manifest.id+':gitDisabled')===true;}
 	report(e:unknown){new Notice(String(e),8000).messageEl.addClass('kb-notice-text');}
-	assertEnabled(){if(this.paused())throw new Error(tr('此设备已暂停知识库 Git','Library Git is paused on this device'));}
+	assertEnabled(){if(this.paused())throw new Error(tr('本设备的知识库 Git 已暂停，可在设置中恢复。','Library Git is paused on this device. Resume it in settings.'));}
 	async exclusive<T>(key:string,action:()=>Promise<T>,lib?:Library){
 		this.assertEnabled();
 		if(this.busy.has(key) || this.busy.has(':catalog'))throw new Error(tr('操作正在进行','Operation in progress'));

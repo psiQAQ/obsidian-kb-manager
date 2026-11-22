@@ -15,7 +15,8 @@ interface DetailOptions {
 	refs:GraphRef[];
 	head:string;
 	children:readonly string[];
-	worktree:boolean;
+	currentRef:string;
+	detached:boolean;
 	author:string;
 	date:string;
 	control:HistoryComparisonControl;
@@ -29,7 +30,7 @@ interface DetailOptions {
 const side=(oid?:string):HistorySide=>oid==='worktree'?{kind:'working'}:oid && oid!=='empty-tree'?{kind:'commit',oid}:{kind:'empty'};
 
 export async function renderHistoryDetail(el:HTMLElement,opts:DetailOptions){
-	const {plugin,lib,dir,commit,refs,head,children,worktree,author,date,control,active,repaint,close,jump,menu}=opts;
+	const {plugin,lib,dir,commit,refs,head,children,currentRef,detached,author,date,control,active,repaint,close,jump,menu}=opts;
 	const t=plugin.t,working=commit.oid==='worktree';
 	const heading=el.createDiv({cls:'kb-history-detail-heading'});
 	heading.createEl('h4',{text:working?t('未提交的更改','Uncommitted changes'):
@@ -51,25 +52,31 @@ export async function renderHistoryDetail(el:HTMLElement,opts:DetailOptions){
 	if(refs.length){
 		const labels=el.createDiv({cls:'kb-history-comparison'});
 		for(const ref of refs){
-			const label=labels.createEl('button',{text:ref.name,cls:['kb-history-ref','kb-history-ref-'+ref.kind],
+			const label=labels.createEl('button',{text:ref.name,cls:['kb-history-ref','kb-history-ref-'+ref.kind,...(ref.ref===currentRef?['kb-history-ref-current']:[])],
 				attr:{type:'button','aria-haspopup':'menu','aria-label':refKind(ref.kind,t)+' · '+ref.name}});
 			label.onclick=()=>menu(label,ref);
 		}
 	}
 	const parent=commit.parents.includes(control.parent)?control.parent:commit.parents[0];
 	control.parent=parent??'';
-	const nav=el.createDiv({cls:'kb-history-comparison'});
-	const navigate=(values:readonly string[],name:string,defaultValue:string)=>{
+	const comparison=el.createDiv({cls:'kb-history-comparison'});
+	const navigate=(values:readonly string[],name:string,parentOptions=false)=>{
 		if(!values.length)return;
-		const dropdown=nav.createEl('select',{attr:{'aria-label':name}});
+		const label=(oid:string)=>oid==='worktree'?t('工作区','Working tree'):oid.slice(0,10);
+		if(values.length===1){
+			const oid=values[0]!,button=historyButton(comparison,name,parentOptions?'arrow-up':'arrow-down');
+			button.title=name+' · '+label(oid);
+			button.onclick=()=>jump(oid);
+			return;
+		}
+		const dropdown=comparison.createEl('select',{attr:{'aria-label':name}});
 		dropdown.createEl('option',{value:'',text:name});
-		for(const oid of values)dropdown.createEl('option',{value:oid,text:oid==='worktree'?t('工作区','Working tree'):oid.slice(0,10)});
-		dropdown.value=defaultValue;
+		for(const [i,oid] of values.entries())dropdown.createEl('option',{value:oid,text:parentOptions?
+			t('父提交','Parent')+' '+(i+1)+' · '+label(oid):label(oid)});
 		dropdown.onchange=()=>{if(dropdown.value)jump(dropdown.value);};
 	};
-	navigate(commit.parents,t('转到父提交','Go to parent'),'');
-	navigate(children,t('转到子提交','Go to child'),'');
-	const comparison=el.createDiv({cls:'kb-history-comparison'});
+	navigate(commit.parents,t('转到父提交','Go to parent'),true);
+	navigate(children,t('转到子提交','Go to child'));
 	const originalBefore=control.override?commit.oid:control.base && control.base!==commit.oid?control.base:working?head:parent;
 	const originalAfter=control.override || commit.oid;
 	const before=side(control.reversed?originalAfter:originalBefore),after=side(control.reversed?originalBefore:originalAfter);
@@ -97,26 +104,24 @@ export async function renderHistoryDetail(el:HTMLElement,opts:DetailOptions){
 	empty.onclick=()=>{control.override='empty-tree';control.reversed=true;repaint();};
 	if(!working){
 		const pin=action('base',t('设为比较基线','Set comparison base'));
-		pin.disabled=control.base===commit.oid;
+		pin.disabled=control.base===commit.oid && !control.override;
 		pin.onclick=()=>{control.base=commit.oid;control.override='';control.reversed=false;repaint();};
-		if(worktree){
-			const compare=action('working',t('与工作区比较','Compare with working tree'));
-			compare.disabled=control.override==='worktree';
-			compare.onclick=()=>{control.override='worktree';control.reversed=false;repaint();};
-		}
+		const compare=action('working',t('与工作区比较','Compare with working tree'));
+		compare.disabled=control.override==='worktree';
+		compare.onclick=()=>{control.override='worktree';control.reversed=false;repaint();};
 	}
 	if(control.base || control.override){
 		const clear=action('clear',t('清除比较选择','Clear comparison selection'));
 		clear.onclick=()=>{control.base='';control.override='';control.reversed=false;repaint();};
 	}
-	if(control.base){
+	if(control.base && !control.override){
 		const label=t('比较基线','Comparison base')+' · ';
 		const base=side(control.base);
 		comparison.createSpan({cls:'kb-history-base',text:label+sideLabel(base),attr:{title:label+(base.kind==='commit'?base.oid:sideLabel(base))}});
 	}
 	const commitParent=!working && !control.reversed && !control.override &&
 		(!control.base || control.base===commit.oid || control.base===parent)?parent===commit.parents[0]?'first':'other':undefined;
-	const result=await renderHistoryComparison(el,{plugin,lib,dir,before,after,active,commitParent});
+	const result=await renderHistoryComparison(el,{plugin,lib,dir,before,after,active,commitParent,detached});
 	if(!active() || result!=='empty')return;
 	if(!comparingMergeParents){
 		el.createEl('p',{text:t('此比较没有文件变更','No file changes in this comparison'),attr:{role:'status'}});

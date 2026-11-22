@@ -14,8 +14,15 @@ export function drawCommitGraph(row:HTMLElement,item:GraphRow,tooltip:string,nod
 	for(const {from,to,color} of item.rails)
 		path('M '+x(from)+' 0 C '+x(from)+' 16 '+x(to)+' 16 '+x(to)+' 32',color);
 	if(item.incoming)path('M '+x(item.lane)+' 0 V 16',item.color);
-	for(const {to,color} of item.parents)
-		path('M '+x(item.lane)+' 16 C '+x(item.lane)+' 24 '+x(to)+' 24 '+x(to)+' 32',color);
+	for(const {to,color,startColor} of item.parents){
+		const fromX=x(item.lane),toX=x(to);
+		if(startColor===undefined)path(`M ${fromX} 16 C ${fromX} 24 ${toX} 24 ${toX} 32`,color);
+		else{
+			const midX=(fromX+toX)/2;
+			path(`M ${fromX} 16 C ${fromX} 20 ${(fromX+midX)/2} 22 ${midX} 24`,startColor);
+			path(`M ${midX} 24 C ${(midX+toX)/2} 26 ${toX} 28 ${toX} 32`,color);
+		}
+	}
 	const marker=svg.createSvg('circle',{cls:[trackClass(item.color),'kb-history-node-'+node],
 		attr:{cx:x(item.lane),cy:16,r:node==='merge' || node==='head'?5:4}});
 	marker.createSvg('title').textContent=tooltip;

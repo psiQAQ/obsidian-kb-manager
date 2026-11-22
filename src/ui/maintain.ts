@@ -32,7 +32,7 @@ export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,ow
 		dialog.contentEl.createEl('p',{text:tr('专项文件需人工核对。本次升级会更新清单格式和日志位置。','Review the check files manually. This upgrade updates the manifest format and log location.')});
 		dialog.lines(checks.manual);
 	} else if(!checks.files.length){
-		dialog.contentEl.createEl('p',{text:tr('当前版本提供通用体检和日志。','General checks and logs are available for this template version.')});
+		dialog.contentEl.createEl('p',{text:tr('当前版本提供通用检验和日志。','General checks and logs are available for this template version.')});
 	} else {
 		for(const file of checks.files){
 			const item=dialog.contentEl.createEl('details');
@@ -90,7 +90,8 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 	const confirm=(archive:boolean)=>{
 		const next=new Dialog(plugin.app,tr('确认清单修改',"Confirm manifest changes"),owner);
 		next.lines([lib.location+'/kb.toml',previous.displayName+' → '+name,previous.description+' → '+description,
-			tr('归档：',"Archived: ")+String(previous.archived)+' → '+String(archive)]);
+			tr('状态：','Status: ')+(previous.archived?tr('已归档','Archived'):tr('活动中','Active'))+' → '+
+				(archive?tr('已归档','Archived'):tr('活动中','Active'))]);
 		next.action(tr('应用',"Apply"),async()=>{
 			if(!name.trim())throw new Error(tr('请输入显示名',"Enter a display name"));
 			await plugin.exclusive(lib.location,async()=>{

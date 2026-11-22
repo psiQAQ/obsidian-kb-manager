@@ -88,7 +88,12 @@ export class HistoryWindow {
 		const visibleStart=Math.floor(this.list.scrollTop/historyRowHeight);
 		const visibleEnd=Math.ceil((this.list.scrollTop+this.list.clientHeight)/historyRowHeight);
 		const tabStop=this.focusIndex>=visibleStart && this.focusIndex<visibleEnd?this.focusIndex:visibleStart;
-		for(const [index,node] of this.mounted)if(index<start || index>=end)node.remove();
+		const focused=this.list.doc.activeElement;
+		let moveFocus=false;
+		for(const [index,node] of this.mounted)if(index<start || index>=end){
+			if(node.contains(focused))moveFocus=true;
+			node.remove();
+		}
 		for(let index=start;index<end;index++){
 			const node=this.mounted.get(index)??this.createRow(index);
 			node.setAttribute('aria-pressed',String(index===this.selected));
@@ -101,5 +106,6 @@ export class HistoryWindow {
 			next.set(index,node);
 		}
 		this.mounted=next;
+		if(moveFocus)(next.get(tabStop)??this.list).focus({preventScroll:true});
 	}
 }

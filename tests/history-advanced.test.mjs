@@ -7,6 +7,8 @@ import {advancedPreview,applyAdvanced} from '../src/git/history-advanced.ts';
 import {hostingLinks} from '../src/git/hosting-links.ts';
 import {guardGit} from '../src/git/guard.ts';
 import {initializeRepository} from '../src/git/repository.ts';
+import {historyWorktree,snapshotHistory} from '../src/git/history-graph.ts';
+import {compareHistory,compareHistoryFile} from '../src/git/index-history.ts';
 
 async function fixture(t){
 	const root=path.resolve('.tmp');
@@ -37,6 +39,19 @@ test('graph previews bind bytes, keep local management files and restore only th
 	await execute({action:'soft',oid:base});assert.equal(git('rev-parse','HEAD'),base);assert.equal(git('show',':note.md'),'revised');
 	await execute({action:'mixed',oid:tip});assert.equal(git('status','--porcelain'),'');
 	await execute({action:'detach',oid:base});assert.equal(await guardGit(dir,new Set(),true),'HEAD');await assert.rejects(guardGit(dir));
+	const snapshot=await snapshotHistory(dir);
+	assert.equal(snapshot.detached,true);assert.equal(snapshot.labels.get(base)[0].kind,'head');
+	const checkedOut=await fs.readFile(path.join(dir,'note.md'));
+	await write('note.md','detached edit\n');
+	const index=await fs.readFile(path.join(dir,'.git','index'));
+	assert.deepEqual(await historyWorktree(dir),{staged:0,unstaged:1});
+	const before={kind:'commit',oid:base},after={kind:'working'};
+	assert.deepEqual((await compareHistory(dir,before,after)).map(file=>file.file),['note.md']);
+	assert.equal((await compareHistoryFile(dir,before,after,'note.md')).after.bytes.toString(),'detached edit\n');
+	assert.deepEqual(await fs.readFile(path.join(dir,'.git','index')),index);assert.equal(git('rev-parse','HEAD'),base);
+	await assert.rejects(advancedPreview(dir,{action:'attach',oid:tip,ref:'refs/heads/main'}));
+	await assert.rejects(advancedPreview(dir,{action:'restore',oid:tip,file:'note.md'}));
+	await write('note.md',checkedOut);
 	await execute({action:'attach',oid:tip,ref:'refs/heads/main'});assert.equal(git('branch','--show-current'),'main');
 });
 

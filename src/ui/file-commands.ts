@@ -1,5 +1,5 @@
-import { gitDisabled,pluginNotice } from './device.ts';
-import { MarkdownView, Setting } from 'obsidian';
+import { assertGitEnabled,pluginNotice } from './device.ts';
+import { MarkdownView } from 'obsidian';
 import { join } from 'node:path';
 import * as fs from 'node:fs/promises';
 import type KnowledgeBaseManager from '../main.ts';
@@ -32,7 +32,7 @@ export function registerFileCommands(plugin:KnowledgeBaseManager, reload:boolean
 }
 
 async function fileAction(plugin:KnowledgeBaseManager, action:typeof commands[number][0], title:string) {
-	if(gitDisabled(plugin))throw new Error(tr('本设备已停用 Git','Git is disabled on this device'));
+	assertGitEnabled(plugin);
 	const note=plugin.app.workspace.getActiveFile();
 	const line=(plugin.app.workspace.getActiveViewOfType(MarkdownView)?.editor.getCursor().line ?? 0)+1;
 	const lib=(await discover(plugin.disk,plugin.config)).find(l=>note?.path.startsWith(l.location+'/'));
@@ -85,7 +85,7 @@ async function fileAction(plugin:KnowledgeBaseManager, action:typeof commands[nu
 	const before=await read(), original=before??'', newline=original.includes('\r\n')?'\r\n':'\n';
 	const rule='/'+file.replace(/[\\*?[\] ]/gu,'\\$&');
 	let after=action==='add-to-gitignore' ? original+(original && !original.endsWith('\n')?newline:'')+rule+newline : original;
-	if(action==='edit-gitignore')new Setting(dialog.contentEl).setName('.gitignore').addTextArea(input=>input.setValue(original).onChange(value=>{after=value.replace(/\r?\n/gu,newline);}));
+	if(action==='edit-gitignore')dialog.multiline('.gitignore',original,value=>{after=value.replace(/\r?\n/gu,newline);});
 	dialog.action(tr('预览规则','Preview rules'),async()=>{
 		if(after===original)return;
 		const confirmation=new Dialog(plugin.app,tr('确认忽略规则','Confirm ignore rules'));

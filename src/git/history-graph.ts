@@ -33,24 +33,24 @@ export function historyRefKey(ref:GraphRef) {
 	return ref.kind==='stash'?'stash:'+ref.oid:ref.ref;
 }
 
-export function historyTips(snapshot:HistorySnapshot,scope:HistoryScope,showStashes=false):string[] {
+function historyTips(snapshot:HistorySnapshot,scope:HistoryScope,currentStashes:ReadonlySet<string>):string[] {
 	const tips=new Set<string>();
 	const selected=typeof scope==='string'?undefined:new Set(scope);
 	if(snapshot.head && typeof scope==='string')tips.add(snapshot.head);
 	for(const ref of snapshot.refs){
-		if(selected?.has(historyRefKey(ref)) || (showStashes && ref.kind==='stash' && !selected) ||
-			(scope==='all' && (ref.kind==='local' || ref.kind==='remote' || ref.kind==='tag')))tips.add(ref.oid);
+		if(selected?.has(historyRefKey(ref)) || currentStashes.has(ref.oid) || scope==='all')tips.add(ref.oid);
 	}
 	return [...tips];
 }
 
-export async function snapshotHistory(dir:string,scope:HistoryScope|boolean='current'):Promise<HistorySnapshot> {
+export async function snapshotHistory(dir:string,scope:HistoryScope|boolean='current',showStashes=false):Promise<HistorySnapshot> {
+	const range=scope===true?'all':scope===false?'current':scope;
 	const branch=await guardGit(dir,new Set(),true);
 	const [head,refs,stashes]=await Promise.all([
 		headOid(dir),
 		gitResult(dir,['for-each-ref','--format=%(refname)%00%(symref)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)',
 			'refs/heads/','refs/remotes/','refs/tags/']),
-		gitResult(dir,['stash','list','-z','--format=%H%x00%gd']),
+		showStashes?gitResult(dir,['stash','list','-z','--format=%H%x00%gd%x00%P']):undefined,
 	]);
 	const snapshot:HistorySnapshot={tips:[],labels:new Map(),refs:[],branch,head,detached:branch==='HEAD'};
 	const add=(entry:GraphRef)=>{
@@ -59,7 +59,7 @@ export async function snapshotHistory(dir:string,scope:HistoryScope|boolean='cur
 		labels.push(entry);
 		snapshot.labels.set(entry.oid,labels);
 	};
-	if(head)add({ref:'HEAD',name:'HEAD',kind:'head',oid:head});
+	if(head && snapshot.detached)add({ref:'HEAD',name:'HEAD',kind:'head',oid:head});
 	for(const line of refs.stdout.toString('utf8').trimEnd().split('\n')){
 		const [ref,symbolic,object,objectType,peeled,peeledType]=line.split('\0');
 		if(!object || !ref || symbolic)continue;
@@ -73,17 +73,26 @@ export async function snapshotHistory(dir:string,scope:HistoryScope|boolean='cur
 		if(!oid)continue;
 		add({ref,name:ref.split('/').slice(2).join('/'),kind,oid,...(objectType==='tag'?{tagOid:object}:{})});
 	}
-	const entries=stashes.stdout.toString('utf8').split('\0');
-	for(let i=0;i+1<entries.length;i+=2){
-		const [oid,ref]=[entries[i],entries[i+1]];
-		if(oid && ref && /^stash@\{\d+\}$/u.test(ref))add({ref,name:ref,kind:'stash',oid});
+	const entries=stashes?.stdout.toString('utf8').split('\0')??[];
+	const currentStashes=new Set<string>(),reachable=new Map<string,boolean>([[head,!!head]]);
+	for(let i=0;i+2<entries.length;i+=3){
+		const [oid,ref,parents]=entries.slice(i,i+3);
+		if(!oid || !ref || !/^stash@\{\d+\}$/u.test(ref))continue;
+		add({ref,name:ref,kind:'stash',oid});
+		const base=parents?.split(' ')[0];
+		if(range!=='current' || !head || !base || !/^[0-9a-f]{40}$/u.test(base))continue;
+		if(!reachable.has(base)){
+			const {code}=await gitResult(dir,['merge-base','--is-ancestor',base,head],{allowedExitCodes:[0,1]});
+			reachable.set(base,code===0);
+		}
+		if(reachable.get(base))currentStashes.add(oid);
 	}
-	snapshot.tips=historyTips(snapshot,scope===true?'all':scope===false?'current':scope);
+	snapshot.tips=historyTips(snapshot,range,currentStashes);
 	return snapshot;
 }
 
 export async function historyWorktree(dir:string):Promise<{staged:number;unstaged:number}|undefined> {
-	await guardGit(dir);
+	await guardGit(dir,new Set(),false,false,'detached');
 	const {stdout}=await gitResult(dir,['status','--porcelain=v1','-z','--no-renames','--untracked-files=all','--ignore-submodules=all']);
 	let staged=0,unstaged=0;
 	for(const row of stdout.toString('utf8').split('\0').filter(Boolean)){
@@ -116,7 +125,7 @@ async function logCommits(dir:string,revs:readonly string[],order:string[]):Prom
 }
 
 export interface Lane { oid:string; color:number }
-export interface Rail { from:number; to:number; color:number }
+export interface Rail { from:number; to:number; color:number; startColor?:number }
 export interface GraphRow {
 	commit:GraphCommit;
 	lane:number;
@@ -148,9 +157,10 @@ export class HistoryLanes {
 		const color=before[lane]?.color??this.allocateColor(before);
 		const after=before.filter(t=>t.oid!==commit.oid);
 		let insert=lane;
-		for(const [index,oid] of commit.parents.entries()){
+		for(const oid of commit.parents){
 			if(after.some(t=>t.oid===oid))continue;
-			after.splice(insert++,0,{oid,color:index===0?color:this.allocateColor(after)});
+			after.splice(insert,0,{oid,color:insert===lane?color:this.allocateColor(after)});
+			insert++;
 		}
 		const rail=(from:number,oid:string):Rail=>{
 			const to=after.findIndex(t=>t.oid===oid);
@@ -158,6 +168,7 @@ export class HistoryLanes {
 		};
 		const rails=before.flatMap((t,i)=>t.oid===commit.oid?[]:[rail(i,t.oid)]);
 		const parents=commit.parents.map(oid=>rail(lane,oid));
+		if(parents[0] && !parents.some(parent=>parent.color===color))parents[0].startColor=color;
 		this.active=after;
 		return {commit,lane,color,width:Math.max(lane+1,before.length,after.length),incoming:found>=0,rails,parents};
 	}

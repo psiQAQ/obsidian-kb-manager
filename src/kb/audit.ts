@@ -63,7 +63,7 @@ export function createAuditSession(disk:VaultDisk, lib:Library, skeleton?:()=>Re
 	const scan=()=>scanned??=inventory(disk,lib.location,rootReport);
 
 	async function readText(file:string) {
-		if (!(await scan()).files.has(file)) throw new Error(tr('文件超出体检范围','File outside audit scope'));
+		if (!(await scan()).files.has(file)) throw new Error(tr('文件超出检验范围','File outside audit scope'));
 		const fd = await fs.open(await disk.path(lib.location + '/' + file), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 		try {
 			const stat = await fd.stat();

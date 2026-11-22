@@ -170,7 +170,7 @@ async function requireCommitSide(dir:string,side:HistorySide) {
 
 export async function compareHistory(dir:string,before:HistorySide,after:HistorySide):Promise<HistoryFile[]> {
 	const working=before.kind==='working' || after.kind==='working';
-	await guardGit(dir,new Set(),!working);
+	await guardGit(dir,new Set(),!working,false,'detached');
 	await Promise.all([requireCommitSide(dir,before),requireCommitSide(dir,after)]);
 	let files:HistoryFile[];
 	if(before.kind==='working')files=after.kind==='working'?[]:(await workingDeltas(dir,after)).map(reverseDelta);
@@ -304,7 +304,7 @@ export async function currentHistoryPath(dir:string,oid:string,file:string) {
 }
 
 export async function compareHistoryFile(dir:string,before:HistorySide,after:HistorySide,file:string,oldFile=file) {
-	await guardGit(dir,new Set(),before.kind!=='working' && after.kind!=='working');
+	await guardGit(dir,new Set(),before.kind!=='working' && after.kind!=='working',false,'detached');
 	await Promise.all([requireCommitSide(dir,before),requireCommitSide(dir,after)]);
 	const [left,right]=await Promise.all([historyContent(dir,before,oldFile),historyContent(dir,after,file)]);
 	if(!left && !right)throw new Error(fromEnglish('File not found in this comparison.','在本次比较中找不到文件。'));

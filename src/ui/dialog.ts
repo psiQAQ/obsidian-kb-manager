@@ -9,10 +9,12 @@ export function dialogContents(contentEl: HTMLElement) {
 		addTextField(new Setting(contentEl).setName(label),initial,change,typeof options==='string'?{placeholder:options}:options);
 	const multiline=(label: string, initial: string, change: (value: string)=>void, options: TextOptions = {}) =>
 		addTextField(new Setting(contentEl).setName(label),initial,change,options,true);
-	const choice=(label: string, options: Record<string,string>, change: (value:string)=>void) => {
+	const choice=(label: string, options: Record<string,string>, change: (value:string)=>void, initial?:string) => {
 		new Setting(contentEl).setName(label).addDropdown(input=>{
 			input.selectEl.setAttribute('aria-label',label);
-			input.addOptions(options).onChange(change);
+			input.addOptions(options);
+			if(initial!==undefined)input.setValue(initial);
+			input.onChange(change);
 		});
 	};
 	const action=(label: string, action: ()=>Promise<void>) => {

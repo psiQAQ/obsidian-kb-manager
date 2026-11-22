@@ -11,7 +11,7 @@ import { deletionPlan, removeBranch } from '../git/network-refs.ts';
 import { gitResult } from '../git/network-native.ts';
 import { assertGitEnabled, pluginNotice } from './device.ts';
 import { Dialog } from './dialog.ts';
-import { addAdvancedHistoryActions } from './history-advanced.ts';
+import { addAdvancedHistoryActions, reviewHistoryAttach } from './history-advanced.ts';
 import { addHistoryRemoteActions } from './history-remote-actions.ts';
 import { commitRoles } from './repository-identity.ts';
 
@@ -21,16 +21,17 @@ interface HistoryMenuOptions {
 	dir:string;
 	commit?:{oid:string;message:string};
 	ref?:GraphRef;
+	stash?:boolean;
 	detached?:boolean;
 	event?:MouseEvent;
 	anchor?:HTMLElement;
-	refresh?:()=>void;
+	showRefs?:()=>void;
 	openComparison?:(oid:string)=>void;
 	selectBase?:(oid:string)=>void;
 }
 
 export function showHistoryMenu(options:HistoryMenuOptions){
-	const {plugin,lib,dir,commit,ref,event,anchor,openComparison,selectBase}=options,t=plugin.t;
+	const {plugin,lib,dir,commit,ref,event,anchor,openComparison,selectBase,showRefs}=options,t=plugin.t;
 	const id=lib.identity?.id;
 	if(!id || (!event && !anchor))return;
 	const menu=new Menu(),oid=ref?.oid??commit?.oid;
@@ -61,7 +62,12 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 		}
 		form.close();await plugin.refresh();
 	};
-	const confirm=(form:Dialog,label:string,action:()=>Promise<unknown>)=>form.action(label,()=>mutate(form,action)).setCta();
+	const confirm=(form:Dialog,label:string,action:()=>Promise<unknown>,warning=false)=>{
+		const button=form.action(label,()=>mutate(form,action));
+		if(warning)button.setDestructive();
+		button.setCta();
+		form.action(t('取消','Cancel'),()=>{form.close();return Promise.resolve();});
+	};
 	const verifyTip=(current:string)=>{
 		if(current!==oid)throw new Error(t('引用已移动，请刷新历史并重新预览','The reference moved. Refresh the graph and preview again.'));
 	};
@@ -73,6 +79,7 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 		if(openComparison)add(t('比较到此提交','Compare to this commit'),'git-compare',()=>openComparison(oid));
 	}else if(openComparison)add(t('比较到工作区','Compare to working tree'),'git-compare',()=>openComparison('worktree'));
 	if(commit?.message)add(t('复制提交标题','Copy commit subject'),'copy',()=>navigator.clipboard.writeText(commit.message.split('\n')[0]??''));
+	if(showRefs)add(t('引用操作…','Ref actions…'),'git-branch',showRefs);
 	if(ref){
 		add(t('复制完整引用名','Copy full reference name'),'copy',()=>navigator.clipboard.writeText(ref.ref));
 		if(ref.kind==='tag' && ref.tagOid)add(t('查看标签注释','View tag annotation'),'tag',async()=>{
@@ -84,6 +91,10 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 			if(info?.message)form.contentEl.createEl('pre',{cls:'kb-commit-body',text:info.message});
 			form.open();
 		});
+	}
+	if(!lib.identity?.archived && options.detached && ref?.kind==='local'){
+		menu.addSeparator();
+		add(t('切回此本地分支','Reattach to this local branch'),'git-branch',()=>reviewHistoryAttach(plugin,lib,dir,ref));
 	}
 	if(!lib.identity?.archived && !options.detached){
 		menu.addSeparator();
@@ -99,7 +110,7 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 			add(t('获取本库上游','Fetch library upstream'),'cloud-download',()=>manager('cloud-download'));
 			add(t('管理本库远端','Manage library remotes'),'settings-2',()=>manager('settings-2'));
 		}
-		if(oid && ref?.kind!=='stash'){
+		if(oid && ref?.kind!=='stash' && (ref || !options.stash)){
 			add(t('从此提交创建分支','Create branch from this commit'),'git-branch',async()=>{
 				await checkWrite();await requireGraphCommit(dir,oid);
 				const label=t('创建本地分支','Create local branch'),form=modal(label);let name='';
@@ -131,7 +142,7 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 				const label=t('删除本地分支','Delete local branch'),form=modal(label);
 				factsForOid(form,t('将删除的分支','Branch to delete'),plan.branch);
 				form.facts([[t('已合入分支','Merged into'),plan.current+' · '+plan.head]]);
-				confirm(form,label,()=>removeBranch(dir,plan));form.open();
+				confirm(form,label,()=>removeBranch(dir,plan),true);form.open();
 			});
 		}
 		if(ref?.kind==='local' || ref?.kind==='remote'){
@@ -159,7 +170,7 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 				await checkWrite();await graphTagDetails(dir,ref);
 				const label=t('删除本地标签','Delete local tag'),form=modal(label);
 				factsForOid(form,t('将删除的标签','Tag to delete'),ref.name);
-				confirm(form,label,()=>deleteGraphTag(dir,ref));form.open();
+				confirm(form,label,()=>deleteGraphTag(dir,ref),true);form.open();
 			});
 		}
 		addHistoryRemoteActions({plugin,id,dir,ref,add,modal,confirm,checkWrite});
@@ -194,7 +205,7 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 					form.lines([t('将切换到新分支并恢复改动，贮藏条目保留。','Switch to the new branch and restore the changes. The stash entry is kept.')]);
 					form.text(t('新分支名称','New branch name'),'',v=>{name=v;});
 				}
-				confirm(form,labels[action],()=>applyGraphStash(dir,plan,action==='branch'?refName(name.trim()):undefined));form.open();
+				confirm(form,labels[action],()=>applyGraphStash(dir,plan,action==='branch'?refName(name.trim()):undefined),action==='drop');form.open();
 			});
 		}
 	}

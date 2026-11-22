@@ -45,12 +45,12 @@ async function fixture(t,{version='3.1.0',hasKit=true}={}) {
 }
 
 test('kit update previews the real changes and preserves locally edited or removed files',async t=>{
-	const {preview,apply,root,read,old,digests,put,manifest} = await fixture(t);
+	const {preview,apply,root,read,old,digests,put,manifest} = await fixture(t,{version:'3.3.0'});
 	const local = '// I changed the rule\n';
 	await put(edited,local);
 	await fs.unlink(join(root,removed));
 	const plan = await preview();
-	assert.equal(plan.installedVersion,'3.1.0');
+	assert.equal(plan.installedVersion,'3.3.0');
 	assert.equal(plan.targetVersion,checkKitVersion);
 	assert.deepEqual(Object.fromEntries(plan.files.filter(file=>file.change!=='current').map(file=>[file.path,[file.change,file.before,file.after]])),{
 		[runner]:['replace',old[runner],latest[runner]],

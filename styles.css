@@ -144,6 +144,7 @@
   box-shadow: none; background: transparent;
 }
 .kb-comparison-file .kb-comparison-open:hover { background: var(--background-modifier-hover); }
+.kb-comparison-file[data-reviewed=true] .kb-comparison-open { color: var(--text-muted); }
 .kb-comparison-file .kb-comparison-menu { flex: 0 0 auto; box-shadow: none; background: transparent; }
 
 @container (max-width: 29rem) {
@@ -262,16 +263,22 @@
 }
 .kb-v3-check-choice input { margin: 0; }
 .kb-v3-check-choice > .kb-v3-muted { grid-column: 2; }
-.kb-v3-script-review { margin-inline-start: var(--size-4-5); }
+.kb-v3-check-choice-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0 var(--size-4-2);
+}
+.kb-v3-check-choice-row > label { flex: 1 1 14rem; min-inline-size: 0; }
+.kb-v3-script-review { height: auto; margin-block: var(--size-4-1); }
 .kb-v3-check-actions {
 	display: flex;
 	flex-wrap: wrap;
 	gap: var(--size-4-2);
 	margin-block-start: var(--size-4-4);
 }
-.kb-v3-check-actions .setting-item { border: 0; padding: 0; }
-.kb-v3-check-actions .setting-item[hidden],
-.kb-v3-check-actions .setting-item-info { display: none; }
+.kb-v3-check-actions > button { inline-size: auto; min-block-size: var(--input-height); height: auto; }
+.kb-v3-check-actions > button[hidden] { display: none; }
 .kb-v3-dialog .kb-v3-code { max-block-size: 30vh; }
 
 @container (max-width: 30rem) {
@@ -321,7 +328,7 @@
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: -2px;
 }
-:is(.kb-panel-tabs .kb-panel-tab, .kb-v3-dialog .kb-v3-template-card, .kb-wizard-steps li):focus-visible {
+:is(.kb-panel-tabs .kb-panel-tab, .kb-v3-dialog .kb-v3-template-card, .kb-create-wizard fieldset):focus-visible {
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;
 }
@@ -416,15 +423,17 @@
 	display: flex;
 	align-items: center;
 	gap: var(--size-4-1);
-	padding-block-end: var(--size-4-1);
-	border-block-end: 2px solid transparent;
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 }
 .kb-wizard-steps [aria-current="step"] {
-	border-block-end-color: currentColor;
 	color: var(--text-normal);
 	font-weight: var(--font-semibold);
+}
+.kb-wizard-steps [aria-current="step"] .kb-wizard-step-number {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
 }
 .kb-wizard-step-number {
 	display: inline-grid;
@@ -504,6 +513,11 @@
 .kb-manager-sidebar .kb-manager-heading .setting-item-info {
 	flex: 1 1 auto;
 }
+.kb-manager-sidebar :is(.kb-library-row > .setting-item, .kb-mobile-library-row, .kb-mobile-entry-actions) > .setting-item-control > button:not(.clickable-icon) {
+	inline-size: auto;
+	flex: 0 1 auto;
+}
+.kb-manager-sidebar .kb-manager-heading > .setting-item-control { flex: 0 0 auto; }
 .kb-library-git .kb-workspace-remote-actions > .setting-item-info {
 	display: none;
 }
@@ -715,12 +729,16 @@
 }
 .kb-history-ref-head { --kb-ref-color: var(--text-accent); border-color: var(--interactive-accent); }
 .kb-history-ref-local { --kb-ref-color: var(--color-green); }
+.kb-history-ref-current { border-color: var(--interactive-accent); }
 .kb-history-ref-remote { --kb-ref-color: var(--color-blue); }
 .kb-history-ref-tag { --kb-ref-color: var(--color-orange); }
 .kb-history-ref-stash { --kb-ref-color: var(--color-purple); }
 .kb-history-ref-more { flex: none; cursor: pointer; }
 .kb-history-labels .kb-history-ref-more-compact { display: none; }
-.kb-history-detail { flex: 0 0 auto; overflow: auto; min-width: 0; max-height: 45%; border-block-start: 1px solid var(--background-modifier-border); }
+.kb-history-detail {
+	flex: 0 0 auto; overflow: auto; min-width: 0; max-height: 45%; padding: var(--size-4-1) var(--size-4-2);
+	border-block-start: 1px solid var(--background-modifier-border);
+}
 .kb-history-detail:empty { display: none; }
 .kb-history-detail h4 { flex: 1 1 12ch; min-width: 0; overflow-wrap: anywhere; padding-block: var(--size-4-2); }
 .kb-history-detail-meta { color: var(--text-muted); font-size: var(--font-ui-small); }
@@ -741,7 +759,7 @@
 @container (min-width: 48rem) {
 	.kb-history-panels-side { flex-direction: row; }
 	.kb-history-panels-side .kb-history-detail {
-		flex: 0 1 42%; max-height: none; padding-inline-start: var(--size-4-2);
+		flex: 0 1 42%; max-height: none;
 		border-block-start: 0; border-inline-start: 1px solid var(--background-modifier-border);
 	}
 }

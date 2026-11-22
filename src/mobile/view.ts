@@ -1,9 +1,11 @@
-import {ItemView,Setting,WorkspaceLeaf} from 'obsidian';
+import {ButtonComponent,ItemView,Setting,WorkspaceLeaf} from 'obsidian';
 import {tr} from '../i18n.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {addTextField} from '../ui/text-field.ts';
+import {templateIdentityLabel} from '../ui/template-labels.ts';
 import {discoverMobile,verifyLibrary} from './catalog.ts';
 import type {Library} from './catalog.ts';
+import {checkSpelling,relative} from './disk.ts';
 import {commit,editIndex,effectiveAuthor,localAuthor,mobileHistory,mobileStatus} from './git.ts';
 import {applyPull,pullPlan,secretKey,transfer,upstream} from './remote.ts';
 import {mobileHttp} from './http.ts';
@@ -12,6 +14,7 @@ import {adoptLegacy,bindingForm,manifestForm,removeRegistration,resolveDuplicate
 import type MobilePlugin from './plugin.ts';
 
 export const viewType='knowledge-base-manager-view';
+let nextWorkspacePanelId=0;
 export class MobileView extends ItemView {
 	private selected?:string;
 	private revision=0;
@@ -21,34 +24,44 @@ export class MobileView extends ItemView {
 	getIcon(){return 'library';}
 	async onOpen(){await this.draw();}
 	onClose(){this.revision++;return Promise.resolve();}
-	private button(row:Setting,label:string,fn:()=>Promise<void>|void){
-		row.addButton(c=>c.setButtonText(label).onClick(async()=>{
-			c.setDisabled(true);
-			try{await fn();}catch(e){this.plugin.report(e);}finally{c.setDisabled(false);}
-		}));
+	private button(row:Setting,label:string,fn:()=>Promise<void>|void,configure?:(button:ButtonComponent)=>void){
+		row.addButton(c=>{
+			c.setButtonText(label).onClick(async()=>{
+				c.setDisabled(true);
+				try{await fn();}catch(e){this.plugin.report(e);}finally{c.setDisabled(false);}
+			});
+			configure?.(c);
+		});
 	}
-	async draw(){
+	async draw(focusWorkspace?:string){
 		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();el.addClass('kb-manager-sidebar');
-		const toolbar=new Setting(el).setClass('kb-controls-only');
-		this.button(toolbar,tr('刷新','Refresh'),()=>this.draw());
+		new Setting(el).setClass('kb-manager-heading').setName(tr('知识库','Knowledge bases')).setHeading()
+			.addExtraButton(button=>button.setIcon('refresh-cw').setTooltip(tr('刷新知识库列表','Refresh library list')).onClick(()=>{void this.draw();}));
+		const toolbar=new Setting(el).setClass('kb-controls-only').setClass('kb-mobile-entry-actions');
+		if(!p.paused()){
+			this.button(toolbar,tr('新建','Create'),()=>createForm(p),c=>{c.setCta();});
+			this.button(toolbar,tr('克隆','Clone'),()=>cloneForm(p));
+		}
 		this.button(toolbar,tr('登记清单','Register manifest'),()=>manifestForm(p));
 		this.button(toolbar,tr('扫描','Scan'),()=>scanForm(p));
-		if(!p.paused()){
-			this.button(toolbar,tr('创建','Create'),()=>createForm(p));
-			this.button(toolbar,tr('克隆','Clone'),()=>cloneForm(p));
-		}else el.createEl('p',{text:tr('此设备已暂停知识库 Git','Library Git is paused on this device')});
+		if(p.paused())el.createEl('p',{text:tr('本设备的知识库 Git 已暂停，可在设置中恢复。','Library Git is paused on this device. Resume it in settings.')});
 		try{
 			const libs=await discoverMobile(p.ctx);
 			if(this.revision!==revision)return;
 			if(!libs.length)el.createEl('p',{text:tr('还没有登记知识库','No registered knowledge bases')});
 			for(const lib of libs){
-				const row=new Setting(el).setName(lib.identity?.displayName??lib.location).setDesc(lib.location);
+				const detail=lib.identity?lib.location+' · '+templateIdentityLabel(lib.identity.template.id):lib.location;
+				const row=new Setting(el).setClass('kb-mobile-library-row').setName(lib.identity?.displayName??lib.location).setDesc(detail);
 				if(lib.missing){
 					row.setDesc(lib.location+' · '+tr('登记路径失联','Registered path missing'));
 					this.button(row,tr('重新定位','Locate'),()=>manifestForm(p,lib.location));
 					this.button(row,tr('移除登记','Remove registration'),()=>removeRegistration(p,lib));continue;
 				}
-				if(lib.problem){row.setDesc(lib.location+' · '+lib.problem);continue;}
+				if(lib.problem){
+					row.setDesc(lib.location+' · '+lib.problem);
+					this.button(row,tr('移除登记','Remove registration'),()=>removeRegistration(p,lib));
+					continue;
+				}
 				if(lib.duplicate){
 					row.setDesc(lib.location+' · '+tr('身份重复','Duplicate identity')+' · '+lib.identity?.id);
 					this.button(row,tr('处理重复 ID','Resolve duplicate ID'),()=>resolveDuplicate(p,lib));continue;
@@ -57,14 +70,32 @@ export class MobileView extends ItemView {
 				if(p.bindingRecovery(lib.location)){
 					this.button(row,tr('恢复绑定更新','Resume binding changes'),()=>bindingForm(p,lib));continue;
 				}
+				if(lib.identity?.entry)this.button(row,tr('打开首页','Open home note'),async()=>{
+					const {entry}=await verifyLibrary(p.ctx,lib);
+					if(!entry)throw new Error(tr('知识库未设置首页','The library has no home note'));
+					const path=lib.location+'/'+relative(entry,p.ctx.configDir);
+					await checkSpelling(p.ctx.disk,path);
+					const file=this.app.vault.getFileByPath(path);
+					if(!file)throw new Error(tr('找不到首页：','Home note not found: ')+entry);
+					await this.app.workspace.getLeaf(false).openFile(file);
+				});
+				this.button(row,tr('移除登记','Remove registration'),()=>removeRegistration(p,lib));
 				if(lib.identity?.managed.some(item=>item.root && item.root!==lib.location)){
 					this.button(row,tr('路径绑定','Path bindings'),()=>bindingForm(p,lib));
 				}
 				if(p.paused() || !lib.identity)continue;
 				const id=lib.identity.id;
-				this.button(row,'Git',async()=>{this.selected=this.selected===id?undefined:id;await this.draw();});
-				if(this.selected===id){
-					const area=el.createDiv({cls:'kb-library-git'});
+				const expanded=this.selected===id;
+				const area=el.createDiv({cls:'kb-library-git',attr:{id:'kb-mobile-workspace-panel-'+ ++nextWorkspacePanelId}});
+				area.hidden=!expanded;
+				this.button(row,tr('Git 工作区','Git workspace'),async()=>{
+					this.selected=expanded?undefined:id;await this.draw(id);
+				},c=>{
+					c.buttonEl.setAttribute('aria-expanded',String(expanded));
+					c.buttonEl.setAttribute('aria-controls',area.id);
+					if(focusWorkspace===id)c.buttonEl.focus();
+				});
+				if(expanded){
 					try{await this.source(area,lib,revision);}catch(e){if(revision===this.revision)area.createEl('p',{cls:'kb-git-error',text:String(e)});}
 					if(revision!==this.revision)return;
 				}

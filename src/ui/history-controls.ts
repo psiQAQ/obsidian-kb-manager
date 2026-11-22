@@ -66,7 +66,11 @@ export function historyScopeControl(
 		const modal=new Dialog(plugin.app,t('选择引用','Select refs'));
 		const filterLabel=t('筛选引用名称','Filter ref names');
 		const filter=modal.contentEl.createEl('input',{type:'search',placeholder:filterLabel,attr:{'aria-label':filterLabel}});
+		const controls=modal.contentEl.createDiv({cls:'kb-history-toolbar'});
+		const selectVisible=historyButton(controls,t('选择筛选结果','Select filtered refs'));
+		const clear=historyButton(controls,t('清除所选引用','Clear selected refs'));
 		const list=modal.contentEl.createDiv({cls:'kb-history-branches'});
+		const choices:{key:string;label:HTMLLabelElement;checkbox:HTMLInputElement}[]=[];
 		for(const kind of ['local','remote','tag','stash'] as const){
 			const members=refs.filter(ref=>ref.kind===kind);
 			if(!members.length)continue;
@@ -76,23 +80,38 @@ export function historyScopeControl(
 				const label=group.createEl('label');
 				const checkbox=label.createEl('input',{type:'checkbox'});
 				const key=historyRefKey(ref);
+				choices.push({key,label,checkbox});
 				checkbox.checked=chosen.has(key);
 				label.createSpan({text:ref.name});
 				checkbox.onchange=()=>{
 					if(checkbox.checked)chosen.add(key);else chosen.delete(key);
-					apply.setDisabled(!chosen.size);
+					updateControls();
 				};
 			}
 		}
 		if(!refs.length)list.createEl('p',{text:t('尚无可选引用','No refs to select yet')});
 		filter.oninput=()=>{
 			const query=filter.value.trim().toLowerCase();
-			list.querySelectorAll('label').forEach(label=>{label.hidden=!label.textContent?.toLowerCase().includes(query);});
+			for(const {label} of choices)label.hidden=!label.textContent?.toLowerCase().includes(query);
+			updateControls();
 		};
 		const apply=modal.action(t('应用','Apply'),()=>{
 			modal.close();onChange([...chosen]);return Promise.resolve();
 		});
-		apply.setDisabled(!chosen.size);
+		const updateControls=()=>{
+			selectVisible.disabled=!choices.some(({label,checkbox})=>!label.hidden && !checkbox.checked);
+			clear.disabled=!chosen.size;
+			apply.setDisabled(!chosen.size);
+		};
+		selectVisible.onclick=()=>{
+			for(const {key,label,checkbox} of choices)if(!label.hidden){chosen.add(key);checkbox.checked=true;}
+			updateControls();
+		};
+		clear.onclick=()=>{
+			chosen.clear();for(const {checkbox} of choices)checkbox.checked=false;
+			updateControls();
+		};
+		updateControls();
 		modal.open();
 	};
 	select.onchange=()=>{
@@ -102,8 +121,11 @@ export function historyScopeControl(
 		}else onChange(select.value==='all'?'all':'current');
 	};
 	if(typeof scope!=='string'){
-		const count=snapshot.refs.filter(ref=>scope.includes(historyRefKey(ref))).length;
+		const keys=new Set(snapshot.refs.map(historyRefKey));
+		const count=scope.filter(key=>keys.has(key)).length;
 		historyButton(bar,t('选择引用','Select refs')+' ('+count+')').onclick=pickBranches;
+		const missing=scope.length-count;
+		if(missing)bar.createSpan({text:t(`${missing} 个所选引用已不可用或被隐藏`, `${missing} selected refs are unavailable or hidden`),attr:{role:'status'}});
 	}
 }
 
@@ -142,8 +164,8 @@ export function historyDisplayControl(
 			const width=row.createEl('input',{type:'number',value:String(options[key]),attr:{min:'6',max:'32',step:'1'}});
 			width.onchange=()=>{
 				const value=width.valueAsNumber;
-				if(Number.isInteger(value) && value>=6 && value<=32)values[key]=value;
-				else width.value=String(values[key]??options[key]);
+				if(Number.isFinite(value))values[key]=Math.min(32,Math.max(6,Math.round(value)));
+				width.value=String(values[key]??options[key]);
 			};
 		}
 		modal.action(t('应用','Apply'),()=>{

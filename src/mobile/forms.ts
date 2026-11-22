@@ -8,6 +8,7 @@ import {reviewCreationExclusions} from '../ui/template-filter.ts';
 import type {ApprovedExclusions} from '../ui/template-filter.ts';
 import {Dialog} from '../ui/dialog.ts';
 import {destinationParentField} from '../ui/registry-path-field.ts';
+import {builtinTemplateLabels,templateIdentityLabel} from '../ui/template-labels.ts';
 import {libraryDestination} from '../registry/paths.ts';
 import {createPreview,instantiate,MobileRegistrationInterrupted} from './catalog.ts';
 import type {Library} from './catalog.ts';
@@ -28,14 +29,29 @@ export function confirm(plugin:MobilePlugin,title:string,lines:string[],apply:()
 	modal.open();
 }
 export function createForm(plugin:MobilePlugin) {
-	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('创建知识库','Create knowledge base'));
+	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	const input={name:'',displayName:'',description:'',source:'',author:plugin.deviceAuthor(),origin:'',
 		branch:defaultInitialBranch,message:defaultInitialMessage};
 	const getParent=destinationParentField(dlg,plugin.app,ctx,ctx.registry,true);
 	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
-	dlg.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{example:tr('研究笔记','Research notes')});
-	dlg.multiline(tr('简介','Description'),'',v=>{input.description=v;},{example:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
-	dlg.choice(tr('模板','Template'),{'':'LLM Wiki','builtin:kepano':'Kepano',...Object.fromEntries(builtinPacks().map(pack=>[builtinSource(pack.id),pack.name])),...Object.fromEntries(ctx.templates.map(v=>[v,v]))},v=>{input.source=v;});
+	dlg.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{placeholder:tr('研究笔记','Research notes')});
+	dlg.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{placeholder:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
+	const builtin=new Map(builtinPacks().map(pack=>[builtinSource(pack.id),builtinTemplateLabels(pack)]));
+	const templates=Object.fromEntries([
+		...Array.from(builtin,([source,pack])=>[source,pack.name] as const),
+		...ctx.templates.map(source=>[source,source] as const),
+	]);
+	dlg.choice(tr('模板','Template'),templates,source=>{
+		input.source=source;
+		updateTemplateDescription();
+	},input.source);
+	const templateDescription=dlg.contentEl.createEl('p',{cls:'kb-v3-muted',attr:{role:'status'}});
+	function updateTemplateDescription(){
+		const description=builtin.get(input.source)?.description ?? '';
+		templateDescription.hidden=!description;
+		templateDescription.setText(description);
+	}
+	updateTemplateDescription();
 	dlg.text(tr('提交姓名','Commit author name'),input.author.name,v=>{input.author.name=v;});
 	dlg.text(tr('提交邮箱','Commit author email'),input.author.email,v=>{input.author.email=v;});
 	dlg.text(tr('初始分支','Initial branch'),input.branch,v=>{input.branch=v;});
@@ -43,14 +59,15 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.text(tr('origin HTTPS 地址（可选）','origin HTTPS URL (optional)'),'',v=>{input.origin=v;});
 	dlg.action(tr('预览','Preview'),async()=>{
 		plugin.assertEnabled();
-		const p=await createPreview(ctx,{...input,parent:getParent(),displayName:input.displayName||input.name},plugin.templates);
+		const requested={...input,parent:getParent(),displayName:input.displayName||input.name};
+		const p=await createPreview(ctx,requested,plugin.templates);
 		const host=templateHost(plugin.app,plugin.manifest.version);
 		const optional=checkCreationRequirements(p.template,host);
 		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
 		if(optional.length)review.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
 		const {author,origin,files,branch,message}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
 		const signature=author.name+' <'+author.email+'>';
-		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),p.template.id],[tr('通用检验套件','Common check kit'),p.checkKit.version],
+		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),templates[requested.source] ?? templateIdentityLabel(p.template.id)],[tr('通用检验套件','Common check kit'),p.checkKit.version],
 			[tr('分支','Branch'),branch],[tr('提交说明','Commit message'),message],
 			[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],['origin',origin||tr('未设置','Unset')]]);
 		review.lines([tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
@@ -87,7 +104,9 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.open();
 }
 function tokenField(dialog:Dialog,change:(value:string)=>void) {
-	new Setting(dialog.contentEl).setName(tr('访问令牌（可选）','Access token (optional)')).addText(c=>{
+	const label=tr('访问令牌（可选）','Access token (optional)');
+	new Setting(dialog.contentEl).setName(label).addText(c=>{
+		c.inputEl.setAttribute('aria-label',label);
 		c.inputEl.type='password';c.inputEl.autocomplete='off';c.onChange(change);
 	});
 }
@@ -168,7 +187,7 @@ export async function remoteSettings(plugin:MobilePlugin,lib:Library) {
 	dlg.lines([lib.location+'/.git/config',remote]);
 	dlg.text(tr('远端 HTTPS 地址','Remote HTTPS URL'),url,v=>{url=v;});
 	dlg.text(tr('上游分支','Upstream branch'),branch,v=>{branch=v;});
-	dlg.text(tr('认证用户名','Authentication username'),'',v=>{user=v;});
+	dlg.text(tr('认证用户名（可选）','Authentication username (optional)'),'',v=>{user=v;});
 	tokenField(dlg,v=>{token=v;});
 	new Setting(dlg.contentEl).setName(tr('清除这个地址的已保存令牌','Clear saved token for this address')).addToggle(c=>c.onChange(v=>{clear=v;}));
 	dlg.action(tr('预览','Preview'),async()=>{

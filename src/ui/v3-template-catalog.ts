@@ -8,6 +8,7 @@ import { builtinPacks, builtinSource } from '../kb/template-pack.ts';
 import type { PackDescriptor } from '../kb/template-pack.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { dialogContents } from './dialog.ts';
+import { builtinTemplateLabels } from './template-labels.ts';
 
 export function purposeLabels() {
 	return {
@@ -53,7 +54,7 @@ async function personalTemplate(plugin:KnowledgeBaseManager,source:string):Promi
 }
 
 function builtinTemplates():TemplateChoice[] {
-	return builtinPacks().map(pack=>({...pack,source:builtinSource(pack.id)}));
+	return builtinPacks().map(pack=>({...pack,...builtinTemplateLabels(pack),source:builtinSource(pack.id)}));
 }
 
 export async function choiceForSource(plugin:KnowledgeBaseManager,source:string):Promise<TemplateChoice> {

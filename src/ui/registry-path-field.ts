@@ -156,7 +156,7 @@ async function openPathPicker(
 
 	const footer = picker.contentEl.createDiv({cls: 'kb-path-footer'});
 	const candidateLabel = footer.createEl('p', {attr: {role: 'status'}});
-	const problem = footer.createEl('p', {cls: 'kb-path-error', attr: {role: 'status'}});
+	const problem = footer.createEl('p', {cls: 'kb-path-error', attr: {role: 'alert'}});
 	const actions = footer.createDiv({cls: 'kb-path-actions'});
 	actions.createEl('button', {text: tr('取消', 'Cancel'), attr: {type: 'button'}})
 		.addEventListener('click', () => picker.close());
@@ -251,9 +251,14 @@ async function openPathPicker(
 		void vault.adapter.stat(path).then(stat => {
 			if (folderRevision === current && stat?.type === 'file') {
 				manifestInFolder = path;
+				if (candidates.browse === null) candidates.browse = path;
 				renderRows();
+				if (navigation.getActive() === 'browse') update();
 			}
-		}, error => { if (folderRevision === current) problem.setText(error instanceof Error ? error.message : String(error)); });
+		}, error => {
+			if (folderRevision === current && navigation.getActive() === 'browse')
+				problem.setText(error instanceof Error ? error.message : String(error));
+		});
 	}
 
 	browse(initialFolder);

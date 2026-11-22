@@ -3,7 +3,7 @@ import type KnowledgeBaseManager from '../main.ts';
 import { discover } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
 import { Dialog } from './dialog.ts';
-import { gitDisabled,pluginNotice } from './device.ts';
+import { assertGitEnabled,pluginNotice } from './device.ts';
 import { commitAndSync } from './sync.ts';
 import { cloneWizard } from './clone.ts';
 import { manageRegistry } from './manager-registry.ts';
@@ -30,7 +30,7 @@ export function registerLibraryCommands(plugin:KnowledgeBaseManager,reload:boole
 		if(reload)plugin.removeCommand(id);
 		plugin.addCommand({id,name:t(zh,en),callback:async()=>{
 			try{
-				if(gitDisabled(plugin))throw new Error(t('本设备已停用 Git','Git is disabled on this device'));
+				assertGitEnabled(plugin);
 				if(key==='clone'){cloneWizard(plugin);return;}
 				const workspace=plugin.app.workspace, file=workspace.getActiveFile();
 				const editor=workspace.getActiveViewOfType(MarkdownView);

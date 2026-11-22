@@ -9,7 +9,7 @@ import {newIdentity} from './catalog.ts';
 import {checkSpelling,replaceText} from './disk.ts';
 import {confirm} from './forms.ts';
 import type MobilePlugin from './plugin.ts';
-import {assignMobileCopyId,discoverMobile,previewMobileRegistryIgnore,registerMobile,registryIgnoreLines,scanMobile,selectMobileManifest,updateMobileRegistry} from './registration.ts';
+import {assignMobileCopyId,discoverMobile,previewMobileRegistryIgnore,previewMobileRemoval,registerMobile,registryIgnoreLines,scanMobile,selectMobileManifest} from './registration.ts';
 import type {Library} from './registration.ts';
 
 function manifestLines(lib:Library){
@@ -91,12 +91,14 @@ export function scanForm(plugin:MobilePlugin){
 	dlg.open();
 }
 
-export function removeRegistration(plugin:MobilePlugin,library:Library){
-	confirm(plugin,tr('移除登记路径','Remove registered path'),[library.location],async()=>{
+export async function removeRegistration(plugin:MobilePlugin,library:Library){
+	const {location}=library;
+	const apply=await previewMobileRemoval(plugin.ctx,library);
+	confirm(plugin,tr('移除登记','Remove registration'),[location,
+		tr('此操作从列表移除此知识库，保留目录和文件。','This removes the library from the list and preserves the folder and files.')],async()=>{
 		await plugin.catalogWrite(async()=>{
-			const fresh=(await discoverMobile(plugin.ctx)).find(entry=>entry.location===library.location);
-			if(!fresh?.missing)throw new Error(tr('登记状态已变化，请刷新','Registration state has changed. Refresh the manager.'));
-			await updateMobileRegistry(plugin.ctx,{remove:[library.location]});
+			if(plugin.bindingRecovery(location))throw new Error(tr('请先恢复绑定更新','Resume the pending binding changes first'));
+			await apply();
 		});
 	});
 }
