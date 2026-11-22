@@ -5,9 +5,31 @@ import path from 'node:path';
 import { digest } from '../src/fs/vault.ts';
 import { discover, newIdentity, writeIdentity } from '../src/kb/catalog.ts';
 import { executeMove, planMove } from '../src/kb/move.ts';
-import { referenceEdit } from '../src/kb/move-references.ts';
+import { ambiguousWikiMoveTargets, referenceEdit } from '../src/kb/move-references.ts';
 import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
+
+test('require review for affected short or suffix wikilinks with multiple targets',()=>{
+	let snapshots=0;
+	const lookup=ambiguousWikiMoveTargets(()=>{
+		snapshots++;
+		return ['Alpha/Notes/Detail.md','Beta/Notes/Detail.md','Nested/Alpha/Notes/Detail.md','Alpha/Only.md',
+			'Other/Picture.svg','Beta/Picture.svg'];
+	});
+	const scope={source:'Alpha',destination:'Moved'};
+	const candidates=['Alpha/Notes/Detail.md','Beta/Notes/Detail.md','Nested/Alpha/Notes/Detail.md'];
+	assert.deepEqual(lookup('Start.md','Detail','Alpha/Notes/Detail.md',scope),candidates);
+	assert.deepEqual(lookup('Start.md','Notes/Detail','Beta/Notes/Detail.md',scope),candidates);
+	assert.deepEqual(lookup('Beta/Start.md','Notes/Detail.md',undefined,scope),candidates);
+	assert.deepEqual(lookup('Start.md','Alpha/Notes/Detail','Alpha/Notes/Detail.md',scope),[]);
+	assert.deepEqual(lookup('Start.md','/Alpha/Notes/Detail','Alpha/Notes/Detail.md',scope),[]);
+	assert.deepEqual(lookup('Alpha/Start.md','./Notes/Detail','Alpha/Notes/Detail.md',scope),[]);
+	assert.deepEqual(lookup('Beta/Start.md','../Alpha/Notes/Detail','Alpha/Notes/Detail.md',scope),[]);
+	assert.deepEqual(lookup('Start.md','Only','Alpha/Only.md',scope),[]);
+	assert.deepEqual(lookup('Start.md','Picture.svg','Beta/Picture.svg',scope),[]);
+	assert.deepEqual(lookup('Alpha/Start.md','Picture.svg','Beta/Picture.svg',scope),['Beta/Picture.svg','Other/Picture.svg']);
+	assert.equal(snapshots,1);
+});
 
 test('move selected references, refuse stale or read-only sources, and resume after a partial rewrite', async t=>{
 	await fs.mkdir('.tmp',{recursive:true});

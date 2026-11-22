@@ -6,7 +6,7 @@ import { overlaps } from '../fs/vault.ts';
 import { compareRegistryPaths, sameOrBelow } from '../registry/paths.ts';
 import { discover } from '../kb/catalog.ts';
 import { canvasMoveTargets, moveVaultPath, relocateMarkdownReference } from '../kb/move-link-text.ts';
-import { affectedByMove, assertWritableOwner, readMoveReference, referenceEdit, referenceOwner } from '../kb/move-references.ts';
+import { affectedByMove, ambiguousWikiMoveTargets, assertWritableOwner, readMoveReference, referenceEdit, referenceOwner } from '../kb/move-references.ts';
 import type { MoveToken, ReferenceEdit } from '../kb/move-references.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { dialogContents } from './dialog.ts';
@@ -29,7 +29,8 @@ function annotationOffset(text: string, original: string, position: LinkCache['p
 	return matches(offset) ? offset : undefined;
 }
 
-async function markdownEdits(plugin: KnowledgeBaseManager, file: TFile, plan: MoveRecord, review: (reason:string)=>void) {
+async function markdownEdits(plugin: KnowledgeBaseManager, file: TFile, plan: MoveRecord, review: (reason:string)=>void,
+	ambiguousTargets: ReturnType<typeof ambiguousWikiMoveTargets>) {
 	const {metadataCache}=plugin.app;
 	const cache=metadataCache.getFileCache(file);
 	if (!cache) {
@@ -37,21 +38,30 @@ async function markdownEdits(plugin: KnowledgeBaseManager, file: TFile, plan: Mo
 			.some(target=>sameOrBelow(target,plan.source))) review(tr('缓存未就绪','Metadata cache is not ready'));
 		return;
 	}
-	const targetOf=(ref: Pick<Reference,'link'>) => {
+	const hasAffectedTarget=(ref: Pick<Reference,'link'>) => {
 		const path=parseLinktext(ref.link).path;
 		if (!path) return;
 		const target=metadataCache.getFirstLinkpathDest(path,file.path)?.path;
 		return target && affectedByMove(file.path,target,plan) ? target : undefined;
 	};
-	if ([...(cache.frontmatterLinks ?? []),...(cache.referenceLinks ?? [])].some(ref=>targetOf(ref)))
+	if ([...(cache.frontmatterLinks ?? []),...(cache.referenceLinks ?? [])].some(hasAffectedTarget))
 		review(tr('检查属性或引用式链接','Review property or reference-style links'));
 	const links=[...(cache.links ?? []),...(cache.embeds ?? [])];
 	const drafts=[];
 	for (const ref of links) {
-		const target=targetOf(ref);
-		if (!target) {
-			const path=parseLinktext(ref.link).path.replace(/^\//u,'');
-			if (sameOrBelow(path,plan.source)) review(tr('检查无法解析的旧路径','Review unresolved references to the original path'));
+		const path=parseLinktext(ref.link).path;
+		if (!path) continue;
+		const target=metadataCache.getFirstLinkpathDest(path,file.path)?.path;
+		if (/^!?\[\[/u.test(ref.original)) {
+			const ambiguous=ambiguousTargets(file.path,path,target,plan);
+			if (ambiguous.length) {
+				review(tr('同名候选需要人工核对：','Review an ambiguous wikilink: ')+path+' → '+ambiguous.join(', '));
+				continue;
+			}
+		}
+		if (!target || !affectedByMove(file.path,target,plan)) {
+			if (!target && sameOrBelow(path.replace(/^\//u,''),plan.source))
+				review(tr('检查无法解析的旧路径','Review unresolved references to the original path'));
 			continue;
 		}
 		const replacement=relocateMarkdownReference(ref.original,file.path,target,plan.source,plan.destination);
@@ -85,7 +95,9 @@ async function canvasEdits(plugin: KnowledgeBaseManager, file: TFile, plan: Move
 export async function planMoveReferences(plugin: KnowledgeBaseManager, plan: MoveRecord): Promise<ReferencePlan> {
 	const libraries=await discover(plugin.disk,plugin.config);
 	const groups=new Map<string,ReferenceGroup>(), review=new Set<string>(), permissions=new Map<string,Promise<void>>();
-	const candidates=plugin.app.vault.getFiles().filter(file=>['md','canvas'].includes(file.extension.toLowerCase())
+	const files=plugin.app.vault.getFiles();
+	const ambiguousTargets=ambiguousWikiMoveTargets(function* () {for (const file of files) yield file.path;});
+	const candidates=files.filter(file=>['md','canvas'].includes(file.extension.toLowerCase())
 		&& !plugin.config.templates.some(template=>overlaps(file.path,template)));
 	candidates.sort((a,b)=>compareRegistryPaths(a.path,b.path));
 	for (const file of candidates) {
@@ -93,7 +105,8 @@ export async function planMoveReferences(plugin: KnowledgeBaseManager, plan: Mov
 		const label=owner?.identity?.displayName ?? owner?.location ?? tr('Vault 未登记区域','Unregistered Vault files');
 		const manual=(reason:string)=>review.add(label+' · '+file.path+' · '+reason);
 		try {
-			const edit=await (file.extension.toLowerCase()==='canvas' ? canvasEdits : markdownEdits)(plugin,file,plan,manual);
+			const edit=file.extension.toLowerCase()==='canvas' ? await canvasEdits(plugin,file,plan,manual) :
+				await markdownEdits(plugin,file,plan,manual,ambiguousTargets);
 			if (!edit) continue;
 			if (sameOrBelow(file.path,plan.source) && plan.changes.some(change=>plan.source+'/'+change.file===file.path)) {
 				manual(tr('此文件同时有受管绑定更新，请在移动后核对引用','A managed binding also updates this file. Review its references after moving.'));

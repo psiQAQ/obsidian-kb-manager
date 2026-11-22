@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { tr } from '../i18n.ts';
+import { linkCandidateIndex } from '../diagnostics/links.ts';
 import { readRelative } from '../diagnostics/snapshot.ts';
 import { existingDirectory } from '../fs/paths.ts';
 import { digest, key, overlaps } from '../fs/vault.ts';
@@ -23,6 +24,26 @@ export interface ReferenceEdit {
 
 export function affectedByMove(file: string, target: string, scope: Scope): boolean {
 	return sameOrBelow(file,scope.source) || sameOrBelow(target,scope.source);
+}
+
+export function ambiguousWikiMoveTargets(paths: () => Iterable<string>) {
+	const lookup=linkCandidateIndex(paths);
+	return (file:string, link:string, resolved:string|undefined, scope:Scope) => {
+		if (!link || /^(?:\/|\.\.?\/)/u.test(link)) return [];
+		const candidates=new Set(lookup({source:file,target:link,kind:'link',syntax:'wiki'}));
+		if (resolved) candidates.add(resolved);
+		if (candidates.size<2 || ![...candidates].some(target=>affectedByMove(file,target,scope))) return [];
+		if (link.includes('/')) {
+			const literal=key(link);
+			const exact=[...candidates].filter(candidate=>{
+				const normalized=key(candidate);
+				return normalized===literal || normalized.replace(/\.md$/u,'')===literal;
+			});
+			// A complete Vault path can also be the tail of a deeper file path.
+			if (exact.length===1 && (!resolved || exact[0]===resolved)) return [];
+		}
+		return [...candidates].sort(compareRegistryPaths);
+	};
 }
 
 export function referenceOwner(libraries: readonly Library[], file: string): Library | undefined {
