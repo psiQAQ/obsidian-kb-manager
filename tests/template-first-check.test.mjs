@@ -13,7 +13,7 @@ import {readVaultRegistry} from '../src/registry/desktop.ts';
 import {templateCatalog} from '../scripts/template-catalog.mjs';
 import {vaultDisk} from './fixtures/vault-disk.mjs';
 
-const {packs} = templateCatalog(fileURLToPath(new URL('../assets/templates/', import.meta.url)));
+const {packs,digests} = templateCatalog(fileURLToPath(new URL('../assets/templates/', import.meta.url)));
 // Provide the catalogue normally embedded by esbuild when running this fixture in Node.
 globalThis.KB_TEMPLATE_PACKS = packs;
 const {createLibrary, previewCreate} = await import('../src/kb/create.ts');
@@ -54,7 +54,7 @@ async function fixtureResolver(vault) {
 	};
 }
 
-test('first general checks find no errors in newly created libraries for all 18 built-in templates', async t => {
+test('first general and specialized checks find no errors in newly created libraries for all 18 built-in templates', async t => {
 	const scratch = path.resolve('.tmp');
 	await fs.mkdir(scratch,{recursive:true});
 	const directory = await fs.mkdtemp(path.join(scratch,'template-first-check-'));
@@ -101,7 +101,9 @@ test('first general checks find no errors in newly created libraries for all 18 
 				const offline=JSON.parse(data);
 				assert.equal(offline.environment,'offline');
 				assert.ok(offline.logPath,offline.logError);
-				assert.ok(offline.checks.some(check=>check.id==='workflow'));
+				const workflow = offline.checks.find(check=>check.id==='workflow');
+				assert.ok(workflow?.diagnostics.some(row=>row.code==='assignment-course-unverified'),data);
+				assert.ok(workflow.coverage.unknown > 0,data);
 				assert.ok(offline.checks.every(check=>check.status!=='failed'),data);
 			}
 			const {paths:registeredPaths} = await readVaultRegistry(disk);
@@ -127,6 +129,11 @@ test('first general checks find no errors in newly created libraries for all 18 
 			assert.equal(links.coverage.unknown,0,JSON.stringify(links.diagnostics));
 			assert.ok(report.logPath,report.logError);
 			assert.equal(await headOid(libraryRoot),head);
+			const selected = descriptor.checks.map(check => check.id);
+			const special = await runDiagnostics({libraryRoot,vaultRoot,configDir,selected,officialDigests:digests,
+				registered:true,registeredPaths,resolveLink:await fixtureResolver(vaultRoot)});
+			assert.deepEqual(special.checks.map(check => [check.id,check.status,check.diagnostics]),
+				selected.map(id => [id,'passed',[]]));
 			if (id !== 'llm-wiki') return;
 
 			assert.ok(links.diagnostics.some(row => row.file === categoryTemplate &&

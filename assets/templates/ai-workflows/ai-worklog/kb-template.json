@@ -1,6 +1,6 @@
 {
   "id": "ai-worklog",
-  "version": "1",
+  "version": "2",
   "name": "AI 协作工作记忆",
   "description": "由工作卡、会话交接和决策页接续同库的人机工作。",
   "purpose": "ai-workflows",
@@ -29,7 +29,8 @@
     {
       "id": "workflow",
       "name": "决策取代关系",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [

@@ -1,5 +1,6 @@
 ---
-categories: "[[__KB_ROOT__/Categories/People]]"
+categories:
+  - "[[__KB_ROOT__/Categories/People]]"
 type:
   - "[[__KB_ROOT__/References/Authors]]"
 ---

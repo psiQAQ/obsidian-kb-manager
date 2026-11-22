@@ -89,12 +89,12 @@ views:
       - year
       - genre
       - rating
-      - ratingImdb
+      - scoreImdb
       - last
     sort:
       - property: file.name
         direction: ASC
-      - property: ratingImdb
+      - property: scoreImdb
         direction: DESC
     columnSize:
       file.name: 283
@@ -128,9 +128,9 @@ views:
       - year
       - director
       - genre
-      - ratingImdb
+      - scoreImdb
     sort:
-      - property: ratingImdb
+      - property: scoreImdb
         direction: DESC
   - type: table
     name: Genre

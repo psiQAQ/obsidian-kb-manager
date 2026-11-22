@@ -26,7 +26,7 @@ views:
       - date
     sort:
       - property: date
-        direction: ASC
+        direction: DESC
   - type: table
     name: 决定
     filters:

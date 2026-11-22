@@ -5,7 +5,7 @@ categories:
 author:
   - "[[__KB_ROOT__/References/Steph Ango]]"
 source: https://stephango.com/buy-wisely
-clipped: 2023-11-18
+created: 2023-11-18
 published: 2023-09-29
 status:
   - "[[__KB_ROOT__/References/Published]]"

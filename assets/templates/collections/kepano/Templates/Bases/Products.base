@@ -6,7 +6,7 @@ filters:
 formulas:
   Owned: ((now() - acquired).months).round()
   totalUses: monthlyUses * formula.Owned.round()
-  perUse: (price / formula.totalUses).toFixed(2)
+  perUse: if(formula.totalUses > 0 && !price.isEmpty(), (price / formula.totalUses).toFixed(2))
 properties:
   note.monthlyUses:
     displayName: Uses/month

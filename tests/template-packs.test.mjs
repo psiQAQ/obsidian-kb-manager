@@ -64,7 +64,7 @@ const negative = {
 	'exam-practice': ['Practice/读时间复杂度.md', { attempts:[] }, 'retry-record-missing'],
 	'gtd': ['Actions/等待确认取样时间.md', { follow_up:'' }, 'waiting-follow-up-missing'],
 	'project-review': ['Archives/公开说明.md', {}, 'archived-project-open-task', '\n- [ ] 漏做的行动'],
-	'domain-reading': ['Terms/对照条件.md', {}, 'review-card-incomplete', '问题\n?\n'],
+	'domain-reading': ['Terms/对照条件.md', { review:true, tags:['flashcards/example-instance'] }, 'review-card-incomplete', '问题\n?\n'],
 	'zettelkasten': ['Permanent/理解需要检验.md', { literature:[] }, 'literature-card-missing'],
 	'research-evidence': ['Evidence/重复测量.md', { sources:[`[[${other}/Sources/读数报告]]`] }, 'evidence-source-invalid'],
 	'research-project': ['Projects/同一份样品的重复测量.md', { evidence:[`[[${other}/Records/重复测量观察]]`] }, 'research-evidence-missing'],
@@ -76,8 +76,9 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 19);
+	assert.equal(digests.length, 28);
 	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
+	assert.ok(digests.includes('811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20'), 'LLM Wiki v6 stays trusted');
 	const purposes = new Map();
 	const dependencies = new Set();
 	for (const { descriptor, text } of Object.values(packs)) {
@@ -129,11 +130,19 @@ for (const [id, pack] of Object.entries(packs)) {
 		const initial = notes(text);
 		const context = { template:descriptor, manifest:{ paths:{ wiki:'wiki' } }, libraryRoot:root, notes:initial };
 		async function findings(ctx) {
-			if (id !== 'knowledge-garden') return validator(ctx);
-			const inventory = {files:new Set(Object.keys(text)), excluded:new Set(), unreadableDirectories:new Set(),
-				notes:ctx.notes.map(note => ({...note, lineOffset:0}))};
-			const links = await collectCheckLinkEvidence({vaultRoot:'.'}, inventory, '.', root);
-			const result = await validator({...ctx, links});
+			if (descriptor.checks.some(check => check.linkEvidence)) {
+				const inventory = {files:new Set(Object.keys(text)), excluded:new Set(), unreadableDirectories:new Set(),
+					notes:ctx.notes.map(note => ({...note, lineOffset:0}))};
+				const resolveLink = ({target}) => {
+					if (!target.startsWith(root + '/')) return {status:'missing'};
+					const relative = target.slice(root.length + 1);
+					const path = relative in text ? relative : relative + '.md';
+					return path in text ? {status:'resolved', path:root + '/' + path} : {status:'missing'};
+				};
+				ctx = {...ctx, links:await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root)};
+			}
+			const result = await validator(ctx);
+			if (Array.isArray(result)) return result;
 			assert.equal(result.unverified, 0);
 			return result.findings;
 		}
@@ -170,6 +179,13 @@ test('LLM Wiki checks the mapped index by exact path and excludes fenced, inline
 	]);
 	state.notes[0].body += `\n- [[${root}/${mapped}/主题二/重复标题]]\n- [行内引用](./行内引用.md)`;
 	assert.deepEqual(await llmWiki(state), []);
+	state.notes[0].body += '\n- 同一主题的进一步资料\n    - [子项](./列表子项.md)\n\n' +
+		'          [缩进代码](./缩进示例.md)\n\n' +
+		'  ~~~md\n  - [围栏代码](./列表代码块.md)\n  ~~~';
+	for (const name of ['列表子项','缩进示例','列表代码块']) {
+		state.notes.push({path:mapped + '/' + name + '.md', properties:{type:'concept',managed_by:'agent'}, body:''});
+	}
+	assert.deepEqual((await llmWiki(state)).map(({file})=>file), [mapped + '/缩进示例.md',mapped + '/列表代码块.md']);
 });
 
 test('first-week entry rejects missing, other-library, and non-diary targets', async () => {
@@ -184,8 +200,78 @@ test('first-week entry rejects missing, other-library, and non-diary targets', a
 test('citation checks handle missing and non-link Properties values', async () => {
 	const permanent = { path:'Permanent/待整理.md', properties:{type:'permanent-card',origin:'literature'}, body:'' };
 	const graph = { path:'Evidence/待核对.md', properties:{type:'evidence-claim',sources:[42]}, body:'' };
-	assert.deepEqual((await zettelkasten({libraryRoot:root,notes:[permanent]})).map(item => item.code), ['literature-card-missing']);
+	assert.deepEqual((await zettelkasten({libraryRoot:root,notes:[permanent]})).findings.map(item => item.code), ['literature-card-missing']);
 	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).map(item => item.code), ['evidence-source-invalid']);
+	graph.properties.sources = [];
+	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).map(item => item.code), ['evidence-source-missing']);
+});
+
+test('YAML short links use actual resolution and keep unknown links unverified', async () => {
+	const cases = [
+		['ai-worklog','Decisions/采用本地索引.md','supersedes','Decisions/先试云端索引.md'],
+		['coursework','Courses/实验入门/Assignments/图表作业.md','course','Courses/实验入门/课程索引.md'],
+		['worldbuilding','Events/驿站换班.md','location','Places/芦汀驿站.md'],
+		['zettelkasten','Permanent/理解需要检验.md','literature','Literature/示例阅读记录.md'],
+		['research-project','Projects/同一份样品的重复测量.md','evidence','Records/重复测量观察.md'],
+		['manuscript','Manuscript/Chapters/02-回声.md','manuscript','Manuscript/回声计划.md'],
+	];
+	for (const [id, path, property, target] of cases) {
+		const files = instance(id);
+		const initial = notes(files);
+		const source = initial.find(note => note.path === path);
+		assert.ok(source && files[target], id);
+		const short = posix.basename(target, '.md');
+		source.properties[property] = `[[${short}|显示名]]`;
+		const inventory = {files:new Set(Object.keys(files)), excluded:new Set(), unreadableDirectories:new Set(),
+			notes:initial.map(note => ({...note, lineOffset:0}))};
+		async function run(status, destination) {
+			const resolveLink = status ? ({target: link}) => link === short ? {status, path:destination}
+				: {status:'resolved', path:link + '.md'} : undefined;
+			const links = await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root);
+			return checkers[id]({libraryRoot:root, notes:initial, links});
+		}
+		assert.deepEqual(await run('resolved', root + '/' + target), {findings:[], unverified:0}, id);
+		for (const result of [await run('resolved', other + '/' + target), await run('missing')]) {
+			assert.equal(result.unverified, 0, id);
+			assert.ok(result.findings.some(row => row.file === path && row.severity === 'warning'), id);
+		}
+		for (const result of [await run('unknown'), await run()]) {
+			assert.equal(result.unverified, 1, id);
+			assert.deepEqual(result.findings.map(row => [row.file,row.severity]), [[path,'info']], id);
+		}
+	}
+	const chapters = notes(instance('manuscript'));
+	const chapter = chapters.find(note => note.properties.type === 'chapter');
+	chapter.properties.manuscript = `[[${root}/Outline/回声计划大纲]]`;
+	assert.deepEqual((await manuscript({libraryRoot:root,notes:chapters})).findings.map(row => row.code), ['chapter-manuscript-invalid']);
+});
+
+test('new reading libraries have no shared flashcard deck and each question needs an answer', async () => {
+	for (const [index, destination] of [root, other].entries()) {
+		const files = notes(instance('domain-reading', destination));
+		const term = files.find(note => note.path.startsWith('Terms/'));
+		const template = files.find(note => note.path === 'Templates/术语.md');
+		assert.deepEqual(term.properties.tags, []);
+		assert.deepEqual(template.properties.tags, []);
+		assert.deepEqual(await domainReading({notes:files}), []);
+		term.properties.review = true;
+		term.properties.tags = [`flashcards/local-reading-${index}`];
+		term.body += '\n\n第二问\n?\n第二个答案。\n';
+		assert.deepEqual(await domainReading({notes:files}), []);
+		term.body += '\n没有答案的第三问\n?\n';
+		term.properties.tags = ['flashcards/reading-example'];
+		assert.deepEqual((await domainReading({notes:files})).map(row => row.code), ['review-deck-missing','review-card-incomplete']);
+	}
+});
+
+test('work log orders recent handoffs first and Radar derives a stage order', () => {
+	const handoffs = parse(instance('ai-worklog')['Views/Work.base']).views.find(view => view.name === '最近交接');
+	assert.deepEqual(handoffs.sort, [{property:'date', direction:'DESC'}]);
+	const radar = parse(instance('technology-radar')['Views/Radar.base']);
+	assert.deepEqual(radar.views.find(view => view.name === '按阶段').groupBy, {property:'formula.stage', direction:'ASC'});
+	assert.deepEqual([...radar.formulas.stage.matchAll(/status == "(\w+)", "(\d)/gu)].map(match => match.slice(1)), [
+		['assess','1'],['trial','2'],['adopt','3'],['hold','4'],
+	]);
 });
 
 function workspace(activeFile, assets) {

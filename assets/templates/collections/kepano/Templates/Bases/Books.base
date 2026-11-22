@@ -8,6 +8,8 @@ properties:
     displayName: Author
   file.name:
     displayName: Name
+  note.pages:
+    displayName: Pages
   note.year:
     displayName: Year
   note.genre:
@@ -18,7 +20,7 @@ views:
     order:
       - file.name
       - author
-      - length
+      - pages
       - year
       - rating
       - topics

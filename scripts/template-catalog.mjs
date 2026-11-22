@@ -8,6 +8,16 @@ export function templateCatalog(root){
 	const packs=Object.create(null), digests=new Set([
 		// The exact knowledge-garden v1 checker embedded in plugin releases 3.0.0 and 3.0.1.
 		'2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f',
+		// Earlier checkers continue to be trusted for existing library instances.
+		'4cfce7c700ad14cb9e0b28c575d7158243c99cc12e11372fb137fe4d500dff63', // ai-worklog v1
+		'811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20', // llm-wiki v6
+		'0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601', // coursework v1
+		'127ac61fe3c08d92fd482c1d8c4c70025e141634dcd432ad106eb5ef5d80eb00', // domain-reading v1
+		'5cf311c9f4bd3b9c063cc4028f930ba602302e5128e468bdc7342eefa31a103c', // zettelkasten v1
+		'a74bcdacab2e21ce1380a4c79bce9d3016f44336be4c5ccb0e5b6499a5b7b2ac', // research-evidence v1
+		'a1be519840d3403df22fd0cdeb55da0bf403c5d26585b204ba6e871da80078c8', // research-project v1
+		'78737124a5ed726af23a2716075ab3a80feacbbaf70c2968c717ab05939d6401', // manuscript v1
+		'f4a8df186ffbc486e91967cfd5f0048299e805e5618fe4dd84e45850f8e48dfe', // worldbuilding v1
 	]);
 	for(const purpose of readdirSync(root,{withFileTypes:true})){
 		if(!purpose.isDirectory())throw new Error('Unexpected catalogue item: '+purpose.name);

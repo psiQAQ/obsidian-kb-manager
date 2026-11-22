@@ -5,6 +5,8 @@ filters:
     - file.ext == "md"
     - '!file.inFolder("{{kb_root}}/Templates")'
     - '!file.inFolder("{{kb_root}}/Integrations")'
+formulas:
+  stage: 'if(status == "assess", "1 评估", if(status == "trial", "2 试用", if(status == "adopt", "3 采用", if(status == "hold", "4 暂缓", "未指定"))))'
 views:
   - type: table
     name: 按阶段
@@ -17,7 +19,7 @@ views:
       - topic
       - adoption_reason
     groupBy:
-      property: status
+      property: formula.stage
       direction: ASC
   - type: table
     name: 待验证

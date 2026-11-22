@@ -1,6 +1,6 @@
 {
   "id": "research-project",
-  "version": "1",
+  "version": "2",
   "name": "课题研究",
   "description": "把研究问题、资料、研究日志和阶段结论联系起来。",
   "purpose": "research",
@@ -29,7 +29,8 @@
     {
       "id": "workflow",
       "name": "结论证据",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [

@@ -7,9 +7,7 @@ loc:
 rating:
 created: "{{date}}"
 last:
-coordinates:
-  - "35.021041"
-  - "135.7556075"
+coordinates: []
 ---
 ## Trips
 

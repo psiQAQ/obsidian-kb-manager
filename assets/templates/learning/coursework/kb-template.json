@@ -1,6 +1,6 @@
 {
   "id": "coursework",
-  "version": "1",
+  "version": "2",
   "name": "课程学习",
   "description": "用课程结构管理课堂、讲义、作业和截止日期。",
   "purpose": "learning",
@@ -33,7 +33,8 @@
     {
       "id": "workflow",
       "name": "有效课程和截止日",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "dependencies": [

@@ -1,6 +1,6 @@
 {
   "id": "zettelkasten",
-  "version": "1",
+  "version": "2",
   "name": "卡片盒",
   "description": "把闪念和文献批注提炼成永久卡，由结构页编排阅读脉络。",
   "purpose": "reading",
@@ -26,7 +26,8 @@
     {
       "id": "workflow",
       "name": "永久卡来由",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [

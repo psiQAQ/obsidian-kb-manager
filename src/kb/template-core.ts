@@ -29,8 +29,9 @@ export function checkCreationRequirements(template:Template, host:TemplateHost) 
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
-const wikiVersion = '6';
-const builtinVersions = { 'llm-wiki': ['1','2','3','4','5',wikiVersion], kepano: ['1','2','3','4','5'] };
+const wikiVersion = '7';
+const kepanoVersion = '6';
+const builtinVersions = { 'llm-wiki': ['1','2','3','4','5','6',wikiVersion], kepano: ['1','2','3','4','5',kepanoVersion] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
 	return template?.id === id && builtinVersions[id].includes(template.version);
 }
@@ -45,7 +46,11 @@ export function sharedTemplateKind(template:TemplateIdentity):BuiltinKind|undefi
 }
 export function kepanoBindingAssets(skeleton:Record<string,string>, version:string) {
 	const historical = skeleton['README.v' + version + '.md'];
-	return historical && (version === '1' || version === '2') ? {...skeleton,'README.md':historical} : skeleton;
+	// Versions 1–5 used scalar people links and supplied fixed month links.
+	const previousPages = /^[1-5]$/u.test(version) && skeleton['Bindings.v5.json']
+		? JSON.parse(skeleton['Bindings.v5.json']) as Record<string,string>
+		: {};
+	return {...skeleton, ...previousPages, ...(historical && (version === '1' || version === '2') && {'README.md':historical})};
 }
 export function kepanoBinding(skeleton:Record<string,string>, name:string) {
 	return /\.(?:md|base)$/iu.test(name) && Object.prototype.hasOwnProperty.call(skeleton,name) && skeleton[name]!.includes('__KB_ROOT__');
@@ -56,11 +61,11 @@ function bundledText(name:string,text:string){
 export function kepanoTemplate(skeleton:Record<string,string>, root:string):Template {
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
-	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
+	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name) && name !== 'Bindings.v5.json'));
 	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(bundledText(name,text))}));
 	files.push(builtinAttributesFile());
 	const {suggestedExcludedFolders,managedFiles}=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']):{};
-	return {id:'kepano',version:'5',entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders,managedFiles};
+	return {id:'kepano',version:kepanoVersion,entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders,managedFiles};
 }
 
 export function renderBase(source: string, root: string): string {

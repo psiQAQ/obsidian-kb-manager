@@ -6,9 +6,13 @@ genre: []
 director:
 cast: []
 runtime:
+plot:
+scoreImdb:
+scoreRT:
+watchlist:
 rating:
 year:
-last: "{{date}}"
+last:
 imdbId:
 via:
 ---

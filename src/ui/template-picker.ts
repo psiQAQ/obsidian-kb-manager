@@ -6,7 +6,7 @@ import { bindSharedKepanoPage } from '../kb/kepano.ts';
 import { insertTemplate } from '../kb/insert.ts';
 import type { Mapping } from '../kb/mapping.ts';
 import {declaration} from '../kb/template-declaration.ts';
-import { kepanoBinding, sharedTemplateKind } from '../kb/template-core.ts';
+import { kepanoBinding, kepanoBindingAssets, sharedTemplateKind } from '../kb/template-core.ts';
 import { checkTemplateFile, legacyTemplateFolder, listTemplateFiles, localTemplateFolder, previewTemplateRestore, restoreTemplateFile } from '../kb/template-files.ts';
 import type { Preset, TemplateAccess } from '../kb/template-files.ts';
 import { compareRegistryPaths } from '../registry/paths.ts';
@@ -48,7 +48,7 @@ export async function chooseInsertion(app: App, view: MarkdownView, target: TFil
 		if (!kind) throw error;
 		localWarning = String(error);
 	}
-	const assets = kind === 'kepano' ? scope.assets.kepano : scope.assets.wiki;
+	const assets = kind === 'kepano' ? kepanoBindingAssets(scope.assets.kepano, template.version) : scope.assets.wiki;
 	async function shared() {
 		if (!kind) return { folder: '', files: new Set<string>(), warning: '' };
 		try {

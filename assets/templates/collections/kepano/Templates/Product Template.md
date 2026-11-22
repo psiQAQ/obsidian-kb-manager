@@ -7,5 +7,5 @@ model:
 rating:
 price:
 acquired: "{{date}}"
-monthly-uses:
+monthlyUses:
 ---

@@ -1,14 +1,33 @@
-export default async function check({ libraryRoot, notes }) {
+function localTarget(value, file, { libraryRoot, links }) {
+	const raw = typeof value === 'string' && value.match(/^\[\[([^|\]\n]+)(?:\|[^\]\n]*)?\]\]$/u)?.[1].replace(/\\$/u, '').trim();
+	const target = raw && raw.split('#', 1)[0].trim();
+	if (!target) return undefined;
+	const reference = links?.[file]?.references.find(item => item.line === undefined && item.target?.trim() === raw);
+	if (reference?.status === 'missing') return undefined;
+	const located = reference?.status === 'resolved' ? reference.path : target;
+	if (libraryRoot && located?.startsWith(libraryRoot + '/')) return located.slice(libraryRoot.length + 1).replace(/\.md$/u, '');
+	if (reference?.status === 'resolved') return libraryRoot ? undefined : located?.replace(/\.md$/u, '');
+	if (!links && target.includes('/')) return target.replace(/\.md$/u, '');
+	return null;
+}
+
+export default async function check(context) {
+	const { notes } = context;
 	const decisions = new Map(notes.filter(note => note.path.startsWith('Decisions/') && note.properties.type === 'ai-decision').map(note => [note.path, note.properties]));
 	const graph = new Map();
 	const findings = [];
+	let unverified = 0;
 	for (const [file, { supersedes }] of decisions) {
 		if (!supersedes) continue;
-		const link = typeof supersedes === 'string' && supersedes.match(/^\[\[([^#|\]]+)/u)?.[1];
-		const relative = link && link.startsWith(libraryRoot + '/') ? link.slice(libraryRoot.length + 1) : link;
-		const target = relative && (relative.endsWith('.md') ? relative : relative + '.md');
-		if (!target || !decisions.has(target)) findings.push({ severity:'warning', code:'superseded-decision-missing', file, message:'supersedes 应指向本库的旧决定。' });
-		else graph.set(file, target);
+		const relative = localTarget(supersedes, file, context);
+		if (relative === null) {
+			unverified++;
+			findings.push({ severity:'info', code:'superseded-decision-unverified', file, message:'请在 Obsidian 中核实 supersedes 指向的旧决定。' });
+		} else if (!relative || !decisions.has(relative + '.md')) {
+			findings.push({ severity:'warning', code:'superseded-decision-missing', file, message:'supersedes 应指向本库的旧决定。' });
+		} else {
+			graph.set(file, relative + '.md');
+		}
 	}
 	const visited = new Set();
 	for (const file of graph.keys()) {
@@ -21,5 +40,5 @@ export default async function check({ libraryRoot, notes }) {
 		if (walk.has(target)) findings.push({ severity:'warning', code:'decision-cycle', file:target, message:'决定的取代关系形成循环，请核对先后。' });
 		for (const step of walk) visited.add(step);
 	}
-	return findings;
+	return { findings, unverified };
 }

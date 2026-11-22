@@ -4,18 +4,37 @@ const knowledgeTypes = new Set(['source', 'entity', 'concept', 'analysis', 'arch
 
 function removeCode(body) {
 	let fence;
+	const listIndents = [];
 	const prose = [];
-	for (const line of body.split(/\r?\n/u)) {
-		const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+	for (const raw of body.split(/\r?\n/u)) {
+		const indent = raw.match(/^[ \t]*/u)[0];
+		let width = 0;
+		for (const char of indent) width += char === '\t' ? 4 - width % 4 : 1;
+		const line = ' '.repeat(width) + raw.slice(indent.length);
+		if (!line.trim()) {
+			prose.push('');
+			continue;
+		}
+		while (listIndents.length && width < listIndents.at(-1)) listIndents.pop();
+		const listIndent = listIndents.at(-1) ?? 0;
 		if (fence) {
-			if (marker?.[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
-			continue;
+			if (width >= fence.indent) {
+				const close = /^ {0,3}(`{3,}|~{3,})\s*$/u.exec(line.slice(fence.indent));
+				if (close?.[1][0] === fence.marker[0] && close[1].length >= fence.marker.length) fence = undefined;
+				continue;
+			}
+			fence = undefined;
 		}
+		const content = line.slice(listIndent);
+		if (content.startsWith('    ')) continue;
+		const item = /^ {0,3}(?:[-+*]|\d{1,9}[.)]) {1,4}(?=\S)/u.exec(content);
+		if (item) listIndents.push(listIndent + item[0].length);
+		const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(content.slice(item?.[0].length ?? 0));
 		if (marker) {
-			fence = marker[1];
+			fence = { marker:marker[1], indent:listIndents.at(-1) ?? 0 };
 			continue;
 		}
-		if (!/^(?: {4}|\t)/u.test(line)) prose.push(line.replace(/(`+)[^\n]*?\1(?!`)/gu, ''));
+		prose.push(content.replace(/(`+)[^\n]*?\1(?!`)/gu, ''));
 	}
 	return prose.join('\n');
 }

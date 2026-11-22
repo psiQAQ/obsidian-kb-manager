@@ -9,10 +9,10 @@ created: 2023-09-12
 
 ![[__KB_ROOT__/Templates/Bases/Books.base#Author]]
 
-# Clippings
+## Clippings
 
 ![[__KB_ROOT__/Templates/Bases/Clippings.base#Author]]
 
-# Podcast episodes
+## Podcast episodes
 
 ![[__KB_ROOT__/Templates/Bases/Podcast episodes.base#Guest]]

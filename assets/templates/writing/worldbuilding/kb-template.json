@@ -1,6 +1,6 @@
 {
   "id": "worldbuilding",
-  "version": "1",
+  "version": "2",
   "name": "世界观与时间线",
   "description": "用人物、地点、阵营和事件等互链建立可查询设定。",
   "purpose": "writing",
@@ -38,7 +38,8 @@
     {
       "id": "workflow",
       "name": "事件日期与地点",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "dependencies": [

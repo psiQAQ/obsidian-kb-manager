@@ -36,5 +36,5 @@ views:
       - created
       - published
     sort:
-      - property: clipped
+      - property: created
         direction: DESC

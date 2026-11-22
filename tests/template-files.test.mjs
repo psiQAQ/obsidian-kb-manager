@@ -58,13 +58,13 @@ const identity = {
 	description: '', archived: false, managed: [],
 };
 
-test('Fusion v6 bundles operation logs and recognizes previous template versions', () => {
+test('Fusion and Kepano bundle current resources and recognize previous template versions', () => {
 	const root = 'Libraries/QA';
 	const fusion = builtinTemplate(wiki, { displayName: 'QA', description: '', destination: root });
 	const personal = kepanoTemplate(kepano, root);
 	const names = template => template.files.map(file => file.name);
-	assert.equal(fusion.version, '6');
-	assert.equal(personal.version, '5');
+	assert.equal(fusion.version, '7');
+	assert.equal(personal.version, '6');
 	assert.match(new TextDecoder().decode(personal.files.find(file => file.name === 'README.md').bytes), /\(\.\/LICENSE\.md\)/u);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 7);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
@@ -76,10 +76,10 @@ test('Fusion v6 bundles operation logs and recognizes previous template versions
 	});
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 52);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 30);
-	assert.ok(!names(personal).some(name => name.startsWith('README.v')));
-	for (const version of ['1', '2', '3', '4', '5', '6']) {
+	assert.ok(!names(personal).some(name => name.startsWith('README.v') || name === 'Bindings.v5.json'));
+	for (const version of ['1', '2', '3', '4', '5', '6', '7']) {
 		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
-		assert.equal(isKepano({ id: personal.id, version }), ['1', '2', '3', '4', '5'].includes(version));
+		assert.equal(isKepano({ id: personal.id, version }), version !== '7');
 	}
 	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = instanceManifestSeed(JSON.parse(wiki['kb-template.json']),1).replace(/^templates = .*\r?\n/mu, '');
@@ -119,7 +119,8 @@ test('uses existing v2 shared inputs and restores only missing Fusion files insi
 test('Kepano restoration binds bundled links while insertion preserves edits to legacy source values', async () => {
 	const { root, access, files, dirs } = fixture();
 	const local = root + '/Templates';
-	const plan = await previewTemplateRestore(access, 'kepano', root, local, kepano, new Set(['Book Template.md']));
+	const historical = kepanoBindingAssets(kepano, '2');
+	const plan = await previewTemplateRestore(access, 'kepano', root, local, historical, new Set(['Book Template.md']));
 	assert.equal(plan.length, 81);
 	assert.ok(!plan.some(item => item.path === local + '/Book Template.md'));
 	const actor = plan.find(item => item.path === local + '/Actor Template.md');
@@ -130,10 +131,11 @@ test('Kepano restoration binds bundled links while insertion preserves edits to 
 	const v2 = { ...identity, template: { id: 'kepano', version: '2' } };
 	const bindings = await restoredTemplateBindings(v2, [actor], root, kepano, async () => 'hash');
 	assert.deepEqual(bindings, [{ path: actor.bundledPath, root, fingerprint: 'hash', role: 'kepano-bindings' }]);
-	const old = kepano[actor.bundledPath].replaceAll('__KB_ROOT__/', '')
+	const old = historical[actor.bundledPath].replaceAll('__KB_ROOT__/', '')
 		.replace('[[References/Actors]]', '[[Private/Cast]]') + '\nOriginal user edit\n';
-	const inserted = bindSharedKepanoPage('Actor Template.md', old, root, kepano);
+	const inserted = bindSharedKepanoPage('Actor Template.md', old, root, historical);
 	assert.ok(inserted.includes('[[Private/Cast]]') && inserted.includes('Original user edit'));
+	assert.equal(parse(inserted.split(/^---\r?$/mu)[1]).categories, `[[${root}/Categories/People]]`);
 	assert.ok(inserted.includes('![[' + root + '/Templates/Bases/Movies.base#Actor]]'));
 	assert.ok(!inserted.includes('__KB_ROOT__'));
 	dirs.add('Existing/Shared/Kepano');

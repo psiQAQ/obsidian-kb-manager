@@ -5,7 +5,7 @@ tags:
   - podcast
   - episodes
 show:
-guests:
+guests: []
 topics: []
 episode:
 url:

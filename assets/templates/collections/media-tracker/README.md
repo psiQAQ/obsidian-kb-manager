@@ -4,7 +4,7 @@
 
 启用 [Dataview](https://obsidian.md/plugins?id=dataview)、[Meta Bind](https://obsidian.md/plugins?id=obsidian-meta-bind-plugin) 和 [QuickAdd](https://obsidian.md/plugins?id=quickadd)。Dataview 的普通查询展示合集和年度汇总，Meta Bind 在作品页更新状态和进度。
 
-在 QuickAdd 设置中新增 Macro，把本库 `Integrations/新增作品或合集.js` 作为 **User Script** 步骤，自行命名并启用命令。每次打开本库首页后运行该 Macro，选择作品类型或合集，输入标题。也可手动建页并插入本库的模板。
+在 QuickAdd 设置中新增 Macro，把本库 `Integrations/新增作品或合集.js` 作为 **User Script** 步骤，自行命名并启用命令。打开本库首页后，运行该 Macro，选择作品类型或合集，输入标题。也可手动建页并插入本库的模板。
 
 ## 作品
 

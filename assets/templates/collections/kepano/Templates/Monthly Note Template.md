@@ -1,8 +1,7 @@
 ---
-aliases:
-  - July 2023
-previous: "[[__KB_ROOT__/Daily/2023-06]]"
-next: "[[__KB_ROOT__/Daily/2023-08]]"
+aliases: []
+previous:
+next:
 tags:
   - monthly
 ---
