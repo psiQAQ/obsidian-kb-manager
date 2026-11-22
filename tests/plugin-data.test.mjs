@@ -69,6 +69,14 @@ test('migration skips retired settings that were replaced externally after devic
 	assert.deepEqual(persisted.data.grants,{external:'preserve'});
 });
 
+test('a modern settings edit can clear a default while the old namespace awaits migration',async()=>{
+	const {registry,persisted}=fixture({data:{prefs:{language:'en',defaults:{tree:true,showStatusBar:true}}}});
+	const saved=await registry.savePreferences({remove:['tree']});
+	assert.deepEqual(saved.defaults,{showStatusBar:true});
+	assert.deepEqual(persisted.data.prefs.defaults,{tree:true,showStatusBar:true});
+	assert.deepEqual((await registry.readSettings()).prefs.defaults,{showStatusBar:true});
+});
+
 test('an invalid shared registry is rejected',async()=>{
 	for (const invalid of [null,{'Books/Old':{}},['Books/Old','books/old'],[`${configDir}/plugins`],['../Outside']]) {
 		const {registry} = fixture({data:{registeredLibraries:invalid}});

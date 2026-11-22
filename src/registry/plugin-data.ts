@@ -15,7 +15,7 @@ function shared(data:Data) {
 	const legacy=fields(data.prefs);
 	return {
 		language:data.language ?? legacy.language,
-		defaults:{...fields(legacy.defaults),...fields(data.defaults)},
+		defaults:fields(data.defaults ?? legacy.defaults),
 	};
 }
 
@@ -118,7 +118,7 @@ export class PluginDataRegistry {
 			const next={...data};
 			if(patch.language!==undefined)next.language=patch.language;
 			if(patch.defaults || patch.remove?.length){
-				const defaults={...fields(data.defaults),...patch.defaults};
+				const defaults={...shared(data).defaults,...patch.defaults};
 				for(const key of patch.remove ?? [])delete defaults[key];
 				next.defaults=defaults;
 			}
@@ -132,7 +132,8 @@ export class PluginDataRegistry {
 		return this.enqueue(async()=>{
 			const data=await this.document(), previous=fields(source);
 			if(retired.some(key=>key in data) && retired.every(key=>JSON.stringify(data[key])===JSON.stringify(previous[key]))){
-				const prefs=shared(data);
+				const current=shared(data);
+				const prefs={...current,defaults:{...current.defaults}};
 				for(const key of ['author','email','backend'])delete prefs.defaults[key];
 				const next={...data,language:readPreferences(prefs).language,defaults:prefs.defaults};
 				for(const key of retired)delete (next as Data)[key];

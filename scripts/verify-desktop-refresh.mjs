@@ -17,7 +17,7 @@ const replacement='10000000-0000-4000-8000-000000000002';
 const other='10000000-0000-4000-8000-000000000003';
 const notices=[], cleanups=[], device=new Map(), views=new Map();
 let data={language:'en',defaults:{tree:false,refreshSourceControlTimer:500},registeredLibraries:['Books/First','Books/Other'],unknown:{keep:true}};
-let sharedWrites=0,manifestReads=0;
+let sharedWrites=0,manifestReads=0,gitMetadataReads=0;
 const fs=require('node:fs/promises');
 
 class FileSystemAdapter { getBasePath(){return root;} }
@@ -38,7 +38,7 @@ class Plugin {
 }
 const obsidian={
 	Platform:{isMobile:false},Plugin,FileSystemAdapter,FileView,Modal:class {},
-	ItemView:class {constructor(leaf){this.containerEl=leaf.containerEl;this.app=leaf.app;} setState(){return Promise.resolve();}},
+	ItemView:class {constructor(leaf){this.containerEl=leaf.containerEl;this.contentEl=leaf.containerEl;this.app=leaf.app;} setState(){return Promise.resolve();}},
 	PluginSettingTab:class {update(){}},
 	getLanguage:()=> 'en',setTooltip(){},Notice:class {messageEl={addClass(){}};constructor(message){notices.push(message);}},
 };
@@ -60,10 +60,16 @@ const context=vm.createContext({
 	setTimeout,clearTimeout,AbortController,
 	require(id){
 		if(id==='obsidian')return obsidian;
-		if(id==='node:fs/promises')return {...fs,open(path,...args){
-			if(String(path).endsWith('kb.toml'))manifestReads++;
-			return fs.open(path,...args);
-		}};
+		if(id==='node:fs/promises')return {...fs,
+			open(path,...args){
+				if(String(path).endsWith('kb.toml'))manifestReads++;
+				return fs.open(path,...args);
+			},
+			lstat(path,...args){
+				if(String(path).endsWith('.git'))gitMetadataReads++;
+				return fs.lstat(path,...args);
+			},
+		};
 		return require(id);
 	},
 });
@@ -103,13 +109,13 @@ async function verifyManagerLayout(){
 	const managers=[];
 	let revealed,focused,rightRequests=0,saves=0;
 	Object.assign(workspace,{
-		getLeavesOfType:type=>type===managerType?managers:[],
+		getLeavesOfType:type=>type===managerType?managers:type===historyType?[history]:[],
 		revealLeaf(leaf){revealed=leaf;return Promise.resolve();},
 		setActiveLeaf(leaf){focused=leaf;},
 		requestSaveLayout(){saves++;},
 	});
 	const createLeaf=win=>{
-		const leaf={containerEl:{win},app:plugin.app,loadIfDeferred:()=>Promise.resolve(),
+		const leaf={containerEl:{win,isShown:()=>true},app:plugin.app,loadIfDeferred:()=>Promise.resolve(),
 			async setViewState(state){
 				this.view=makeView(this);
 				this.view.render=()=>Promise.resolve();
@@ -141,6 +147,23 @@ async function verifyManagerLayout(){
 	assert.equal(existing.getState().tabs[replacement],'changes');
 	await existing.setState({selected:replacement,expanded:false,tabs:{[replacement]:'remote',invalid:'unknown'}},{history:false});
 	assert.deepEqual(structuredClone(existing.getState()),{selected:replacement,expanded:false,tabs:{[replacement]:'remote'}});
+	const rendered=[];
+	popped.view.render=(_focus,libraries)=>{rendered.push(libraries.map(lib=>lib.location));return Promise.resolve();};
+	let unblock,started;
+	const waiting=new Promise(resolve=>{started=resolve;});
+	history.view.setState=()=>{
+		history.view.setState=()=>Promise.resolve();
+		started();
+		return new Promise(resolve=>{unblock=resolve;});
+	};
+	data={...data,registeredLibraries:['Books/First','Books/Older']};
+	const earlier=plugin.onExternalSettingsChange();
+	await waiting;
+	data={...data,registeredLibraries:['Books/First','Books/Latest']};
+	await plugin.onExternalSettingsChange();
+	unblock();
+	await earlier;
+	assert.deepEqual(structuredClone(rendered),[['Books/First','Books/Latest'],['Books/First','Books/Latest']]);
 }
 
 try {
@@ -192,12 +215,14 @@ try {
 	git('-c','user.name=QA','-c','user.email=qa@example.invalid','commit','-m','outside Obsidian');
 	owner.dispatchEvent(new Event('focus'));
 	await eventually(()=>historyRefreshes===baseline+2);
+	await verifyManagerLayout();
+	const beforeUnload=gitMetadataReads;
 	owner.dispatchEvent(new Event('focus'));
 	for(const cleanup of cleanups.splice(0).reverse())cleanup();
 	await delay(650);
 	assert.equal(historyRefreshes,baseline+2);
+	assert.equal(gitMetadataReads,beforeUnload);
 	assert.deepEqual(notices,[]);
-	await verifyManagerLayout();
 	process.stdout.write('Desktop production entry reloaded settings and manifests, detected Git index and HEAD changes, and restored the manager in place.\n');
 } finally {
 	for(const cleanup of cleanups.reverse())cleanup();

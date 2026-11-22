@@ -28,8 +28,9 @@ export function watchExternalLibraryState(plugin:KnowledgeBaseManager){
 	};
 	async function updateManifest(locations:ReadonlySet<string>){
 		const before=new Map(plugin.catalog.map(lib=>[lib.location,lib]));
-		const libraries=await plugin.refreshCatalog(locations);
+		await plugin.refreshCatalog(locations);
 		if(disposed)return;
+		const libraries=plugin.catalog;
 		const after=new Map(libraries.map(lib=>[lib.location,lib]));
 		const paths=new Set([...before.keys(),...after.keys()].filter(path=>before.get(path)!==after.get(path)));
 		const ids=new Set<string>();

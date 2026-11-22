@@ -163,10 +163,10 @@ export default class KnowledgeBaseManager extends Plugin {
 	override async onExternalSettingsChange(){
 		if(this.disposed || !this.disk)return;
 		try {
-			const libraries=await this.refreshCatalog(undefined,true);
+			await this.refreshCatalog(undefined,true);
 			if(this.disposed)return;
 			this.settingTab?.update();
-			await this.refreshViews(libraries);
+			await this.refreshViews();
 		} catch(error) { if(!this.disposed)new Notice(String(error)); }
 	}
 	async exclusiveGit<T>(location:string, action:()=>Promise<T>){
@@ -292,16 +292,17 @@ export default class KnowledgeBaseManager extends Plugin {
 		return leaf.view;
 	}
 	async refresh(){
-		await this.refreshViews(await this.refreshCatalog());
+		await this.refreshCatalog();
+		await this.refreshViews();
 	}
-	private async refreshViews(libraries:Library[]){
+	private async refreshViews(){
 		if(this.disposed)return;
 		this.updateLanguage();
 		await refreshSourceTabs(this);
 		refreshAuthorship(this);
 		refreshSourceEditors(this);
 		this.refreshStatus?.();
-		for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render(undefined,libraries);
+		for(const leaf of this.app.workspace.getLeavesOfType(managerType))if(leaf.view instanceof ManagerView)await leaf.view.render(undefined,this.libraries);
 	}
 	refreshStatusBar(){this.refreshStatus?.();}
 }
