@@ -1,24 +1,28 @@
-# Obsidian community plugin
+# Knowledge Base Manager
 
 ## Project overview
 
 - Target: Obsidian Community Plugin (TypeScript → bundled JavaScript).
-- Entry point: `src/main.ts` compiled to `main.js` and loaded by Obsidian.
+- The esbuild entry selects `src/main.ts` for desktop and `src/mobile/plugin.ts` for mobile. Obsidian loads the resulting `main.js`.
 - Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
 
 ## Environment & tooling
 
-- Node.js: use current LTS (Node 18+ recommended).
-- **Package manager: npm** (required for this sample - `package.json` defines npm scripts and dependencies).
-- **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
+- Use Node.js 24 and npm, as in the validation workflow. Desktop integration tests also use system Git. Packaging requires Python 3.
+- **Package manager: npm**. Use the versions recorded in the lockfile.
+- **Bundler: esbuild**. The production build also generates the offline diagnostic runner.
 - Types: `obsidian` type definitions.
 
-**Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
+## Knowledge base storage and recovery
+
+- Read shared registration paths and global preferences from plugin `data.json`. Read library identity, managed bindings and per-library overrides from its `kb.toml`. Keep device grants, local template locations and recovery receipts in device storage. See [Library lifecycle](docs/library-lifecycle.md).
+- Verify library identity, destination, Git state and expected file contents before applying a move or resuming it. Persist recovery progress before the next irreversible step. Preserve user edits when a preview becomes stale.
+- Add templates through declarations, bundled resources and optional checks. The template author guide documents permitted inputs, script review and dual-instance verification. See [Template authoring](docs/template-authoring.md).
 
 ### Install
 
 ```bash
-npm install
+npm ci
 ```
 
 ### Dev (watch)
