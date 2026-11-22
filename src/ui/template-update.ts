@@ -5,6 +5,7 @@ import { applyTemplateUpdate, previewTemplateUpdate } from '../kb/template-updat
 import { templateHost } from '../kb/template-requirements.ts';
 import { tr } from '../i18n.ts';
 import { V3Dialog } from './dialog.ts';
+import { changeActions, changeComparison } from './change-preview.ts';
 import { choiceForSource } from './v3-template-catalog.ts';
 
 export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Library,owner:Window=activeWindow){
@@ -26,18 +27,20 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 		for(const candidate of candidates)input.addOption(candidate.source,candidate.source);
 		input.setValue(source).onChange(value=>{source=value;});
 	});
-	dialog.action(tr('预览更新','Preview update'),async()=>{
+	dialog.action(tr('预览更新','Preview update'),async origin=>{
 		const host=templateHost(plugin.app,plugin.manifest.version);
 		const plan=await previewTemplateUpdate(plugin.disk,plugin.config,library,source,host);
-		const preview=new V3Dialog(plugin.app,tr('受管模板文件更新预览','Preview managed template file updates'),owner);
+		const preview=new V3Dialog(plugin.app,tr('受管模板文件更新预览','Preview managed template file updates'),owner).returnFocusTo(origin);
 		preview.facts([
 			[tr('知识库','Library'),library.location],
 			[tr('模板目录','Template folder'),source],
-			[tr('记录版本与目标版本','Recorded and target releases'),plan.installedVersion+' → '+plan.targetVersion],
 		]);
+		changeComparison(preview.contentEl,[{label:tr('模板版本','Template release'),before:plan.installedVersion,after:plan.targetVersion,
+			afterLabel:plan.pending || !plan.canApply ? tr('所选版本','Selected release') : undefined}]);
 		if(plan.blockers.length)preview.lines(plan.blockers);
 		if(plan.optional.length)preview.lines(plan.optional);
-		if(plan.pending)preview.lines([tr('冲突、缺失和无法读取的文件保留原状。处理后可以再次预览。','Conflicting, missing and unavailable files keep their current state. Review them and preview again.')]);
+		if(plan.pending)preview.lines([tr('冲突、缺失和无法读取的文件需人工处理。处理后再次预览，才能记录所选版本。',
+			'Review conflicting, missing and unavailable files manually, then preview again to record the selected release.')]);
 		const labels={
 			current:tr('已是目标内容','Current'),add:tr('添加','Add'),replace:tr('替换','Replace'),conflict:tr('冲突','Conflict'),
 			missing:tr('已缺失','Missing'),retained:tr('保留','Retained'),unavailable:tr('不可用','Unavailable'),
@@ -47,17 +50,18 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 			const detail=preview.contentEl.createEl('details',{cls:'kb-v3-detail'});
 			detail.createEl('summary',{text:labels[file.change]+' · '+file.path});
 			if(file.reason)detail.createEl('p',{text:file.reason});
-			if(file.change==='retained')detail.createEl('p',{text:tr('应用后取消受管文件登记，保留文件。','Applying removes the management record and keeps the file.')});
-			if(file.before!==undefined && file.change!=='current'){
-				detail.createEl('p',{text:tr('目标库内容','Library content')});
-				detail.createEl('pre',{cls:'kb-v3-code',text:file.before});
-			}
-			if(file.after!==undefined && file.change!=='current'){
-				detail.createEl('p',{text:tr('模板版本内容','Template release content')});
-				detail.createEl('pre',{cls:'kb-v3-code',text:file.after});
+			if(file.change==='retained'){
+				changeComparison(detail,[{label:tr('受管文件登记','Managed file record'),before:tr('已登记','Registered'),
+					after:tr('移除登记，保留文件','Remove record and keep file'),
+					afterLabel:plan.canApply?undefined:tr('拟执行操作','Proposed action')}]);
+			} else if(file.after!==undefined && file.change!=='current'){
+				const applies=plan.canApply && (file.change==='add' || file.change==='replace');
+				const before=file.before ?? (file.change==='unavailable'?tr('无法读取文件','File unavailable'):tr('文件缺失','File missing'));
+				changeComparison(detail,[{label:tr('文件内容','File content'),before,after:file.after,code:true,
+					afterLabel:applies?undefined:tr('模板候选内容','Template candidate')}]);
 			}
 		}
-		if(plan.canApply)preview.action(tr('应用受管文件更新','Apply managed file updates'),async()=>{
+		if(plan.canApply)changeActions(preview.contentEl,[{label:tr('应用受管文件更新','Apply managed file updates'),primary:true,run:async()=>{
 			const normalize=(text:string)=>text.replace(/^\uFEFF/u,'').replace(/\r\n/gu,'\n');
 			const checkEditors=(path:string,expected:string|undefined)=>plugin.app.workspace.iterateAllLeaves(leaf=>{
 				const view=leaf.view;
@@ -70,7 +74,7 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 			await plugin.refresh();
 			preview.close();
 			dialog.close();
-		}).setCta();
+		}}]);
 		preview.open();
 	}).setCta();
 	dialog.open();

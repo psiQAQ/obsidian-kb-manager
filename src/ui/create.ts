@@ -12,6 +12,7 @@ import { libraryDestination, registryDataPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
 import { V3Dialog, dialogContents } from './dialog.ts';
+import { changeActions, panelGroup } from './change-preview.ts';
 import { reviewCreationExclusions, showExclusionPlan } from './template-filter.ts';
 import type {ApprovedExclusions} from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
@@ -86,9 +87,10 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	const newPage=()=>wizard.contentEl.doc.createElement('fieldset');
 	const templatePage=newPage(),detailsPage=newPage();
 	detailsPage.addClass('kb-wizard-fields');
-	const details=dialogContents(detailsPage);
-	const templateSummary=detailsPage.createEl('p',{cls:'kb-v3-muted'});
-	const location=detailsPage.createEl('p',{cls:'kb-wizard-destination'});
+	const libraryOptions=panelGroup(detailsPage);
+	const details=dialogContents(libraryOptions);
+	const templateSummary=libraryOptions.createEl('p',{cls:'kb-v3-muted'});
+	const location=libraryOptions.createEl('p',{cls:'kb-wizard-destination'});
 	const locationLabel=location.createSpan({text:tr('仓库内位置','Location in vault')});
 	const destination=location.createEl('output',{attr:{'aria-label':locationLabel.textContent??''}});
 	const updateDestination=()=>{
@@ -108,7 +110,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	details.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{placeholder:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	let identityRequired=false;
 	try { requireIdentity(values); } catch { identityRequired=true; }
-	const advanced=detailsPage.createEl('details',{cls:'kb-v3-detail'});
+	const advanced=detailsPage.createEl('details',{cls:'kb-v3-detail kb-panel-group'});
 	const advancedSummary=advanced.createEl('summary');
 	advancedSummary.createSpan({text:tr('高级 Git 选项','Advanced Git options')});
 	const identitySummary=advancedSummary.createSpan({cls:'kb-wizard-git-identity kb-v3-muted'});
@@ -125,10 +127,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		body.text(tr('Git 邮箱','Git email'),values.email,v=>{values.email=v;showIdentity();});
 	};
 	if(identityRequired){
-		detailsPage.createEl('p',{text:tr('请为首提交填写有效的 Git 姓名和邮箱。','Enter a valid Git name and email for the initial commit.')});
+		libraryOptions.createEl('p',{text:tr('请为首提交填写有效的 Git 姓名和邮箱。','Enter a valid Git name and email for the initial commit.')});
 		addIdentityFields(details);
 	}
-	detailsPage.appendChild(advanced);
 	const gitFields=dialogContents(advanced);
 	if(!identityRequired)addIdentityFields(gitFields);
 	showIdentity();
@@ -161,7 +162,6 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		template=choice;
 		templateSummary.setText(tr('模板','Template')+' · '+choice.name);
 	}
-	function actions(page:HTMLElement){ return dialogContents(page.createDiv({cls:'kb-wizard-actions'})); }
 	renderTemplatePicker(templatePage,templates,value=>{
 		setTemplate(value);
 		showStep(1,detailsPage);
@@ -176,7 +176,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			if(!(error instanceof CreationInterrupted))throw error;
 			const recoveryPage=newPage(), recovery=dialogContents(recoveryPage);
 			recovery.lines([error.receipt.path,error.message]);
-			actions(recoveryPage).action(tr('复核并继续','Review and continue'),async()=>{
+			changeActions(recoveryPage,[{label:tr('复核并继续','Review and continue'),primary:true,run:async()=>{
 				const {receipt}=error,review=await reviewInterruptedCreation(disk,receipt);
 				const recoveryReview=newPage(), next=dialogContents(recoveryReview);
 				next.lines([receipt.path]);
@@ -184,33 +184,39 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 				const registry=await reviewRegistryProtection(plugin,next);
 				showExclusionPlan(next,exclusions.plan);
 				const protect=async()=>{await registry();await exclusions.apply(receipt.manifest.id);};
-				actions(recoveryReview).action(review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),()=>run(chosen,exclusions,
-					()=>plugin.exclusiveGit(receipt.preview.location,()=>resumeCreation(disk,plugin.config,receipt,review,protect)))).setCta();
+				changeActions(recoveryReview,[{label:review.head?tr('登记','Register'):tr('提交并登记','Commit and register'),primary:true,
+					run:()=>run(chosen,exclusions,()=>plugin.exclusiveGit(receipt.preview.location,
+						()=>resumeCreation(disk,plugin.config,receipt,review,protect))),
+				}]);
 				showOutcome(review.head?tr('确认现有首提交并登记','Confirm existing initial commit and register'):
 					tr('确认目标目录中的首提交','Confirm initial commit at the destination'),recoveryReview);
-			}).setCta();
+			}}]);
 			showOutcome(tr('继续创建知识库','Continue library creation'),recoveryPage);
 			return;
 		}
 		const completed=newPage(), success=dialogContents(completed);
 		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),result.branch+' · '+result.head.slice(0,7)],
 			[tr('提交说明','Commit message'),result.message],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
-		const entry=chosen.entry,done=actions(completed);
-		if(entry)done.action(tr('打开首页','Open home note'),async()=>{
+		const completionActions: Parameters<typeof changeActions>[1][number][]=[];
+		const entry=chosen.entry;
+		if(entry)completionActions.push({label:tr('打开首页','Open home note'),primary:true,run:async()=>{
 			const relative=result.location+'/'+entry;
 			await disk.path(relative);
 			const file=plugin.app.vault.getAbstractFileByPath(relative);
 			if(!(file instanceof TFile))throw new Error(tr('Obsidian 正在索引首页，请稍后重试。','Obsidian is indexing the home note. Try again shortly.'));
 			await plugin.app.workspace.getLeaf(false).openFile(file);
 			wizard.close();
-		}).setCta();
-		done.action(tr('完成','Done'),()=>{wizard.close();return Promise.resolve();});
+		}});
+		completionActions.push({label:tr('完成','Done'),run:()=>{wizard.close();return Promise.resolve();}});
+		changeActions(completed,completionActions);
 		showOutcome(tr('知识库已创建','Library created'),completed);
 		await refresh();
 	};
-	const detailActions=actions(detailsPage);
-	detailActions.action(tr('返回模板','Back to template'),()=>{showStep(0,templatePage);return Promise.resolve();});
-	detailActions.action(tr('预览','Preview'),async()=>{
+	changeActions(detailsPage,[
+		{label:tr('返回模板','Back to template'),run:()=>{showStep(0,templatePage);return Promise.resolve();}},
+		{label:tr('预览','Preview'),primary:true,run:previewLibrary},
+	]);
+	async function previewLibrary(){
 		if(!template)return;
 		assertGitEnabled(plugin);
 		const chosen=template;
@@ -226,10 +232,12 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			const host=templateHost(plugin.app,plugin.manifest.version);
 			const optional=checkCreationRequirements(preview.template,host);
 			const confirmPage=newPage(),confirm=dialogContents(confirmPage);
-			confirm.facts([[tr('仓库内位置','Location in vault'),preview.location+'/'],
+			confirmPage.addClass('kb-wizard-review');
+			const summary=panelGroup(confirmPage);
+			dialogContents(summary).facts([[tr('仓库内位置','Location in vault'),preview.location+'/'],
 				[tr('模板','Template'),chosen.name+' · '+preview.template.version],
 				[tr('显示名','Display name'),preview.input.displayName]]);
-			confirmPage.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
+			summary.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
 				'Create the folder, commit the template files to local Git, and register the library.')});
 			if(preview.warnings.length)confirm.lines(preview.warnings);
 			if(optional.length)confirm.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
@@ -243,16 +251,16 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			pathList(details,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
 			const registry=await reviewRegistryProtection(plugin,confirm);
 			const previous=reviewedExclusions?.source===chosen.source && reviewedExclusions.location===preview.location?reviewedExclusions.folders:undefined;
-			const exclusionControls=dialogContents(confirmPage.createDiv({cls:'kb-wizard-exclusions'}));
+			const exclusionGroup=panelGroup(confirmPage);
+			exclusionGroup.addClass('kb-wizard-exclusions');
+			const exclusionControls=dialogContents(exclusionGroup);
 			const selection=await reviewCreationExclusions(plugin.app,disk.registry,exclusionControls,
 				preview.location,preview.template.suggestedExcludedFolders??[],previous);
-			const confirmActions=actions(confirmPage);
-			confirmActions.action(tr('返回详情','Back to details'),()=>{
+			changeActions(confirmPage,[{label:tr('返回详情','Back to details'),run:()=>{
 				reviewedExclusions={source:chosen.source,location:preview.location,folders:selection.read().plan.folders};
 				showStep(1,detailsPage);
 				return Promise.resolve();
-			});
-			confirmActions.action(tr('创建知识库','Create library'),async()=>{
+			}},{label:tr('创建知识库','Create library'),primary:true,run:async()=>{
 				const exclusions=selection.read();
 				confirmPage.disabled=true;
 				try {
@@ -264,10 +272,10 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 						},exclusions.plan.folders);
 					}));
 				} finally { confirmPage.disabled=false; }
-			}).setCta();
+			}}]);
 			if(detailsPage.isConnected)showStep(2,confirmPage);
 		} finally { detailsPage.disabled=false; }
-	}).setCta();
+	}
 	if(initial)setTemplate(initial);
 	showStep(initial?1:0,initial?detailsPage:templatePage,false);
 	wizard.open();

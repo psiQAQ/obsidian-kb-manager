@@ -38,6 +38,11 @@ export async function verifyTemplateUpdate({fixture,scenario,observe,modalButton
 			if(text?.includes('Conflict') && text.includes('Replace'))return text;
 		});
 		assert(preview.includes('Guide.md') && preview.includes('Policy.md'));
+		const conflict=await evaluate(()=>{
+			const file=[...document.querySelectorAll('.modal details')].find(item=>item.querySelector('summary')?.textContent.includes('Policy.md'));
+			return [...file.querySelectorAll('.kb-change-side')].map(side=>[side.querySelector('dt').textContent,side.querySelector('dd').textContent]);
+		});
+		assert.deepEqual(conflict,[['Before','My edited policy\n'],['Template candidate','Pack policy v2\n']]);
 		await modalButton('Apply managed file updates');
 		await observe('safe template update',async()=>await window.app.vault.adapter.read('Alpha/Guide.md')==='Pack guide v2\n');
 		const read=path=>readFile(join(fixture.vault,path),'utf8');

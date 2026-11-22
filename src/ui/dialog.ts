@@ -17,20 +17,18 @@ export function dialogContents(contentEl: HTMLElement) {
 			input.onChange(change);
 		});
 	};
-	const action=(label: string, action: ()=>Promise<void>) => {
-		const row=new Setting(contentEl).setClass('kb-controls-only');
+	const action=(label: string, action: (origin:HTMLButtonElement)=>Promise<void>) => {
+		const row=new Setting(contentEl).setClass('kb-controls-only').setClass('kb-action-row');
 		const errorEl=row.settingEl.createDiv({cls:'kb-action-error',attr:{role:'alert'}});
 		errorEl.hidden=true;
 		return row.addButton(button=>button.setButtonText(label).onClick(async ()=>{
 			button.setDisabled(true);
-			row.settingEl.removeClass('kb-action-failed');
 			errorEl.hidden=true;
-			try { await action(); }
+			try { await action(button.buttonEl); }
 			catch (error) {
 				if (errorEl.isConnected) {
-					errorEl.setText(String(error));
-					row.settingEl.addClass('kb-action-failed');
 					errorEl.hidden=false;
+					errorEl.setText(String(error));
 				} else new Notice(String(error),8000).messageEl.addClass('kb-notice-text');
 			}
 			finally { button.setDisabled(false); }
@@ -46,6 +44,7 @@ export function dialogContents(contentEl: HTMLElement) {
 
 export class Dialog extends Modal {
 	private cancelOpen?:()=>void;
+	private returnFocus?:HTMLElement;
 	private readonly body = dialogContents(this.contentEl);
 	readonly text = this.body.text;
 	readonly multiline = this.body.multiline;
@@ -56,9 +55,14 @@ export class Dialog extends Modal {
 	constructor(app: App, title: string, readonly owner:Window=activeWindow) {
 		super(app); this.modalEl.addClass('kb-dialog'); this.setTitle(title);
 	}
+	returnFocusTo(element:HTMLElement):this {
+		this.returnFocus=element;
+		return this;
+	}
 	override open(){
 		this.cancelOpen?.();
 		if(this.owner.closed)return;
+		this.modalEl.removeAttribute('data-kb-closing');
 		if(this.owner===activeWindow){super.open();return;}
 		// Modal.open uses Obsidian's active window. Wait for the source window to receive focus.
 		const owner=this.owner;
@@ -85,9 +89,24 @@ export class Dialog extends Modal {
 	}
 	override close(){
 		this.cancelOpen?.();
+		this.modalEl.setAttribute('data-kb-closing','');
 		super.close();
 	}
-	onClose() { this.contentEl.empty(); }
+	onClose() {
+		this.contentEl.empty();
+		const origin=this.returnFocus;
+		if(!origin)return;
+		this.returnFocus=undefined;
+		// Obsidian restores its previous selection after close; wait before restoring the trigger.
+		queueMicrotask(()=>{
+			if(this.owner.closed||!origin.isConnected||origin.matches(':disabled')||origin.closest('.kb-dialog[data-kb-closing]'))return;
+			const doc=this.owner.document;
+			if(origin.ownerDocument!==doc)return;
+			const active=doc.activeElement;
+			if(active&&active!==doc.body&&!origin.closest('.modal-container')?.contains(active))return;
+			origin.focus({preventScroll:true});
+		});
+	}
 }
 
 export class V3Dialog extends Dialog {

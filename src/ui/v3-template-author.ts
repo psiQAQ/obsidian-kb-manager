@@ -9,7 +9,8 @@ import { builtinPacks } from '../kb/template-pack.ts';
 import { declaration, folderTemplate } from '../kb/template.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { createWizard } from './create.ts';
-import { V3Dialog, dialogContents } from './dialog.ts';
+import { V3Dialog } from './dialog.ts';
+import { changeActions } from './change-preview.ts';
 import { purposeLabels } from './v3-template-catalog.ts';
 
 const exampleCheck=`export default async function check({notes}) {
@@ -50,7 +51,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 		toggle.toggleEl.setAttribute('aria-label',tr('附带专项检验示例','Include a sample check'));
 		toggle.onChange(value=>{draft.example=value;});
 	});
-	dialog.action(tr('预检与预览','Validate and preview'),async()=>{
+	dialog.action(tr('预检与预览','Validate and preview'),async origin=>{
 		const {example,purpose}=draft;
 		const source=draft.source.trim(),id=draft.id.trim(),name=draft.name.trim(),description=draft.description.trim();
 		if(!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(id) || builtinPacks().some(pack=>pack.id===id))throw new Error(tr('输入未被内置模板使用的小写模板 ID。','Enter a lowercase ID distinct from built-in template IDs.'));
@@ -66,7 +67,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 			'Templates/Note.md':'# {{title}}\n\n'+tr('创建日期','Created')+' · {{date}}\n',
 			...(example?{'checks/home-section.mjs':exampleCheck}:{}),
 		};
-		const preview=new V3Dialog(plugin.app,tr('确认制作模板','Confirm template creation'));
+		const preview=new V3Dialog(plugin.app,tr('确认制作模板','Confirm template creation'),dialog.owner).returnFocusTo(origin);
 		preview.facts([[tr('模板目录','Template folder'),source+'/'],[tr('显示名','Display name'),name],
 			[tr('模板 ID','Template ID'),id],[tr('用途','Use case'),labels[purpose as keyof typeof labels]]]);
 		preview.contentEl.createEl('p',{text:tr('将以下文件写入模板目录，并将它加入“我的模板”。',
@@ -76,10 +77,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 		const config=preview.contentEl.createEl('details',{cls:'kb-v3-detail'});
 		config.createEl('summary',{text:'kb-template.json'});
 		config.createEl('pre').createEl('code',{text:raw});
-		const actions=dialogContents(preview.contentEl.createDiv({cls:'kb-wizard-actions'}));
-		const back=actions.action(tr('返回编辑','Back to editing'),()=>{preview.close();return Promise.resolve();});
-		actions.action(tr('制作并登记','Make and register'),async()=>{
-			back.setDisabled(true);
+		const register=async()=>{
 			await plugin.exclusive(source,async()=>{
 				if(await targetFor(plugin,source)!==target)throw new Error(tr('模板目标已变化，请重新预检。','The template destination changed. Validate again.'));
 				const staged=await mkdtemp(join(dirname(target),'.kb-template-'));
@@ -99,19 +97,25 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 					plugin.config.templates=plugin.config.templates.filter(value=>value!==source);
 					throw new Error(tr('模板文件已保存。请从设置登记模板目录。','Template files are saved. Register the folder in settings.')+' · '+source+' · '+String(error));
 				}
-			}).finally(()=>back.setDisabled(false));
+			});
 			preview.close();dialog.close();
 			const done=new V3Dialog(plugin.app,tr('模板已登记','Template registered'));
 			done.facts([[tr('模板目录','Template folder'),source]]);
 			done.contentEl.createEl('p',{text:tr('可用此模板预览新库，确认后会在仓库中创建知识库。',
 				'Preview a library from this template. Confirming creates a library in the vault.')});
-			const doneActions=dialogContents(done.contentEl.createDiv({cls:'kb-wizard-actions'}));
-			doneActions.action(tr('完成','Done'),()=>{done.close();return Promise.resolve();});
-			doneActions.action(tr('用此模板新建知识库','Create a library from this template'),async()=>{await createWizard(plugin,()=>plugin.refresh(),source);done.close();}).setCta();
+			changeActions(done.contentEl,[
+				{label:tr('完成','Done'),run:()=>{done.close();return Promise.resolve();}},
+				{label:tr('用此模板新建知识库','Create a library from this template'),primary:true,
+					run:async()=>{await createWizard(plugin,()=>plugin.refresh(),source);done.close();}},
+			]);
 			done.open();
 			onRegistered(source);
 			try {await plugin.refresh();} catch(error) {new Notice(String(error));}
-		}).setCta();
+		};
+		changeActions(preview.contentEl,[
+			{label:tr('返回编辑','Back to editing'),run:()=>{preview.close();return Promise.resolve();}},
+			{label:tr('制作并登记','Make and register'),primary:true,run:register},
+		]);
 		preview.open();
 	}).setCta();
 	dialog.open();

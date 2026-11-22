@@ -7,7 +7,7 @@ import type {TemplateDependency} from '../kb/template-requirements.ts';
 import { builtinPacks, builtinSource } from '../kb/template-pack.ts';
 import type { PackDescriptor } from '../kb/template-pack.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { dialogContents } from './dialog.ts';
+import { changeActions } from './change-preview.ts';
 import { builtinTemplateLabels } from './template-labels.ts';
 
 export function purposeLabels() {
@@ -111,11 +111,10 @@ export function renderTemplatePicker(parent:HTMLElement,templates:TemplateChoice
 	});
 	const cards=parent.createDiv({cls:'kb-v3-template-list'});
 	const details=parent.createDiv({cls:'kb-v3-template-selection',attr:{'aria-live':'polite'}});
-	const actions=dialogContents(parent.createDiv({cls:'kb-wizard-actions'}));
-	const next=actions.action(tr('填写知识库信息','Enter library details'),async()=>{
+	const next=changeActions(parent,[{label:tr('填写知识库信息','Enter library details'),primary:true,run:async()=>{
 		if(!selected || selected.invalid)return;
 		await onPick(selected);
-	}).setCta();
+	}}]);
 	function renderDetails(){
 		details.empty();
 		if(selected)showTemplateDetails(details,selected);

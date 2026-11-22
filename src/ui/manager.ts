@@ -14,6 +14,7 @@ import { networkPanel } from './network.ts';
 import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
+import { panelGroup } from './change-preview.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import { checkLibrary } from './v3-health.ts';
@@ -115,7 +116,9 @@ export class ManagerView extends ItemView {
 			if (!libraries?.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有知识库可选择 kb.toml 或扫描目录。',
 				'No libraries are registered. Create from a template, clone from a Git remote, or register existing libraries by selecting kb.toml or scanning a folder.')});
 			for(const lib of libraries ?? []){
-				this.rows.set(lib.location,{host:el.createDiv({cls:'kb-library-row'})});
+				const host=panelGroup(el);
+				host.addClass('kb-library-row');
+				this.rows.set(lib.location,{host});
 				this.drawRow(lib,focusToggle,selectedInput);
 			}
 		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:tr('无法显示知识库列表。','Could not display the library list.')+'\n'+String(error),attr:{role:'alert'}}); }
