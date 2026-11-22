@@ -6,7 +6,11 @@
 
 ## 每日记录
 
-![[{{kb_root}}/Views/Journal.base]]
+![[{{kb_root}}/Views/Journal.base#按日期]]
+
+## 首周回顾
+
+![[{{kb_root}}/Views/Journal.base#首周回顾]]
 
 
 

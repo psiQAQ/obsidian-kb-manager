@@ -76,9 +76,10 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 28);
+	assert.equal(digests.length, 30);
 	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
 	assert.ok(digests.includes('811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20'), 'LLM Wiki v6 stays trusted');
+	assert.ok(digests.includes('6bc3cc10b5e931db171727b903ad6ce0d54ca0fb65f0373e995b6e3400ab22cf'), 'Kepano v5 stays trusted');
 	const purposes = new Map();
 	const dependencies = new Set();
 	for (const { descriptor, text } of Object.values(packs)) {
@@ -186,6 +187,15 @@ test('LLM Wiki checks the mapped index by exact path and excludes fenced, inline
 		state.notes.push({path:mapped + '/' + name + '.md', properties:{type:'concept',managed_by:'agent'}, body:''});
 	}
 	assert.deepEqual((await llmWiki(state)).map(({file})=>file), [mapped + '/缩进示例.md',mapped + '/列表代码块.md']);
+	state.notes[0].body += [
+		'',
+		'- [引用][编号 A]',
+		'- [折叠引用][]',
+		'[编号    a]: <./缩进示例.md> "来源"',
+		'[编号 A]: ./列表代码块.md',
+		'[折叠引用]: ./列表代码块.md',
+	].join('\n');
+	assert.deepEqual(await llmWiki(state), []);
 });
 
 test('first-week entry rejects missing, other-library, and non-diary targets', async () => {
@@ -201,9 +211,9 @@ test('citation checks handle missing and non-link Properties values', async () =
 	const permanent = { path:'Permanent/待整理.md', properties:{type:'permanent-card',origin:'literature'}, body:'' };
 	const graph = { path:'Evidence/待核对.md', properties:{type:'evidence-claim',sources:[42]}, body:'' };
 	assert.deepEqual((await zettelkasten({libraryRoot:root,notes:[permanent]})).findings.map(item => item.code), ['literature-card-missing']);
-	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).map(item => item.code), ['evidence-source-invalid']);
+	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).findings.map(item => item.code), ['evidence-source-invalid']);
 	graph.properties.sources = [];
-	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).map(item => item.code), ['evidence-source-missing']);
+	assert.deepEqual((await evidence({libraryRoot:root,notes:[graph]})).findings.map(item => item.code), ['evidence-source-missing']);
 });
 
 test('YAML short links use actual resolution and keep unknown links unverified', async () => {
@@ -213,19 +223,21 @@ test('YAML short links use actual resolution and keep unknown links unverified',
 		['worldbuilding','Events/驿站换班.md','location','Places/芦汀驿站.md'],
 		['zettelkasten','Permanent/理解需要检验.md','literature','Literature/示例阅读记录.md'],
 		['research-project','Projects/同一份样品的重复测量.md','evidence','Records/重复测量观察.md'],
+		['research-evidence','Evidence/重复测量.md','sources','Sources/读数报告.md'],
 		['manuscript','Manuscript/Chapters/02-回声.md','manuscript','Manuscript/回声计划.md'],
+		['kepano','References/The Machine Stops.md','categories','Categories/Books.md'],
 	];
 	for (const [id, path, property, target] of cases) {
-		const files = instance(id);
+		const files = id === 'kepano' ? renderKepano(packs.kepano.text, root) : instance(id);
 		const initial = notes(files);
 		const source = initial.find(note => note.path === path);
 		assert.ok(source && files[target], id);
 		const short = posix.basename(target, '.md');
-		source.properties[property] = `[[${short}|显示名]]`;
 		const inventory = {files:new Set(Object.keys(files)), excluded:new Set(), unreadableDirectories:new Set(),
 			notes:initial.map(note => ({...note, lineOffset:0}))};
-		async function run(status, destination) {
-			const resolveLink = status ? ({target: link}) => link === short ? {status, path:destination}
+		async function run(status, destination, written = short) {
+			source.properties[property] = `[[${written}|显示名]]`;
+			const resolveLink = status ? ({target: link}) => link === written ? {status, path:destination}
 				: {status:'resolved', path:link + '.md'} : undefined;
 			const links = await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root);
 			return checkers[id]({libraryRoot:root, notes:initial, links});
@@ -238,6 +250,13 @@ test('YAML short links use actual resolution and keep unknown links unverified',
 		for (const result of [await run('unknown'), await run()]) {
 			assert.equal(result.unverified, 1, id);
 			assert.deepEqual(result.findings.map(row => [row.file,row.severity]), [[path,'info']], id);
+		}
+		if (id === 'kepano' || id === 'research-evidence') {
+			const folderQualified = target.replace(/\.md$/u, '');
+			const outside = await run('resolved', target, folderQualified);
+			assert.ok(outside.findings.some(row => row.file === path && row.severity === 'warning'), id);
+			const offline = await run(undefined, undefined, folderQualified);
+			assert.ok(offline.findings.some(row => row.file === path && row.severity === 'info'), id);
 		}
 	}
 	const chapters = notes(instance('manuscript'));
@@ -258,10 +277,26 @@ test('new reading libraries have no shared flashcard deck and each question need
 		term.properties.tags = [`flashcards/local-reading-${index}`];
 		term.body += '\n\n第二问\n?\n第二个答案。\n';
 		assert.deepEqual(await domainReading({notes:files}), []);
+		const complete = term.body;
+		for(const bad of ['# 术语\n问题\n?\n答案\n','问题\n\n?\n\n答案\n']){
+			term.body = bad;
+			assert.deepEqual((await domainReading({notes:files})).map(row=>row.code),['review-card-incomplete']);
+		}
+		term.body=complete;
 		term.body += '\n没有答案的第三问\n?\n';
 		term.properties.tags = ['flashcards/reading-example'];
 		assert.deepEqual((await domainReading({notes:files})).map(row => row.code), ['review-deck-missing','review-card-incomplete']);
 	}
+});
+
+test('the archive task rule keeps tasks between mixed fences and ignores examples', async () => {
+	const note = {path:'Archives/围栏示例.md', properties:{type:'review-project'}};
+	const clean = ['````markdown','- [ ] 示例','~~~','```','- [ ] 仍在示例内','````  '].join('\n');
+	assert.deepEqual(await projectReview({notes:[{...note,body:clean}]}),[]);
+	const unclosed = '   ~~~ example\n- [ ] 未闭合的代码示例';
+	assert.deepEqual(await projectReview({notes:[{...note,body:clean+'\n'+unclosed}]}),[]);
+	const open = await projectReview({notes:[{...note,body:clean+'\n- [ ] 真实行动\n'+unclosed}]});
+	assert.deepEqual(open.map(row=>row.code),['archived-project-open-task']);
 });
 
 test('work log orders recent handoffs first and Radar derives a stage order', () => {
@@ -272,6 +307,10 @@ test('work log orders recent handoffs first and Radar derives a stage order', ()
 	assert.deepEqual([...radar.formulas.stage.matchAll(/status == "(\w+)", "(\d)/gu)].map(match => match.slice(1)), [
 		['assess','1'],['trial','2'],['adopt','3'],['hold','4'],
 	]);
+	const journal=instance('minimal-first-week');
+	assert.match(journal['README.md'], /Journal\.base#首周回顾/u);
+	assert.deepEqual(parse(journal['Views/Journal.base']).views.find(view=>view.name==='首周回顾').filters.and,
+		['type == "week-reflection"']);
 });
 
 function workspace(activeFile, assets) {
@@ -316,7 +355,7 @@ test('media capture creates a typed work inside the active library and rejects a
 	const { app, files, opened } = workspace({ name:'README.md', parent:{ path:root } }, assets);
 	await create({ app, quickAddApi:{ suggester:async () => '播客', inputPrompt:async () => '新作品' } });
 	const path = `${root}/Media/新作品.md`;
-	assert.match(files.get(path).content, /medium: podcast/u);
+	assert.match(files.get(path).content, /medium: "podcast"/u);
 	assert.match(files.get(path).content, /# 新作品/u);
 	assert.deepEqual(opened, [path]);
 	await create({ app, quickAddApi:{ suggester:async () => '合集', inputPrompt:async () => '新合集' } });
@@ -324,6 +363,16 @@ test('media capture creates a typed work inside the active library and rejects a
 	await assert.rejects(create({ app, quickAddApi:{ suggester:async () => '合集', inputPrompt:async () => '../越界' } }), /文件名/u);
 	await create({ app, quickAddApi:{ suggester:async () => 'toString', inputPrompt:async () => assert.fail('Unexpected choice reached the title prompt') } });
 	assert.ok(!files.has(`${other}/Media/新作品.md`));
+	const unbound = {
+		...assets,
+		[`${root}/Templates/媒体合集.md`]:packs['media-tracker'].text['Templates/媒体合集.md']+'\n建于 {{date}}。\n',
+	};
+	const unboundWorkspace = workspace({name:'README.md',parent:{path:root}},unbound);
+	await create({app:unboundWorkspace.app,quickAddApi:{suggester:async ()=>'合集',inputPrompt:async ()=>'移库后新合集'}});
+	const collection = unboundWorkspace.files.get(`${root}/Collections/移库后新合集.md`).content;
+	assert.ok(collection.includes(`FROM "${root}/Media"`));
+	assert.match(collection,/建于 \d{4}-\d{2}-\d{2}。/u);
+	assert.doesNotMatch(collection,/\{\{/u);
 });
 
 test('GTD recurring action advances its interval and clamps a leap-year month', async () => {

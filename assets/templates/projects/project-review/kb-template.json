@@ -1,6 +1,6 @@
 {
   "id": "project-review",
-  "version": "1",
+  "version": "2",
   "name": "项目推进与周期复盘",
   "description": "在项目正文推进任务，用周复盘保留完成、重复和已归档的结果。",
   "purpose": "projects",

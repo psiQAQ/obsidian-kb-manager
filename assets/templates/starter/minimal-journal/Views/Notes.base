@@ -18,7 +18,7 @@ views:
       - property: date
         direction: ASC
   - type: table
-    name: 归档札记
+    name: 札记
     filters:
       and:
         - type == "jot"

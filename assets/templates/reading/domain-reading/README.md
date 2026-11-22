@@ -4,7 +4,7 @@
 
 启用 [Spaced Repetition](https://obsidian.md/plugins?id=obsidian-spaced-repetition)，保留默认卡组标签 `#flashcards` 和多行问答分隔符 `?`。
 
-1. 为本库选一个 Vault 中未使用的卡组名，例如 `my-research-methods`。在 [对照条件](./Terms/对照条件.md) 的 `tags` 中加入 `flashcards/my-research-methods`，并将 `review` 设为 `true`。用空行分隔同一页中的多组问答。
+1. 为本库选一个 Vault 中未使用的卡组名，例如 `my-research-methods`。在 [对照条件](./Terms/对照条件.md) 的 `tags` 中加入 `flashcards/my-research-methods`，并将 `review` 设为 `true`。标题后留一空行。每组的问题、单独一行的 `?` 和答案连续书写，不同问答组之间留一空行。
 2. 运行 **Review flashcards**，选择刚设置的子卡组。将同一标签填入本库其他要复习的术语。也可修改本库的 **术语** 模板，让后续卡片带上该标签。
 
 `review` 供本库视图和检查使用。复习插件按标签收录卡片并记录调度状态。若旧库沿用 `flashcards/reading-example`，将术语页及其模板改为本库专用组名。

@@ -13,9 +13,9 @@ export default async function check({ notes }) {
 		if (!questions.length || questions.some(lines => {
 			const separator = lines.indexOf('?');
 			return separator <= 0 || separator !== lines.lastIndexOf('?') || separator >= lines.length - 1 ||
-				/^#{1,6}\s/u.test(lines[separator - 1]) || /^#{1,6}\s/u.test(lines[separator + 1]);
+				lines.some(line => /^#{1,6}\s/u.test(line));
 		})) {
-			findings.push({ severity:'warning', code:'review-card-incomplete', file:path, message:'每组问答需用空行隔开，并在 ? 分隔符两侧分别填写问题和答案。' });
+			findings.push({ severity:'warning', code:'review-card-incomplete', file:path, message:'标题后留空行。每组的问题、? 和答案连续书写，组与组之间留空行。' });
 		}
 		return findings;
 	});

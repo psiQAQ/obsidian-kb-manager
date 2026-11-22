@@ -35,8 +35,12 @@ module.exports = async ({ app, quickAddApi }) => {
 	if (app.vault.getAbstractFileByPath(path)) throw new Error("本库已有同名条目。");
 	const template = app.vault.getFileByPath(root + (collection ? "/Templates/媒体合集.md" : "/Templates/媒体作品.md"));
 	if (!template) throw new Error("找不到本库页面模板。");
-	const body = (await app.vault.read(template)).replace(/\{\{title\}\}/gu, () => title);
-	const content = collection ? body : body.replace(/^medium: ""$/mu, "medium: " + medium);
+	const date = new Date();
+	const localDate = [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(value => String(value).padStart(2, "0")).join("-");
+	const body = (await app.vault.read(template))
+		.replace(/\{\{(?:title|kb_root|date)\}\}/gu, token =>
+			token === "{{title}}" ? title : token === "{{kb_root}}" ? root : localDate);
+	const content = collection ? body : body.replace(/^medium: ""$/mu, "medium: " + JSON.stringify(medium));
 	if (!app.vault.getAbstractFileByPath(directory)) await app.vault.createFolder(directory);
 	const file = await app.vault.create(path, content);
 	await app.workspace.getLeaf().openFile(file);

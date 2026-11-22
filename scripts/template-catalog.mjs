@@ -18,6 +18,8 @@ export function templateCatalog(root){
 		'a1be519840d3403df22fd0cdeb55da0bf403c5d26585b204ba6e871da80078c8', // research-project v1
 		'78737124a5ed726af23a2716075ab3a80feacbbaf70c2968c717ab05939d6401', // manuscript v1
 		'f4a8df186ffbc486e91967cfd5f0048299e805e5618fe4dd84e45850f8e48dfe', // worldbuilding v1
+		'6bc3cc10b5e931db171727b903ad6ce0d54ca0fb65f0373e995b6e3400ab22cf', // kepano v5
+		'7e9e90342c9091192d5a61d0c464a610a1046910c113f1e963b5ef185e4ab296', // project-review v1
 	]);
 	for(const purpose of readdirSync(root,{withFileTypes:true})){
 		if(!purpose.isDirectory())throw new Error('Unexpected catalogue item: '+purpose.name);

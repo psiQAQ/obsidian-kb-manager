@@ -34,6 +34,6 @@ views:
     sort:
       - property: file.name
         direction: ASC
-      - property: date
+      - property: formula.Date
         direction: DESC
     image: formula.Embeds

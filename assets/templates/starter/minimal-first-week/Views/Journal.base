@@ -17,3 +17,14 @@ views:
     sort:
       - property: date
         direction: ASC
+  - type: table
+    name: 首周回顾
+    filters:
+      and:
+        - type == "week-reflection"
+    order:
+      - file.name
+      - date
+    sort:
+      - property: date
+        direction: DESC

@@ -8,6 +8,6 @@ For a new book record, open a blank Markdown note in this library and run **Inse
 
 地图视图需要 Obsidian 支持相应视图类型。地点分类同时提供表格。地图视图不可用时，打开 [[__KB_ROOT__/Templates/Bases/Places.base|地点表格 / Places table]]。
 
-用 **App Template** 记录应用时，应用会通过属性中的链接关联到本库 [Apps](./References/Apps.md) 索引。
+用 **App Template** 记录应用时，应用会通过属性中的链接关联到本库 [Apps](./References/Apps.md) 索引。在 Apps 页的反向链接中查看关联应用。
 
 See [license and source](./LICENSE.md).

@@ -29,7 +29,8 @@
     {
       "id": "workflow",
       "name": "证据来源类型",
-      "path": "checks/workflow.mjs"
+      "path": "checks/workflow.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [

@@ -15,7 +15,8 @@
     {
       "id": "category-links",
       "name": "分类链接",
-      "path": "checks/category-links.mjs"
+      "path": "checks/category-links.mjs",
+      "linkEvidence": true
     }
   ],
   "sources": [
