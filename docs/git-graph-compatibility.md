@@ -1,6 +1,6 @@
 # 桌面历史图与 Git Graph 的功能对照
 
-从 **知识库 → Git 工作区 → 历史** 打开已登记知识库的提交图。向下滚动继续浏览；点击一个提交，再按住 Ctrl（macOS 为 Cmd）点击另一个提交，可以查看两者之间的文件变化。图上的菜单始终使用该历史标签所属的知识库。[操作指南](library-git.md)
+从 **知识库 → Git 工作区 → 历史** 打开已登记知识库的提交图。点击提交在该行下面展开变更文件。按住 Ctrl（macOS 为 Cmd）点另一条提交，两条之间的差异仍显示在第一次点击的提交下方。连续选择其他提交就能更换比较对象。图上的菜单使用该历史标签所属的知识库。[操作指南](library-git.md)
 
 对照基线为 VS Code Git Graph **v1.30.0**，提交 `881a9e613045bacbbadf8940f6b6c5b8bd699335`。开发者可用 `git submodule update --init references/vscode-git-graph` 获取相同的参考源码。子模块只用于本地核对；生产包检查会拒绝来自 `references/` 的构建输入。上游对衍生作品的分发有限制。[原版功能表](https://github.com/mhutchie/vscode-git-graph/blob/881a9e613045bacbbadf8940f6b6c5b8bd699335/README.md) · [原版许可](https://github.com/mhutchie/vscode-git-graph/blob/881a9e613045bacbbadf8940f6b6c5b8bd699335/LICENSE) · [打包检查](../scripts/package_plugin.py)
 
@@ -26,7 +26,7 @@
 
 | 上游设置 | 本插件的处理 |
 |---|---|
-| `commitDetailsView.*`、`defaultColumnVisibility`、`referenceLabels.*` | 可切换文件树／列表、详情下方／侧方、作者／日期／SHA 显隐及宽度、引用标签位置。紧凑目录合并、把同指向的本地与远端引用合为一个标签未提供。 |
+| `commitDetailsView.*`、`defaultColumnVisibility`、`referenceLabels.*` | 详情默认在提交行内展开，也可固定在列表底部或右侧。可以切换文件树或列表、设置作者／日期／SHA 列的显隐及宽度、调整引用标签位置。紧凑目录合并、把同指向的本地与远端引用合为一个标签未提供。 |
 | `customBranchGlobPatterns`、`repository.onLoad.*`、`repository.showRemoteBranches`、`repository.showRemoteHeads`、`repository.showTags`、`repository.showCommitsOnlyReferencedByTags`、`repository.showStashes` | 支持选定引用、名称过滤、回 HEAD 和 stash 显隐。只由标签可达的提交可在所有引用或选定标签下查看。自定义 glob 组、远端符号 HEAD 独立标签不是当前筛选选项。 |
 | `repository.commits.initialLoad`、`loadMore`、`loadMoreAutomatically`、`order`、`mute.*`、`repository.onlyFollowFirstParent`、`includeCommitsMentionedByReflogs` | 首屏与续载按批读取，长历史只渲染可见区域附近的行，固定拓扑顺序；没有批次大小、第一父链模式、淡化合并或通用 reflog 浏览设置。 |
 | `graph.*`、`enhancedAccessibility`、`date.*`、`markdown`、`customEmojiShortcodeMappings`、`fileEncoding`、`repository.useMailmap` | 轨道使用主题色，节点与文本提示辅助识别；变更状态有字母和符号。作者显示和日期可见性可调。日期按设备区域显示，文本差异使用 UTF-8。配色编辑、日期格式模板、邮箱映射、提交正文 Markdown 和 emoji 渲染未提供。 |

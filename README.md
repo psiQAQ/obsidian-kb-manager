@@ -27,6 +27,12 @@ Open a note in the library to insert one of its page templates. In the sidebar y
 
 Registered paths are stored in the plugin’s `data.json` alongside its language and Git defaults. If your vault is in Git, check whether `data.json` is already tracked before sharing it. It now contains your library folder names.
 
+## Read a library’s Git history
+
+Open **Git workspace → History** and click a commit. Its details and changed files open directly below that row. Green marks added files, red marks deleted files, and `(+10|-5)` beside a modified file means ten lines were added and five removed. Click a file to read its diff. For a merge, you can choose which parent to compare.
+
+To compare two commits, click the first, then Ctrl-click another (Cmd-click on macOS). The panel stays with the first commit. Ctrl/Cmd-click a third commit to replace the second, or Ctrl/Cmd-click the second again to return to the first commit’s details. The header shows the direction, from the lower row in the graph to the upper row. Use **Swap comparison direction** to reverse it.
+
 ## Check a library
 
 Open **… → Check library** on the library’s row. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Use **Choose individual checks** and select **Portability** to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
