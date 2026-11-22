@@ -415,7 +415,9 @@ test('mobile rebuilds a registry from a selected folder and rebinds only matchin
 	await disk.rename('libs/a','incoming/moved');
 	assert.equal((await discoverMobile(ctx))[0].missing,true);
 	assert.deepEqual((await storage.load()).registeredLibraries,['libs/a']);
-	const changed=identity.managed.find(item=>item.path!=='README.md').path;
+	const scoped='Templates/Bases/Books.base';
+	const changed=identity.managed.find(item=>item.path!==scoped).path;
+	const home=await disk.read('incoming/moved/README.md');
 	const changedPath='incoming/moved/'+changed,edited=await disk.read(changedPath)+'\nUser edit\n';
 	await disk.write(changedPath,edited);
 	const [found]=await scanMobile(ctx,'incoming');
@@ -423,7 +425,8 @@ test('mobile rebuilds a registry from a selected folder and rebinds only matchin
 	await registerMobile(ctx,[found],'libs/a');
 	assert.deepEqual((await storage.load()).registeredLibraries,['incoming/moved']);
 	const preview=await previewBindings(ctx,found.location,found.location,found.manifest,assets.kepano);
-	assert.ok(preview.edits.some(edit=>edit.path==='README.md'));
+	assert.ok(preview.edits.some(edit=>edit.path===scoped));
+	assert.ok(!preview.edits.some(edit=>edit.path==='README.md'));
 	assert.ok(preview.manual.some(line=>line.includes(changed)));
 	let recovery;
 	const original=disk.process;
@@ -436,7 +439,8 @@ test('mobile rebuilds a registry from a selected folder and rebinds only matchin
 	disk.process=original;
 	await resumeLibraryBindings(ctx,recovery,assets.kepano);
 	assert.equal(await disk.read(changedPath),edited);
-	assert.equal(parseIdentity(await disk.read(found.location+'/kb.toml')).managed.find(item=>item.path==='README.md').root,'incoming/moved');
+	assert.equal(parseIdentity(await disk.read(found.location+'/kb.toml')).managed.find(item=>item.path===scoped).root,'incoming/moved');
+	assert.equal(await disk.read(found.location+'/README.md'),home);
 	await fs.cp(path.join(root,'incoming/moved'),path.join(root,'incoming/copy'),{recursive:true});
 	await registerMobile(ctx,[await selectMobileManifest(ctx,'incoming/copy/kb.toml')]);
 	assert.ok((await discoverMobile(ctx)).every(lib=>lib.duplicate));

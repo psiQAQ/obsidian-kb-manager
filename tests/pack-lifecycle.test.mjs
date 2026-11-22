@@ -78,7 +78,7 @@ test('new pack gets independent identity, public rules, ignored logs and preview
 	const root=await fs.mkdtemp(path.resolve('.tmp','v3-lifecycle-'));
 	t.after(()=>fs.rm(root,{recursive:true,force:true}));
 	const disk=vaultDisk(root,'.settings'),config={parents:['资料'],templates:[]};
-	const input={source:'builtin:research-project',parent:'资料',name:'实验甲',displayName:'实验',description:'测试'};
+	const input={source:'builtin:coursework',parent:'资料',name:'实验甲',displayName:'实验',description:'测试'};
 	const preview=await previewCreate(disk,config,input,{});
 	await createLibrary(disk,config,preview,{});
 	const copy=await previewCreate(disk,config,{...input,name:'实验乙'},{});
