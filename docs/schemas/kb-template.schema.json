@@ -79,8 +79,32 @@
       }
     },
     "managedFiles": {
-      "$ref": "#/definitions/paths",
-      "description": "Files offered for template updates. The manager checks each installed baseline before changing a file."
+      "description": "Paths to ordinary template text files (.md, .base, .canvas, .txt, .json, .yaml, .yml or .css). The manager checks each installed baseline before updating.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/definitions/path"
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "^checks/"
+                },
+                {
+                  "enum": [
+                    "kb-template.json",
+                    "kb.toml",
+                    "kb-manager.json"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
     },
     "managed": {
       "type": "array",
@@ -219,6 +243,24 @@
         ],
         "properties": {
           "checks": {
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "id",
+          "version"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "managedFiles"
+        ],
+        "properties": {
+          "managedFiles": {
             "minItems": 1
           }
         }

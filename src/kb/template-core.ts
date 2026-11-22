@@ -2,6 +2,8 @@ import {defaultConfigDir} from '../fs/segments.ts';
 import {builtinAttributesFile} from '../git/markdown-attributes.ts';
 import { fromEnglish } from '../i18n.ts';
 import {declaration} from './template-declaration.ts';
+import {templateCompatibility} from './template-requirements.ts';
+import type {TemplateHost} from './template-requirements.ts';
 export { declaration } from './template-declaration.ts';
 import { renderKepano } from './kepano.ts';
 import { parseDocument, isScalar } from 'yaml';
@@ -13,6 +15,15 @@ export interface Template {
 	paths?:Record<string,string>; rootSlots?: Record<string, number[]>; overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
 }
 export interface Variables { displayName: string; description: string; destination: string }
+
+export function checkCreationRequirements(template:Template, host:TemplateHost) {
+	const asset=template.files.find(file=>file.name==='kb-template.json');
+	if(!asset)return [];
+	const spec=declaration(new TextDecoder('utf-8',{fatal:true}).decode(asset.bytes));
+	const {blockers,optional}=templateCompatibility(spec,host);
+	if(blockers.length)throw new Error(blockers.join('\n'));
+	return optional;
+}
 
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;

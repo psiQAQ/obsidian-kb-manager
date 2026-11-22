@@ -5,7 +5,8 @@ import { initialIdentityDefaults } from '../git/initial.ts';
 import type { InitialIdentity, InitialPreview } from '../git/initial.ts';
 import { defaultInitialBranch, defaultInitialMessage } from '../git/initial-options.ts';
 import { createLibrary, CreationInterrupted, previewCreate, resumeCreation, reviewInterruptedCreation } from '../kb/create.ts';
-import { kepanoSource } from '../kb/template.ts';
+import { checkCreationRequirements, kepanoSource } from '../kb/template.ts';
+import {templateHost} from '../kb/template-requirements.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import { libraryDestination, registryDataPath } from '../registry/paths.ts';
 import { tr } from '../i18n.ts';
@@ -219,6 +220,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			await readVaultRegistry(disk);
 			const skeleton=chosen.source===kepanoSource?plugin.kepanoSkeleton:plugin.skeleton;
 			const preview=await previewCreate(disk,plugin.config,requested,skeleton);
+			const host=templateHost(plugin.app,plugin.manifest.version);
+			const optional=checkCreationRequirements(preview.template,host);
 			const confirmPage=newPage(),confirm=dialogContents(confirmPage);
 			confirm.facts([[tr('Vault 内位置','Location in vault'),preview.location+'/'],
 				[tr('模板','Template'),chosen.name+' · '+preview.template.version],
@@ -226,6 +229,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			confirmPage.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
 				'Create the folder, commit the template files to local Git, and register the library.')});
 			if(preview.warnings.length)confirm.lines(preview.warnings);
+			if(optional.length)confirm.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
 			showInitialPlan(confirmPage,preview.git);
 			const details=confirmPage.createEl('details',{cls:'kb-v3-detail'});
 			details.createEl('summary',{text:tr('模板与登记详情','Template and registry details')});
@@ -250,6 +254,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 				confirmPage.disabled=true;
 				try {
 					await run(chosen,exclusions,()=>plugin.exclusiveGit(preview.location,async()=>{
+						checkCreationRequirements(preview.template,host);
 						await exclusions.check();
 						return createLibrary(disk,plugin.config,preview,skeleton,async manifest=>{
 							await registry();await exclusions.apply(manifest.id);

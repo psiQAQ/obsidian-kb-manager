@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { declaration } from '../kb/template.ts';
+import type {TemplateDependency} from '../kb/template-requirements.ts';
 import { builtinPacks, builtinSource } from '../kb/template-pack.ts';
 import type { PackDescriptor } from '../kb/template-pack.ts';
 import type KnowledgeBaseManager from '../main.ts';
@@ -22,9 +23,13 @@ export function purposeLabels() {
 	};
 }
 
-export function dependencyLabel(id:string) {
+export function dependencyLabel(dependency:TemplateDependency) {
+	const id=typeof dependency==='string'?dependency:dependency.id;
 	const names:Record<string,string>={dataview:'Dataview','obsidian-meta-bind-plugin':'Meta Bind','obsidian-spaced-repetition':'Spaced Repetition','obsidian-tasks-plugin':'Tasks','templater-obsidian':'Templater',quickadd:'QuickAdd'};
-	return names[id] ?? id;
+	const name=Object.prototype.hasOwnProperty.call(names,id)?names[id]!:id;
+	if(typeof dependency==='string')return name;
+	return name+(dependency.minVersion?' ≥ '+dependency.minVersion:'')+' · '+
+		(dependency.required?tr('必需','Required'):tr('可选','Optional'));
 }
 
 export type TemplateChoice = Pick<PackDescriptor,'name'|'description'|'purpose'|'purposes'|'dependencies'|'sources'> & {

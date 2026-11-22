@@ -1,5 +1,7 @@
 import {Setting} from 'obsidian';
 import {builtinPacks,builtinSource} from '../kb/template-pack.ts';
+import {checkCreationRequirements} from '../kb/template-core.ts';
+import {templateHost} from '../kb/template-requirements.ts';
 import {tr} from '../i18n.ts';
 import {readManifest} from '../kb/identity-core.ts';
 import {reviewCreationExclusions} from '../ui/template-filter.ts';
@@ -42,7 +44,10 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.action(tr('预览','Preview'),async()=>{
 		plugin.assertEnabled();
 		const p=await createPreview(ctx,{...input,parent:getParent(),displayName:input.displayName||input.name},plugin.templates);
+		const host=templateHost(plugin.app,plugin.manifest.version);
+		const optional=checkCreationRequirements(p.template,host);
 		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
+		if(optional.length)review.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
 		const {author,origin,files,branch,message}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
 		const signature=author.name+' <'+author.email+'>';
 		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),p.template.id],[tr('通用检验套件','Common check kit'),p.checkKit.version],
@@ -60,6 +65,7 @@ export function createForm(plugin:MobilePlugin) {
 			plugin.assertEnabled();
 			const exclusions=pending??selection.read();
 			const result=await plugin.catalogWrite(async()=>{
+				if(!pending)checkCreationRequirements(p.template,host);
 				await exclusions.check(p.id);
 				try{return await instantiate(plugin.ctx,p,plugin.templates,identity=>exclusions.apply(identity.id),exclusions.plan.folders);}
 				catch(error){
