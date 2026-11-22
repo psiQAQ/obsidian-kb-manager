@@ -1,5 +1,5 @@
 import { tr } from '../i18n.ts';
-import { Setting, TFile } from 'obsidian';
+import { MarkdownView, Setting, TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { digest } from '../fs/vault.ts';
 import { inspect, recheck } from '../kb/catalog.ts';
@@ -8,11 +8,14 @@ import { applyManifestUpgrade, previewManifestUpgrade } from '../kb/manifest-upg
 import { applyRepair, examineBindings } from '../kb/maintenance.ts';
 import type { VisibleFiles } from '../kb/maintenance.ts';
 import { executeMove,planMove } from '../kb/move.ts';
-import type { MoveRecord } from '../kb/move.ts';
+import type { MoveFiles, MoveRecord } from '../kb/move.ts';
+import { moveVaultPath } from '../kb/move-link-text.ts';
+import { readMoveReference } from '../kb/move-references.ts';
 import { changeIdentity } from './identity.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
+import { planMoveReferences, selectMoveReferences, verifyMoveReferences } from './move-links.ts';
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const preview=await previewManifestUpgrade(plugin.disk,lib);
@@ -45,7 +48,22 @@ export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,ow
 	dialog.open();
 }
 
-export function visible(plugin:KnowledgeBaseManager):VisibleFiles {
+function editorContents(plugin:KnowledgeBaseManager,file:TFile) {
+	const contents:string[]=[];
+	plugin.app.workspace.iterateAllLeaves(leaf=>{
+		const view=leaf.view;
+		if(view instanceof MarkdownView && view.file===file && view.getMode()==='source')contents.push(view.editor.getValue());
+	});
+	return contents;
+}
+
+const editorText=(text:string)=>text.replace(/^\uFEFF/u,'').replace(/\r\n/gu,'\n');
+function verifyEditors(path:string,text:string,editors:readonly string[]){
+	if(editors.some(value=>editorText(value)!==editorText(text)))
+		throw new Error(tr('请先保存编辑器中的修改并重新预览：','Save the edits in the open editor and preview again: ')+path);
+}
+
+export function visible(plugin:KnowledgeBaseManager,protectEditors=false):VisibleFiles {
 	const vault=plugin.app.vault;
 	return {
 		create:async(relative,content)=>{await plugin.disk.path(relative);await vault.create(relative,content);},
@@ -55,6 +73,7 @@ export function visible(plugin:KnowledgeBaseManager):VisibleFiles {
 			if(!(file instanceof TFile))throw new Error(tr('等待 Obsidian 刷新路径后，请在管理器中继续',"Wait for Obsidian to refresh the path, then continue in the manager"));
 			await vault.process(file,text=>{
 				if(digest(text)!==before)throw new Error(tr('文件已变化，请重新预览：',"File changed. Preview again: ")+relative);
+				if(protectEditors)verifyEditors(relative,text,editorContents(plugin,file));
 				return after;
 			});
 		}
@@ -114,8 +133,28 @@ export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library,o
 }
 
 async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
-	await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,visible(plugin),v=>plugin.recordMove(v),plugin.kepanoSkeleton,vaultExclusions(plugin.app,plugin.disk.registry)),true);
-	await plugin.refresh();
+	const {vault}=plugin.app;
+	const files:MoveFiles={...visible(plugin,true),async renameFolder(source,destination){
+		const folder=vault.getFolderByPath(source);
+		if(!folder)throw new Error(tr('等待 Obsidian 刷新目录后继续移动：','Wait for Obsidian to index the folder before resuming: ')+source);
+		// Vault.rename preserves file objects and open tabs. The preview controls
+		// which links are updated, so use Vault rather than FileManager here.
+		await vault.rename(folder,destination);
+	}};
+	try{
+		await plugin.exclusive(record.source,()=>executeMove(plugin.disk,plugin.config,record,files,v=>plugin.recordMove(v),
+			plugin.kepanoSkeleton,vaultExclusions(plugin.app,plugin.disk.registry)),true);
+	}finally{await plugin.refresh();}
+}
+
+async function reviewMovedLinks(plugin:KnowledgeBaseManager,record:MoveRecord,owner:Window){
+	const unresolved=await verifyMoveReferences(plugin,record);
+	if(!unresolved.length || owner.closed)return;
+	const review=new V3Dialog(plugin.app,tr('复核移动后的引用','Review moved references'),owner);
+	review.contentEl.createEl('p',{text:tr('目录已移动。请在 Obsidian 完成索引后核对以下引用。',
+		'The library moved. Check these references after Obsidian finishes indexing.')});
+	review.lines(unresolved);
+	review.open();
 }
 
 function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,owner:Window){
@@ -144,10 +183,16 @@ export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord,
 	const dialog=moveReview(plugin,record,tr('继续待完成的目录移动','Resume pending library move'),owner);
 	dialog.facts([[tr('恢复记录','Recovery state'),record.phase==='prepared' ?
 		tr('已记录计划，待核对实际位置','Plan saved. Verify the current folder location.') :
-		tr('已移动目录，待核对受管文件和登记','Folder moved. Verify the managed files and registration.')]]);
+		tr('已移动目录，待核对受管文件、所选引用和登记','Folder moved. Verify the managed files, selected references and registration.')]]);
+	if(Array.isArray(record.references) && record.references.length){
+		dialog.contentEl.createEl('h3',{text:tr('已确认更新的引用文件','Reference files selected for update')});
+		dialog.lines(record.references.filter(edit=>edit && typeof edit.file==='string')
+			.map(edit=>moveVaultPath(edit.file,record.source,record.destination)));
+	}
 	dialog.action(tr('继续移动','Resume move'),async()=>{
 		await resumeMove(plugin,record);
 		dialog.close();
+		await reviewMovedLinks(plugin,record,owner);
 	}).setCta();
 	dialog.open();
 }
@@ -172,22 +217,30 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 		const skeleton=plugin.templateAssets(lib);
 		const store=vaultExclusions(plugin.app,plugin.disk.registry);
 		const plan=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
-		const links=new Set<string>();
-		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
-			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
-		}
+		const references=await planMoveReferences(plugin,plan);
 		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"),owner);
-		const refs=confirm.contentEl.createEl('details',{cls:'kb-v3-detail'});
-		refs.createEl('summary',{text:tr('可能受影响的链接','Links that may be affected')+' ('+links.size+')'});
-		refs.createEl('p',{text:tr('外部剪藏、脚本与动态查询需人工核对。',"Review external clippings, scripts and dynamic queries manually.")});
-		if(links.size)dialogContents(refs).lines([...links]);
+		const selectedReferences=selectMoveReferences(confirm.contentEl,plugin.app.vault,plan,references);
 		confirm.action(tr('移动完整目录',"Move entire directory"),async()=>{
+			const selected=selectedReferences();
 			const fresh=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
-			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw new Error(tr('预览已变化',"Preview has changed"));
+			const stale=()=>new Error(tr('预览已变化，请重新预览',"Preview has changed. Open a new preview."));
+			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw stale();
+			if(selected.length){
+				const latest=await planMoveReferences(plugin,fresh);
+				const byPath=new Map(latest.groups.flatMap(group=>group.files.map(edit=>[edit.file,edit] as const)));
+				for(const edit of selected){
+					if(JSON.stringify(byPath.get(edit.file))!==JSON.stringify(edit))throw stale();
+					const file=plugin.app.vault.getFileByPath(edit.file);
+					const editors=file ? editorContents(plugin,file) : [];
+					if(editors.length)verifyEditors(edit.file,await readMoveReference(plugin.disk,edit.file),editors);
+				}
+			}
 			await plugin.disk.registry.assertWritable();
-			await plugin.recordMove(plan);
+			const record={...plan,references:selected};
+			await plugin.recordMove(record);
 			confirm.close();dialog.close();
-			try{await resumeMove(plugin,plan);}finally{await plugin.refresh();}
+			await resumeMove(plugin,record);
+			await reviewMovedLinks(plugin,record,owner);
 		}).setCta();confirm.open();
 	}).setCta();dialog.open();
 }

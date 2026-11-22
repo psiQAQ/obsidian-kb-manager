@@ -84,7 +84,8 @@ function assertEdit(edit: ReferenceEdit, disk: VaultDisk, config: Config, record
 		if (config.templates.some(template=>overlaps(file,template))) throw invalidEdit(file);
 	};
 	pathInScope(edit.file);
-	const moving=sameOrBelow(edit.file,record.source);
+	const moving=edit.file.startsWith(record.source+'/');
+	if (!moving && overlaps(edit.file,record.destination)) throw invalidEdit(edit.file);
 	if (moving && record.changes.some(change=>record.source+'/'+change.file===edit.file)) throw invalidEdit(edit.file);
 	if (![edit.before,edit.result].every(value=>typeof value==='string' && /^[a-f0-9]{64}$/u.test(value)) ||
 		edit.before===edit.result || !edit.references) throw invalidEdit(edit.file);
