@@ -1,4 +1,4 @@
-import { Notice, PluginSettingTab, Setting, SettingGroup, moment } from 'obsidian';
+import { ButtonComponent, Notice, PluginSettingTab, Setting, SettingGroup, moment, setIcon } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionRender, SettingGroupItem } from 'obsidian';
 import { deviceGitPath, saveDeviceGitPath } from './ui/git-path.ts';
 import { hostname } from 'node:os';
@@ -393,20 +393,25 @@ export function librarySettings(plugin: KnowledgeBaseManager, lib: Library, owne
 	type LibraryCategory = Exclude<Category,'folders'>;
 	const menu = el.createDiv({cls:'kb-library-settings-menu'});
 	const pages = new Map<LibraryCategory,HTMLElement>();
+	const categoryButtons = new Map<LibraryCategory,HTMLButtonElement>();
 	const goTo = (page?: LibraryCategory, rebuild = false) => {
 		if (page && rebuild) { pages.get(page)?.remove(); pages.delete(page); }
 		menu.hidden = page !== undefined;
 		for (const [key,container] of pages) container.hidden = key !== page;
 		if (!page || pages.has(page)) return;
-		const container = el.createDiv();
-		pages.set(page,container);
 		const [zh,en] = categories[page];
-		new Setting(container).setName(t(zh,en)).setHeading()
-			.addButton(button => button.setButtonText(t('返回分类','Back to categories')).onClick(() => goTo()));
+		const name=t(zh,en);
+		const container = el.createDiv({attr:{role:'region','aria-label':name,tabindex:'-1'}});
+		pages.set(page,container);
+		new Setting(container).setName(name).setHeading()
+			.addButton(button => button.setButtonText(t('返回分类','Back to categories')).onClick(() => {
+				goTo();
+				categoryButtons.get(page)?.focus();
+			}));
 		if (page === 'identity') {
 			new Setting(container).setName(t('本库 Git 提交身份','Library Git commit identity')).setDesc(lib.location+'/.git/config')
 				.addButton(button=>button.setButtonText(t('查看或修改','View or edit')).onClick(async()=>{
-					try { await editRepositoryIdentity(plugin,lib); } catch (error) { new Notice(String(error)); }
+					try { await editRepositoryIdentity(plugin,lib,owner); } catch (error) { new Notice(String(error)); }
 				}));
 			return;
 		}
@@ -422,11 +427,13 @@ export function librarySettings(plugin: KnowledgeBaseManager, lib: Library, owne
 		if (page === 'folders') continue;
 		const [zh,en] = categories[page];
 		const name = t(zh,en);
-		new Setting(menu).setName(name).addButton(button => {
-			const open=t('打开','Open');
-			button.buttonEl.setAttribute('aria-label',open+' · '+name);
-			button.setButtonText(open).onClick(() => goTo(page));
-		});
+		const button = new ButtonComponent(menu);
+		button.buttonEl.addClass('kb-library-settings-category');
+		button.buttonEl.setAttribute('aria-label',t('打开','Open')+' · '+name);
+		button.buttonEl.createSpan({text:name});
+		setIcon(button.buttonEl.createSpan({cls:'kb-library-settings-chevron',attr:{'aria-hidden':'true'}}),'chevron-right');
+		button.onClick(() => { goTo(page); pages.get(page)?.focus(); });
+		categoryButtons.set(page,button.buttonEl);
 	}
 	modal.open();
 }
