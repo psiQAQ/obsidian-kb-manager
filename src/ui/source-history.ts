@@ -1,7 +1,6 @@
 import { ItemView, Menu, Notice, Scope, WorkspaceLeaf } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover } from '../kb/catalog.ts';
 import { displayAuthor } from '../git/authorship.ts';
 import { GraphHistory, historyTips, historyWorktree, snapshotHistory } from '../git/history-graph.ts';
 import type { GraphRef, HistoryScope } from '../git/history-graph.ts';
@@ -78,7 +77,7 @@ class SourceHistory extends ItemView {
 		const el=this.contentEl.createDiv({cls:'kb-git-history'});
 		try{
 			assertGitEnabled(plugin);
-			const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity?.id===id && !l.duplicate && !l.problem);
+			const lib=(await plugin.loadCatalog()).find(l=>l.identity?.id===id && !l.duplicate && !l.problem);
 			if(!lib)throw new Error(t('无法定位知识库','Could not locate the library'));
 			const dir=await plugin.disk.path(lib.location),snapshot=await snapshotHistory(dir);
 			if(!live())return;

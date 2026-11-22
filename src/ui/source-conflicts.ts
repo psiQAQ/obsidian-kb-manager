@@ -3,7 +3,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import { editorInfoField, editorLivePreviewField } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover,recheck } from '../kb/catalog.ts';
+import { recheck } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
 import { conflictFiles } from '../git/index-history.ts';
 import { verifyWorkingFile } from '../git/index-actions.ts';
@@ -113,7 +113,7 @@ export function registerConflictEditor(plugin:KnowledgeBaseManager,updates:Map<(
 				if(blocks.length){
 					const path=file.path;
 					if(this.cached?.path!==path){
-						const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.duplicate && !l.problem && l.git==='local' && path.startsWith(l.location+'/'));
+						const lib=(await plugin.loadCatalog()).find(l=>l.identity && !l.duplicate && !l.problem && l.git==='local' && path.startsWith(l.location+'/'));
 						const inConflict=lib && enabled(plugin,lib,view) && (await conflictFiles(await plugin.disk.path(lib.location))).includes(path.slice(lib.location.length+1));
 						if(token!==this.generation)return;
 						this.cached={path,lib:inConflict?lib:undefined};

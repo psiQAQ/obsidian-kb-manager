@@ -45,18 +45,27 @@ export default class KnowledgeBaseManager extends Plugin {
 	private registeredLocations = new Set<string>();
 	private missingIds=new Map<string,string>();
 	private libraries:Library[]=[];
+	private catalogReady=false;
+	private initialCatalog?:Promise<Library[]>;
 	private pendingCatalog:Promise<unknown>=Promise.resolve();
 	private disposed=false;
 	private settingTab?:ManagerSettings;
 	preferences(id?:string){return effectivePreferences(this.prefs,id);}
 	get catalog():readonly Library[]{return this.libraries;}
+	loadCatalog(){
+		if(this.catalogReady)return Promise.resolve(this.libraries);
+		this.initialCatalog??=this.refreshCatalog().finally(()=>{this.initialCatalog=undefined;});
+		return this.initialCatalog;
+	}
 	private observeLibraries(libraries:Library[]) {
+		const previous=new Map(this.libraries.map(lib=>[lib.location,lib]));
 		for(const lib of libraries){
 			if(!lib.missing){this.missingIds.delete(lib.location);continue;}
-			const previous=this.libraries.find(item=>item.location===lib.location && !item.problem && !item.duplicate)?.identity;
-			if(previous)this.missingIds.set(lib.location,previous.id);
+			const existing=previous.get(lib.location);
+			if(existing?.identity && !existing.problem && !existing.duplicate)this.missingIds.set(lib.location,existing.identity.id);
 		}
 		this.libraries=libraries;
+		this.catalogReady=true;
 		const overrides:typeof this.prefs.libraries={};
 		this.registeredLocations=new Set(libraries.map(lib=>lib.location));
 		for(const location of this.missingIds.keys())if(!this.registeredLocations.has(location))this.missingIds.delete(location);
@@ -188,7 +197,6 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.saves=state?.saves ?? {};
 		await this.persist();
 		this.prefs=await this.disk.registry.migratePreferences(saved);
-		try{await this.refreshCatalog();}catch(error){new Notice(String(error));}
 		this.registerView(managerType,leaf=>new ManagerView(leaf,this));
 		registerSourceDiff(this);
 		this.updateLanguage();
@@ -201,6 +209,14 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.register(()=>{this.disposed=true;});
 		watchExternalLibraryState(this);
 		startAutomation(this);
+		this.app.workspace.onLayoutReady(()=>{
+			void this.loadCatalog().then(()=>{
+				if(!this.disposed){
+					refreshAuthorship(this);
+					refreshSourceEditors(this);
+				}
+			}).catch(error=>{if(!this.disposed)new Notice(String(error));});
+		});
 		this.registerEvent(this.app.workspace.on('file-menu',(menu,file)=>{
 			if(!gitDisabled(this) && file instanceof TFile){
 				const entry=Object.entries(this.known).find(([,root])=>file.path.startsWith(root+'/'));

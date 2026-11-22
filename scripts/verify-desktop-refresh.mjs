@@ -14,9 +14,11 @@ const root=await mkdtemp(join(scratch,'desktop-refresh-'));
 assert.equal(dirname(root),scratch);
 const original='10000000-0000-4000-8000-000000000001';
 const replacement='10000000-0000-4000-8000-000000000002';
+const other='10000000-0000-4000-8000-000000000003';
 const notices=[], cleanups=[], device=new Map(), views=new Map();
-let data={language:'en',defaults:{tree:false,refreshSourceControlTimer:500},registeredLibraries:['Books/First'],unknown:{keep:true}};
-let sharedWrites=0;
+let data={language:'en',defaults:{tree:false,refreshSourceControlTimer:500},registeredLibraries:['Books/First','Books/Other'],unknown:{keep:true}};
+let sharedWrites=0,manifestReads=0;
+const fs=require('node:fs/promises');
 
 class FileSystemAdapter { getBasePath(){return root;} }
 class FileView { file={path:'Books/First/Note.md'}; }
@@ -56,7 +58,14 @@ Object.assign(owner,{setTimeout,clearTimeout,setInterval:()=>0,document:{hasFocu
 const context=vm.createContext({
 	module:{exports:{}},window:owner,activeWindow:owner,TextEncoder,TextDecoder,URL,URLSearchParams,console,Buffer,process,
 	setTimeout,clearTimeout,AbortController,
-	require(id){return id==='obsidian'?obsidian:require(id);},
+	require(id){
+		if(id==='obsidian')return obsidian;
+		if(id==='node:fs/promises')return {...fs,open(path,...args){
+			if(String(path).endsWith('kb.toml'))manifestReads++;
+			return fs.open(path,...args);
+		}};
+		return require(id);
+	},
 });
 vm.runInContext(source,context,{filename:'main.js'});
 const plugin=new context.module.exports();
@@ -136,13 +145,21 @@ async function verifyManagerLayout(){
 
 try {
 	await mkdir(library,{recursive:true});
+	const another=join(root,'Books','Other');
+	await mkdir(another,{recursive:true});
 	await writeFile(manifest,identity(original,'Original'));
+	await writeFile(join(another,'kb.toml'),identity(other,'Other'));
 	git('init','--initial-branch=main');
 	await plugin.onload();
+	assert.equal(plugin.catalog.length,0);
+	assert.equal(manifestReads,0);
+	await Promise.all([plugin.loadCatalog(),plugin.loadCatalog()]);
+	await plugin.loadCatalog();
+	assert.equal(manifestReads,2);
 	assert.equal(plugin.known[original],'Books/First');
 	assert.equal(typeof plugin.onExternalSettingsChange,'function');
 	assert.equal(sharedWrites,0);
-	data={...data,language:'zh',defaults:{tree:true,refreshSourceControlTimer:500},registeredLibraries:['Books/First','Books/Synced']};
+	data={...data,language:'zh',defaults:{tree:true,refreshSourceControlTimer:500},registeredLibraries:['Books/First','Books/Other','Books/Synced']};
 	await plugin.persist();
 	assert.equal(data.defaults.tree,true);
 	assert.equal(sharedWrites,0);
@@ -151,12 +168,16 @@ try {
 	assert.equal(plugin.prefs.language,'zh');
 	assert.equal(plugin.catalog.find(lib=>lib.location==='Books/Synced').missing,true);
 	assert.deepEqual(data.unknown,{keep:true});
+	const otherLibrary=plugin.catalog.find(lib=>lib.location==='Books/Other');
+	const beforeEdit=manifestReads;
 	await writeFile(manifest,identity(replacement,'Replacement')+'\n[preferences]\nshowFileMenu = false\n');
 	vault.emit('modify',{path:'Books/First/kb.toml'});
 	await eventually(()=>plugin.known[replacement]==='Books/First');
 	assert.equal(plugin.known[original],undefined);
 	assert.equal(plugin.preferences(replacement).showFileMenu,false);
 	assert.equal(plugin.catalog[0].identity.displayName,'Replacement');
+	assert.equal(plugin.catalog.find(lib=>lib.location==='Books/Other'),otherLibrary);
+	assert.equal(manifestReads,beforeEdit+1);
 
 	owner.dispatchEvent(new Event('focus'));
 	await eventually(()=>historyRefreshes>=3);

@@ -301,6 +301,7 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 		if(!active.length)return;
 		running=true;
 		try{
+			await plugin.loadCatalog();
 			const libs=await discover(plugin.disk,plugin.config);
 			for(const [id,grant] of active){
 				if(stopped)return;
@@ -349,5 +350,5 @@ export function startAutomation(plugin:KnowledgeBaseManager){
 		}finally{running=false;}
 	};
 	plugin.registerInterval(window.setInterval(()=>{void tick().catch((error:unknown)=>new Notice(String(error)));},30000));
-	plugin.app.workspace.onLayoutReady(()=>{void tick(true).catch((error:unknown)=>new Notice(String(error)));});
+	plugin.app.workspace.onLayoutReady(()=>{void tick(true).catch((error:unknown)=>{if(!stopped)new Notice(String(error));});});
 }

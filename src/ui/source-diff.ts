@@ -5,7 +5,7 @@ import { renderDiff } from './diff-table.ts';
 import { isHistoryComparison, revealSourceTab, sourceTabKey } from './source-tabs.ts';
 import type { HistoryFileComparison } from './source-tabs.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover, recheck } from '../kb/catalog.ts';
+import { recheck } from '../kb/catalog.ts';
 import { previewVersion } from '../git/versions.ts';
 import { fileComparison, changeIndexHunk } from '../git/index-actions.ts';
 import { committedComparison, compareHistoryFile, historyTextLimit, readHistorySnapshot } from '../git/index-history.ts';
@@ -70,9 +70,8 @@ export function historySideLabel(plugin:KnowledgeBaseManager,side:HistorySide) {
 
 async function locateLibrary(plugin:KnowledgeBaseManager,id:string) {
 	assertGitEnabled(plugin);
-	const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity?.id===id && !l.duplicate && !l.problem);
+	const lib=(await plugin.loadCatalog()).find(l=>l.identity?.id===id && !l.duplicate && !l.problem);
 	if(!lib)throw new Error(plugin.t('无法定位知识库','Could not locate the library'));
-	await recheck(plugin.disk,plugin.config,lib);
 	return lib;
 }
 

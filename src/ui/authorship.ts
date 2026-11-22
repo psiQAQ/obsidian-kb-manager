@@ -3,7 +3,6 @@ import { GutterMarker, ViewPlugin, gutter } from '@codemirror/view';
 import type { EditorView, ViewUpdate } from '@codemirror/view';
 import { editorInfoField, moment } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover, recheck } from '../kb/catalog.ts';
 import { ageColor, displayAuthor, lineCredits } from '../git/authorship.ts';
 import type { LineCredit } from '../git/authorship.ts';
 import type { GitPreferences } from '../preferences.ts';
@@ -92,7 +91,7 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 				if (!plugin.preferences(known).lineAuthor && (known || !Object.values(plugin.prefs.libraries).some(p => p.lineAuthor))) {
 					set(emptyMarkers); return;
 				}
-				const lib = (await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.problem && !l.duplicate && file.startsWith(l.location+'/'));
+				const lib = (await plugin.loadCatalog()).find(l=>l.identity && !l.problem && !l.duplicate && file.startsWith(l.location+'/'));
 				if (!lib?.identity || lib.git !== 'local') { set(emptyMarkers); return; }
 				const prefs = plugin.preferences(lib.identity.id);
 				if (!prefs.lineAuthor || revision !== this.revision) { set(emptyMarkers); return; }
@@ -104,8 +103,8 @@ export function registerAuthorship(plugin: KnowledgeBaseManager) {
 				if (last < first) { set(emptyMarkers); return; }
 				const dir = await plugin.disk.path(lib.location);
 				const credits = await lineCredits(dir,file.slice(lib.location.length+1),first,last,doc.toString(),prefs);
-				if (revision !== this.revision) return;
-				await recheck(plugin.disk,plugin.config,lib);
+				if (revision !== this.revision || !plugin.catalog.some(current=>current.location===lib.location &&
+					current.signature===lib.signature && !current.duplicate && !current.problem)) return;
 				const now = Date.now();
 				const ranges = credits.filter(c => c.line >= first && c.line <= last).map(c => {
 					const label = [prefs.blameHash && c.oid.slice(0,8),displayAuthor(c.author,prefs.blameAuthor),

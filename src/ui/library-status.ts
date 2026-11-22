@@ -1,6 +1,5 @@
 import { gitDisabled } from './device.ts';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover } from '../kb/catalog.ts';
 import { guardGit } from '../git/guard.ts';
 import { previewVersion } from '../git/versions.ts';
 
@@ -16,7 +15,7 @@ export function attachLibraryStatus(plugin:KnowledgeBaseManager){
 		timer=window.setTimeout(()=>{void update(note,generation).catch(()=>{if(generation===request)item.hide();});},250);
 	};
 	async function update(note:string,generation:number){
-		const lib=(await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.problem && !l.duplicate && note.startsWith(l.location+'/'));
+		const lib=(await plugin.loadCatalog()).find(l=>l.identity && !l.problem && !l.duplicate && note.startsWith(l.location+'/'));
 		if(generation!==request)return;
 		active=lib?.location??'';
 		const prefs=plugin.preferences(lib?.identity?.id);

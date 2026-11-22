@@ -42,6 +42,10 @@ export function watchExternalLibraryState(plugin:KnowledgeBaseManager){
 		]);
 	}
 	const manifest=(file:TAbstractFile,previous?:string)=>{
+		if(!plugin.catalog.length){
+			for(const path of [file.path,previous])if(path?.endsWith('/'+identityFile))
+				changed.add(path.slice(0,-identityFile.length-1));
+		}
 		for(const {location} of plugin.catalog){
 			const target=location+'/'+identityFile;
 			if([file.path,previous].some(path=>path && (path===target || target.startsWith(path+'/'))))changed.add(location);

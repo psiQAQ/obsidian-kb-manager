@@ -5,7 +5,7 @@ import type { ViewUpdate } from '@codemirror/view';
 import { editorInfoField } from 'obsidian';
 import type { Editor, TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
-import { discover, recheck } from '../kb/catalog.ts';
+import { recheck } from '../kb/catalog.ts';
 import { changeIndex, changeIndexHunk, editorIndexBase, fileComparison, reverseWorkHunk, textHunks, verifyWorkingFile } from '../git/index-actions.ts';
 import { previewVersion } from '../git/versions.ts';
 import { Dialog } from './dialog.ts';
@@ -25,7 +25,7 @@ const commands:Record<HunkCommand,[string,string]>={
 const normalize=(s:string)=>s.replace(/^\uFEFF/u,'').replace(/\r\n/gu,'\n');
 const decode=(bytes:Uint8Array)=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
 async function locate(plugin:KnowledgeBaseManager,path:string){
-	return (await discover(plugin.disk,plugin.config)).find(l=>l.identity && !l.duplicate && !l.problem &&
+	return (await plugin.loadCatalog()).find(l=>l.identity && !l.duplicate && !l.problem &&
 		l.git==='local' && path.startsWith(l.location+'/'));
 }
 

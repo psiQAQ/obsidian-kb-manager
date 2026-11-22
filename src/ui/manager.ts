@@ -73,7 +73,7 @@ export class ManagerView extends ItemView {
 			for(const [id,tab] of Object.entries(state.tabs as Record<string,unknown>))
 				if(tab==='changes' || tab==='remote')this.workspaceTabs.set(id,tab);
 		}
-		if(redraw)await this.render(undefined,this.plugin.catalog);
+		if(redraw)await this.render();
 	}
 	private saveLayout(){void this.app.workspace.requestSaveLayout();}
 	async onOpen(){await this.render();}
@@ -84,7 +84,7 @@ export class ManagerView extends ItemView {
 	async render(focusToggle?:string,libraries?:readonly Library[]){
 		const generation=++this.generation;
 		let problem='';
-		if(!libraries)try{libraries=await this.plugin.refreshCatalog();}catch(error){problem=String(error);}
+		if(!libraries)try{libraries=await this.plugin.loadCatalog();}catch(error){problem=String(error);}
 		if(generation!==this.generation)return;
 		const selectedInput=this.rememberCommitSelection(this.contentEl);
 		for(const row of this.rows.values())row.controller?.abort();
@@ -95,7 +95,9 @@ export class ManagerView extends ItemView {
 		el.addClass('kb-manager-sidebar');
 		el.empty();
 		new Setting(el).setClass('kb-manager-heading').setName(tr('知识库',"Knowledge bases")).setHeading()
-			.addExtraButton(b=>b.setIcon('refresh-cw').setTooltip(tr('刷新知识库列表','Refresh library list')).onClick(()=>this.render()));
+			.addExtraButton(b=>b.setIcon('refresh-cw').setTooltip(tr('刷新知识库列表','Refresh library list')).onClick(async()=>{
+				try{await this.plugin.refresh();}catch(error){new Notice(String(error));}
+			}));
 		new Setting(el).setClass('kb-controls-only').setClass('kb-manager-entry-actions')
 			.addButton(b=>b.setButtonText(tr('新建',"Create")).setCta().onClick(()=>this.create()))
 			.addButton(b=>b.setButtonText(tr('克隆','Clone')).setDisabled(gitDisabled(this.plugin)).onClick(()=>cloneWizard(this.plugin,el.win)))
@@ -198,7 +200,7 @@ export class ManagerView extends ItemView {
 					const candidate=await legacyBinding(this.plugin.disk,lib);
 					const confirm=async(hash?:string)=>{
 						await this.plugin.exclusive(lib.location,()=>adopt(this.plugin.disk,this.plugin.config,lib,warnings,hash));
-						dialog.close();await this.render();
+						dialog.close();await this.plugin.refresh();
 					};
 					if(candidate){
 						dialog.contentEl.createEl('p',{text:tr('可同时领管 knowledge.base 中匹配的库根、wiki 和 Notes 过滤条件。',
@@ -287,7 +289,7 @@ export class ManagerView extends ItemView {
 
 	}
 	async create(){
-		try{await createWizard(this.plugin,()=>this.render(),undefined,this.contentEl.win);}
+		try{await createWizard(this.plugin,()=>this.plugin.refresh(),undefined,this.contentEl.win);}
 		catch(error){new Notice(String(error),8000);}
 	}
 }

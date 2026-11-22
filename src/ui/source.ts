@@ -60,7 +60,6 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 		return;
 	}
 	const dir=await plugin.disk.path(lib.location);
-	await recheck(plugin.disk,plugin.config,lib);
 	let preview:VersionPreview;
 	try {preview=await previewVersion(dir);}
 	catch(error) {
