@@ -85,7 +85,8 @@ export function renderHistorySearch(
 				if(((field==='all' || field==='sha') && includes(commit.oid)) ||
 					((field==='all' || field==='message') && includes(commit.message)) ||
 					((field==='all' || field==='author') && (includes(commit.author) || includes(displayAuthor(commit.author,authorStyle)))) ||
-					((field==='all' || field==='refs') && graph.snapshot.labels.get(commit.oid)?.some(ref=>includes(ref.name)||includes(ref.ref))) ||
+					((field==='all' || field==='refs') && ((commit.oid===graph.snapshot.head && includes('HEAD')) ||
+						graph.snapshot.labels.get(commit.oid)?.some(ref=>includes(ref.name)||includes(ref.ref)))) ||
 					((field==='all' || field==='date') && includes(date(commit.timestamp))))matches.push(commit.oid);
 			}
 			if(at<0)at=matches.indexOf(selected());
