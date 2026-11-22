@@ -20,7 +20,9 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 		return;
 	}
 	let source=candidates[0]!.source;
-	new Setting(dialog.contentEl).setName(tr('模板目录','Template folder')).addDropdown(input=>{
+	const label=tr('模板目录','Template folder');
+	new Setting(dialog.contentEl).setName(label).addDropdown(input=>{
+		input.selectEl.setAttribute('aria-label',label);
 		for(const candidate of candidates)input.addOption(candidate.source,candidate.source);
 		input.setValue(source).onChange(value=>{source=value;});
 	});

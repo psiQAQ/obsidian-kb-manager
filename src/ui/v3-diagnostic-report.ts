@@ -1,8 +1,9 @@
-import {ButtonComponent, Setting} from 'obsidian';
+import {ButtonComponent} from 'obsidian';
 import {compareDiagnosticReports} from '../diagnostics/comparison.ts';
 import type {DiagnosticFreshness} from '../diagnostics/provenance.ts';
 import type {DiagnosticReport} from '../diagnostics/types.ts';
 import {tr} from '../i18n.ts';
+import {dialogContents} from './dialog.ts';
 
 type CheckName = (id:string,name:string)=>string;
 export interface ReportHistory {
@@ -68,9 +69,9 @@ function comparison(parent:HTMLElement,current:DiagnosticReport,previous:readonl
 	detail.createEl('summary',{text:tr('与早先报告比较','Compare with an earlier report')});
 	const selected=new Map(previous.map(report=>[report.runId,report]));
 	const names=new Map([...previous.flatMap(report=>report.checks), ...current.checks].map(check=>[check.id,checkName(check.id,check.name)]));
-	new Setting(detail).setName(tr('基准报告','Earlier report')).addDropdown(input=>input.addOptions(Object.fromEntries(
+	dialogContents(detail).choice(tr('基准报告','Earlier report'),Object.fromEntries(
 		previous.map(report=>[report.runId,reportDate(report.startedAt)+' · '+report.runId.slice(0,8)]),
-	)).onChange(id=>{const baseline=selected.get(id);if(baseline)render(baseline);}));
+	),id=>{const baseline=selected.get(id);if(baseline)render(baseline);});
 	const output=detail.createDiv({attr:{'aria-live':'polite'}});
 	function render(baseline:DiagnosticReport){
 		output.empty();

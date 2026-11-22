@@ -45,13 +45,13 @@ export async function previewMobileRegistryIgnore(ctx:Catalog){
 
 type IgnorePreview=Awaited<ReturnType<typeof previewMobileRegistryIgnore>>;
 export function registryIgnoreLines(plan:IgnorePreview){
-	return plan && plan.before!==plan.after?[tr('Vault 根目录 .gitignore · ','Vault root .gitignore · ')+plan.rule]:[];
+	return plan && plan.before!==plan.after?[tr('仓库根目录 .gitignore · ','Vault root .gitignore · ')+plan.rule]:[];
 }
 
 export async function applyMobileRegistryIgnore(ctx:Catalog,plan:IgnorePreview,allowApplied=false){
 	const current=await previewMobileRegistryIgnore(ctx);
 	if(allowApplied && plan && current?.before===plan.after && current.after===plan.after)return;
-	if(JSON.stringify(current)!==JSON.stringify(plan))throw new Error(tr('Vault Git 忽略规则已变化，请重新预览','Vault Git ignore rules changed. Review them again.'));
+	if(JSON.stringify(current)!==JSON.stringify(plan))throw new Error(tr('仓库的 Git 忽略规则已变化，请重新预览','Vault Git ignore rules changed. Review them again.'));
 	if(plan)await replaceText(ctx.disk,plan.path,plan.before,plan.after);
 }
 
@@ -111,7 +111,7 @@ export async function scanMobile(ctx:Catalog,folder:string){
 		if(excluded(folder))throw new Error(tr('不能扫描模板目录','Template folders cannot be scanned')+' · '+folder);
 		if(await nested(ctx,vaultParent(folder)))throw new Error(tr('知识库不能嵌套','Knowledge bases cannot be nested'));
 	}else if(await ctx.disk.stat(identityFile)){
-		throw new Error(tr('Vault 根目录的 kb.toml 不能登记为子库','A kb.toml at the Vault root cannot register as a child library'));
+		throw new Error(tr('仓库根目录的 kb.toml 不能登记为子库','A kb.toml at the Vault root cannot register as a child library'));
 	}
 	const results:Library[]=[];
 	async function scan(dir:string){

@@ -70,11 +70,7 @@ export async function networkPanel(plugin:KnowledgeBaseManager,lib:Library,el:HT
 	const id=lib.identity.id,t=(zh:string,en:string)=>plugin.t(zh,en);
 	await recheck(plugin.disk,plugin.config,lib);
 	const dir=await plugin.disk.path(lib.location);
-	const current=await remoteState(dir).catch(error=>{
-		el.createEl('p',{text:t('远端操作当前不可用。若仓库正在合并，请在「更改」中复核。',
-			'Remote actions are currently unavailable. To review a merge in progress, open Changes.')});
-		throw error;
-	});
+	const current=await remoteState(dir);
 	const destination=current.target;
 	dialogContents(el).facts([[t('本地分支','Local branch'),current.preview.branch],
 		[t('同步目标','Sync target'),destination?destination.remote+'/'+destination.remoteBranch:t('未配置','Unconfigured')],

@@ -182,7 +182,7 @@ export default class KnowledgeBaseManager extends Plugin {
 	}
 	async onload(){
 		const adapter=this.app.vault.adapter;
-		if(!(adapter instanceof FileSystemAdapter))throw new Error('Desktop filesystem vault required');
+		if(!(adapter instanceof FileSystemAdapter))throw new Error(tr('需要使用可访问本机文件的桌面仓库。','A desktop vault with local file access is required.'));
 		this.disk=new VaultDisk(adapter.getBasePath(),this.app.vault.configDir,{load:()=>this.loadData(),save:data=>this.saveData(data)});
 		try { configureGitExecutable(deviceGitPath(this),this.disk.root); }
 		catch (error) { configureGitExecutable('',this.disk.root); new Notice(String(error)); }
@@ -287,7 +287,7 @@ export default class KnowledgeBaseManager extends Plugin {
 			await leaf.setViewState(state);
 			await leaf.loadIfDeferred();
 		}
-		if(!(leaf.view instanceof ManagerView))throw new Error('Manager unavailable');
+		if(!(leaf.view instanceof ManagerView))throw new Error(tr('无法打开知识库管理器。','Could not open the knowledge base manager.'));
 		workspace.setActiveLeaf(leaf,{focus:true});
 		return leaf.view;
 	}

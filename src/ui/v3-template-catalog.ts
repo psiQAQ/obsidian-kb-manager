@@ -99,10 +99,10 @@ export function renderTemplatePicker(parent:HTMLElement,templates:TemplateChoice
 	const personal='@personal';
 	let purpose=initial?(initial.personal?personal:initial.purpose):'';
 	let selected=initial;
-	const prompt=tr('选择用途','Select a use case');
-	new Setting(parent).setName(tr('用途','Use case')).addDropdown(input=>{
-		input.selectEl.setAttribute('aria-label',tr('用途','Use case'));
-		input.addOptions({'':prompt,...options,[personal]:tr('我的模板','My templates')}).setValue(purpose).onChange(value=>{
+	const label=tr('用途','Use case');
+	new Setting(parent).setName(label).addDropdown(input=>{
+		input.selectEl.setAttribute('aria-label',label);
+		input.addOptions({'':tr('选择用途','Select a use case'),...options,[personal]:tr('我的模板','My templates')}).setValue(purpose).onChange(value=>{
 			purpose=value;
 			selected=undefined;
 			render();
@@ -118,27 +118,29 @@ export function renderTemplatePicker(parent:HTMLElement,templates:TemplateChoice
 	function renderDetails(){
 		details.empty();
 		if(selected)showTemplateDetails(details,selected);
+		else if(!purpose)details.createEl('p',{text:tr('先选择用途，再从对应的模板中选择一个。','Choose a use case, then select a matching template.')});
+		else if(cards.childElementCount)details.createEl('p',{text:tr('选择一个模板以继续。','Select a template to continue.')});
+		else details.createEl('p',{text:tr('在设置 → 知识库管理器 → 知识库目录与模板中制作或登记目录模板。',
+			'Make or register a folder template under Settings → Knowledge base manager → Library folders and templates.')});
 		next.setDisabled(!selected || !!selected.invalid);
 	}
 	function render(){
 		cards.empty();
-		if(purpose){
-			const matched=templates.filter(p=>purpose===personal?p.personal:p.purpose===purpose||p.purposes?.includes(purpose));
-			if(!matched.length)cards.createEl('p',{cls:'kb-v3-muted',text:tr('尚无目录模板。可在知识库目录与模板设置中制作或登记。','Create or register a folder template in the library folders and templates settings.')});
-			for(const template of matched){
-				const card=cards.createEl('button',{cls:'kb-v3-template-card',attr:{type:'button','data-template-source':template.source,'aria-pressed':String(template.source===selected?.source)}});
-				const heading=card.createSpan({cls:'kb-wizard-card-heading'});
-				heading.createSpan({cls:'kb-v3-template-name',text:template.name});
-				const indicator=heading.createSpan({cls:'kb-wizard-card-selected',attr:{'aria-hidden':'true'}});
-				setIcon(indicator.createSpan(),'check');
-				indicator.createSpan({text:tr('已选','Selected')});
-				if(template.description)card.createSpan({cls:'kb-v3-muted',text:template.description});
-				card.addEventListener('click',()=>{
-					selected=template;
+		const matched=purpose?templates.filter(p=>purpose===personal?p.personal:p.purpose===purpose||p.purposes?.includes(purpose)):[];
+		cards.hidden=!matched.length;
+		for(const template of matched){
+			const card=cards.createEl('button',{cls:'kb-v3-template-card',attr:{type:'button','data-template-source':template.source,'aria-pressed':String(template.source===selected?.source)}});
+			const heading=card.createSpan({cls:'kb-wizard-card-heading'});
+			heading.createSpan({cls:'kb-v3-template-name',text:template.name});
+			const indicator=heading.createSpan({cls:'kb-wizard-card-selected',attr:{'aria-hidden':'true'}});
+			setIcon(indicator.createSpan(),'check');
+			indicator.createSpan({text:tr('已选','Selected')});
+			if(template.description)card.createSpan({cls:'kb-v3-muted',text:template.description});
+			card.addEventListener('click',()=>{
+				selected=template;
 				cards.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(button===card)));
-					renderDetails();
-				});
-			}
+				renderDetails();
+			});
 		}
 		renderDetails();
 	}

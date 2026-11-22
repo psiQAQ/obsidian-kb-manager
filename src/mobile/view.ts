@@ -31,7 +31,7 @@ export class MobileView extends ItemView {
 		const revision=++this.revision,p=this.plugin,el=this.contentEl;el.empty();el.addClass('kb-manager-sidebar');
 		const toolbar=new Setting(el).setClass('kb-controls-only');
 		this.button(toolbar,tr('刷新','Refresh'),()=>this.draw());
-		this.button(toolbar,tr('登记','Register'),()=>manifestForm(p));
+		this.button(toolbar,tr('登记清单','Register manifest'),()=>manifestForm(p));
 		this.button(toolbar,tr('扫描','Scan'),()=>scanForm(p));
 		if(!p.paused()){
 			this.button(toolbar,tr('创建','Create'),()=>createForm(p));
@@ -115,7 +115,7 @@ export class MobileView extends ItemView {
 			const preview=new Dialog(p.app,tr('预览提交','Preview commit'));
 			preview.facts([[tr('知识库路径','Library path'),lib.location],[tr('分支','Branch'),state.branch],[tr('提交说明','Commit message'),text]]);
 			preview.contentEl.createEl('h3',{text:tr('提交身份','Commit identity')});
-			const source=(value:string)=>value.trim()?tr('本库 Git 配置','Library Git config'):tr('本设备的 Vault 默认值','Vault default on this device');
+			const source=(value:string)=>value.trim()?tr('本库 Git 配置','Library Git config'):tr('此仓库在本设备上的默认值','Vault default on this device');
 			preview.facts([[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],
 				[tr('姓名来源','Name source'),source(local.name)],[tr('邮箱来源','Email source'),source(local.email)]]);
 			const working=state.changes.filter(c=>c.i!==c.w),partial=new Set(working.filter(c=>c.h!==c.i).map(c=>c.file));

@@ -12,7 +12,7 @@ import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { createPanelTabs } from './panel-tabs.ts';
-import { Dialog, V3Dialog, showJsonPreview } from './dialog.ts';
+import { Dialog, V3Dialog, dialogContents, showJsonPreview } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
@@ -22,12 +22,8 @@ type Report = Awaited<ReturnType<typeof runDiagnostics>>;
 type Diagnostic = Report['checks'][number]['diagnostics'][number];
 type Severity = Diagnostic['severity'];
 
-const checkLabels: Record<string,readonly [string,string]> = {
-	manifest:['清单与登记','Manifest and registration'],properties:['属性语法','Property syntax'],links:['链接与嵌入','Links and embeds'],
-	anchors:['标题与块引用','Headings and block references'],canvas:['Canvas','Canvas'],bases:['Bases','Bases'],
-	bindings:['受管绑定','Managed bindings'],portability:['可移植性','Portability'],
-};
-const checkName=(id:string,fallback:string)=>checkLabels[id]?tr(...checkLabels[id]):fallback;
+const checkRules = new Map<string,{name:string}>([...generalChecks,portabilityCheck].map(rule=>[rule.id,rule]));
+const checkName=(id:string,fallback:string)=>checkRules.get(id)?.name ?? fallback;
 
 function linkOptions(plugin:KnowledgeBaseManager, location:string, registeredPaths:readonly string[], allVault:boolean, signal:AbortSignal):
 	Pick<Options,'collectLinks'|'resolveLink'|'linkCandidates'|'linkCandidateScope'|'linkTargetVisibility'> {
@@ -212,13 +208,18 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 export function exportDiagnosticRunner(plugin:KnowledgeBaseManager) {
 	const dialog=new Dialog(plugin.app,tr('导出离线检验工具','Export offline check tool'));
 	let destination='kb-check.cjs';
-	dialog.text(tr('保存到（Vault 相对路径）','Save to (vault-relative)'),destination,value=>{destination=value;});
+	dialog.text(tr('保存到（仓库相对路径）','Save to (vault-relative)'),destination,value=>{destination=value;});
 	dialog.contentEl.createEl('pre').createEl('code',{text:'node kb-check.cjs --library "<library path>" --checks all'});
 	dialog.action(tr('导出','Export'),async()=>{
 		const relative=destination.trim();
 		if(!relative.endsWith('.cjs'))throw new Error(tr('使用 .cjs 扩展名。','Use the .cjs extension.'));
 		const output=await plugin.disk.path(relative);
-		await writeFile(output,offlineRunner(),{encoding:'utf8',flag:'wx'});
+		try {await writeFile(output,offlineRunner(),{encoding:'utf8',flag:'wx'});}
+		catch(error){
+			if(error instanceof Error && 'code' in error && error.code==='EEXIST')
+				throw new Error(tr('目标已存在，请选择其他保存路径。','The destination exists. Choose another path.')+' · '+relative);
+			throw new Error(tr('无法写入离线检验工具。','Could not write the offline check tool.')+'\n'+String(error));
+		}
 		new Notice(tr('离线检验工具已导出','Offline check tool exported')+' · '+relative);
 		dialog.close();
 	}).setCta();
@@ -283,9 +284,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	let candidateScope:HTMLDivElement|undefined;
 	const controls:ButtonComponent[]=[];
 	const form=tabs.panels.run.createDiv();
-	new Setting(form).setName(tr('检查范围','Checks to run')).addDropdown(field=>field
-		.addOptions({all:tr('常规与模板专项','General and template checks'),custom:tr('自选检查项','Choose individual checks')})
-		.onChange(value=>{custom=value==='custom';update();}));
+	dialogContents(form).choice(tr('检查范围','Checks to run'),
+		{all:tr('常规与模板专项','General and template checks'),custom:tr('自选检查项','Choose individual checks')},
+		value=>{custom=value==='custom';update();});
 	const guidance=form.createEl('p',{cls:'kb-v3-muted'});
 	const choices=form.createDiv();
 	const runRow=new Setting(form).setClass('kb-controls-only');
@@ -363,7 +364,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		installed=common.mode==='kit';
 		knownTemplateChecks=special.checks;
 		const general=installed?common.checks:[...generalChecks,portabilityCheck];
-		guidance.setText(tr('常规检查 '+generalChecks.length+' 项，模板专项 '+special.checks.length+' 项。可移植性和脚本授权见「自选检查项」。',generalChecks.length+' general checks and '+special.checks.length+' template checks. Choose individual checks for portability or script approval.'));
+		const summaries=[tr(`自选列表提供 ${general.length} 项通用检验、${special.checks.length} 项模板专项。`,
+			`The selection list contains ${general.length} general and ${special.checks.length} template checks.`)];
+		if(general.some(check=>check.id===portabilityCheck.id))summaries.push(tr('可移植性检验仅在自选时运行。','Select portability explicitly to run it.'));
 		const approved=trustedDigests(plugin);
 		const specialSources=packText(special.template?.id ?? '');
 		for(const id of selected)if(![...general,...special.checks].some(check=>check.id===id))selected.delete(id);
@@ -401,10 +404,12 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 					const scopeInput=scopeRow.createEl('input',{type:'checkbox'});
 					scopeInput.checked=allVaultCandidates;
 					scopeInput.addEventListener('change',()=>{allVaultCandidates=scopeInput.checked;});
-					scopeRow.createSpan({text:tr('在整个 Vault 查找同名候选','Look for same-name candidates across the vault')});
+					scopeRow.createSpan({text:tr('在整个仓库查找同名候选','Look for same-name candidates across the vault')});
 				}
 			}
 		}
+		if(controls.length)summaries.push(tr('可在自选列表中审查并授权脚本。','Choose individual checks to review and approve scripts.'));
+		guidance.setText(summaries.join(tr('',' ')));
 		update();
 	}
 	async function run(checks:readonly string[]|'all'){

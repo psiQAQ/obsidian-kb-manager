@@ -8,9 +8,9 @@
 
 | 用户要做的事 | 本插件的入口、结果与边界 | 实现和验证 |
 |---|---|---|
-| 看提交图、分支、标签和贮藏 | 当前分支是默认范围。可改选所有引用或指定引用。HEAD、本地、远端跟踪、标签和 stash 分开显示。悬停显示提交信息及直接指向它的引用。要看某个分支是否包含该提交，可选中该分支并查找 SHA。 | [引用快照](../src/git/history-graph.ts) · [原生 Git 对照测试](../tests/history-graph.test.mjs) |
-| 浏览与查找 | 列表接近底部时加载更早的提交；查找覆盖所选范围的 SHA、说明、作者、引用名称和显示日期。可定位 HEAD、相邻行和父子提交，或刷新后返回原来的阅读位置。右键可复制完整 SHA、提交标题或引用名。 | [历史页](../src/ui/source-history.ts) · [查找控件](../src/ui/history-search.ts) |
-| 比较版本 | 点选提交默认与第一父提交比较，合并提交可指定其他父提交。两个任意提交可直接比较并交换方向；另有空树、当前工作区比较。**工作区更改**和**已暂存的更改**仍分别显示磁盘与索引、索引与 HEAD 的差异。 | [比较端点](../src/git/index-history.ts) · [比较测试](../tests/history-comparison.test.mjs) |
+| 看提交图、分支、标签和贮藏 | 当前分支是默认范围。可改选所有引用或指定引用。打开引用选择器时默认勾选当前分支，可按需要取消勾选。列表较窄时优先显示一个引用及提交标题，通过 `+N` 或详情查看完整引用。要看某个分支是否包含该提交，可选中该分支并查找 SHA。 | [引用快照](../src/git/history-graph.ts) · [原生 Git 对照测试](../tests/history-graph.test.mjs) |
+| 浏览与查找 | 列表接近底部时加载更早的提交。查找覆盖所选范围的 SHA、说明、作者、引用名称和显示日期，并显示已检查的提交数。选择**取消查找**后可修改关键词或按 Enter 重新查找。可定位 HEAD、相邻行和父子提交，或刷新后返回原来的阅读位置。右键可复制完整 SHA、提交标题或引用名。 | [历史页](../src/ui/source-history.ts) · [查找控件](../src/ui/history-search.ts) |
+| 比较版本 | 点选提交默认与第一父提交比较。合并提交可切换父提交，空比较会标出当前父提交并提供其他父提交的入口。选择基线后，列表标记该行，详情显示基线短 SHA。可交换比较方向，也可与空树或当前工作区比较。**工作区更改**和**已暂存的更改**分别显示磁盘与索引、索引与 HEAD 的差异。 | [比较端点](../src/git/index-history.ts) · [比较测试](../tests/history-comparison.test.mjs) |
 | 查看变更或某一版笔记 | 展开历史详情，选择文件树或列表。改名显示新旧路径；逐文件菜单提供只读快照、打开当前笔记、复制相对路径、和工作文件比较、预览恢复。二进制和过大的文本给出状态。 | [逐文件操作](../src/ui/history-comparison.ts) · [差异与快照](../src/ui/source-diff.ts) |
 | 阅读差异、跟踪审阅进度 | 红绿底纹、符号和行号区分增删；工具栏可切换双栏／统一并跳至上一处或下一处变化。固定提交比较的审阅标记按库、比较方向和文件版本在当前设备保存，可撤销；含工作区的比较只供即时阅读。 | [差异控件](../src/ui/diff-table.ts) · [标签复用测试](../tests/source-tabs.test.mjs) |
 | 处理本地分支 | 从所点提交建立分支，或在本地分支菜单切换、重命名、删除已合入分支、合并／变基到指定引用。切换和整合前需保存工作区更改。现有侧栏与命令面板入口继续可用。 | [图上菜单](../src/ui/history-actions.ts) · [分支校验](../src/git/network.ts) |
@@ -30,7 +30,7 @@
 | `customBranchGlobPatterns`、`repository.onLoad.*`、`repository.showRemoteBranches`、`repository.showRemoteHeads`、`repository.showTags`、`repository.showCommitsOnlyReferencedByTags`、`repository.showStashes` | 支持选定引用、名称过滤、回 HEAD 和 stash 显隐。只由标签可达的提交可在所有引用或选定标签下查看。自定义 glob 组、远端符号 HEAD 独立标签不是当前筛选选项。 |
 | `repository.commits.initialLoad`、`loadMore`、`loadMoreAutomatically`、`order`、`mute.*`、`repository.onlyFollowFirstParent`、`includeCommitsMentionedByReflogs` | 首屏与续载按批读取，长历史只渲染可见区域附近的行，固定拓扑顺序；没有批次大小、第一父链模式、淡化合并或通用 reflog 浏览设置。 |
 | `graph.*`、`enhancedAccessibility`、`date.*`、`markdown`、`customEmojiShortcodeMappings`、`fileEncoding`、`repository.useMailmap` | 轨道使用主题色，节点与文本提示辅助识别；变更状态有字母和符号。作者显示和日期可见性可调。日期按设备区域显示，文本差异使用 UTF-8。配色编辑、日期格式模板、邮箱映射、提交正文 Markdown 和 emoji 渲染未提供。 |
-| `keyboardShortcut.*`、`contextMenuActionsVisibility`、`retainContextWhenHidden`、`openNewTabEditorGroup`、`openToTheRepoOfTheActiveTextEditorDocument` | 图内查找、行与父子导航支持键盘；详情按钮与右键菜单提供同一组动作。按知识库和比较对象复用标签。没有可编辑的快捷键映射、菜单项配置或目标编辑器组选择。 |
+| `keyboardShortcut.*`、`contextMenuActionsVisibility`、`retainContextWhenHidden`、`openNewTabEditorGroup`、`openToTheRepoOfTheActiveTextEditorDocument` | 图内查找、行与父子导航支持键盘。列表内用 Page Up / Page Down 翻页。按 Esc 或选择关闭按钮关闭详情，焦点回到列表。按知识库和比较对象复用标签。没有可编辑的快捷键映射、菜单项配置或目标编辑器组选择。 |
 | `dialog.addTag.*`、`createBranch.*`、`deleteBranch.*`、`resetCurrentBranchToCommit.*`、`resetUncommittedChanges.*`、`stashUncommittedChanges.*`、`applyStash.*`、`popStash.*` | 在当次操作中选择目标、标签类型、reset 模式或是否包含未跟踪项。推送标签单独确认。从历史建分支默认留在原分支；应用 stash 会尝试恢复索引。没有通用的对话框默认值编辑器。 |
 | `dialog.cherryPick.*`、`merge.*`、`pullBranch.*`、`rebase.*`、`general.referenceInputSpaceSubstitution` | 已实现摘取、撤销、分支合并／变基和提交前预览。摘取自动创建提交；暂缓提交、追加来源标记、自定义 squash 说明、启动交互式变基编辑器、自动替换引用名空格等上游参数未开放。 |
 | `dialog.fetchIntoLocalBranch.*`、`fetchRemote.*`、`repository.fetchAndPrune`、`repository.fetchAndPruneTags`、`repository.showUncommittedChanges`、`showUntrackedFiles` | 定向获取和清理分开预览。未提交行可隐藏，显示时含未跟踪文件。没有自动删除本地标签、强制改写本地分支或只隐藏未跟踪文件的通用开关。 |

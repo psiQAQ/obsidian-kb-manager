@@ -66,7 +66,12 @@ export class Dialog extends Modal {
 				super.open();
 			}
 		};
-		const timer=owner.setTimeout(()=>{show();this.cancelOpen?.();},500);
+		const timer=owner.setTimeout(()=>{
+			show();
+			if(!this.cancelOpen)return;
+			this.cancelOpen();
+			if(!owner.closed)new Notice(tr('请先激活发起操作的窗口，然后重试。','Focus the window where you started the action and try again.'));
+		},500);
 		this.cancelOpen=()=>{
 			owner.clearTimeout(timer);
 			owner.removeEventListener('focus',show);

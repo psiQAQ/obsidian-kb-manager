@@ -98,8 +98,10 @@ function preferenceSettings(plugin: KnowledgeBaseManager, page: PreferenceCatego
 	const toggle = (key: BooleanKey, label: Label, desc?: Label) =>
 		row(key,label,(setting,state) => setting.addToggle(input => input.setValue(state.value(key)).onChange(b => state.set(key,b))),desc);
 	const choice = <K extends ChoiceKey>(key: K, label: Label, options: Record<GitPreferences[K],string>, desc?: Label) =>
-		row(key,label,(setting,state) => setting.addDropdown(input => input.addOptions(options).setValue(state.value(key))
-			.onChange(s => state.set(key,s as GitPreferences[K]))),desc);
+		row(key,label,(setting,state) => setting.addDropdown(input => {
+			input.selectEl.setAttribute('aria-label',t(...label));
+			input.addOptions(options).setValue(state.value(key)).onChange(s => state.set(key,s as GitPreferences[K]));
+		}),desc);
 	const note = (zh: string,en: string) => items.push({name:'',searchable:false,
 		render(setting) { setting.descEl.createEl('p',{text:t(zh,en)}); }});
 
@@ -287,8 +289,8 @@ function folderSettings(plugin: KnowledgeBaseManager, refresh: () => void): Sett
 		templateInput:null as HTMLTextAreaElement|null,
 	}));
 	const folders = [
-		['parents',['收藏的父目录','Favorite parent folders'],['每行一个 Vault 相对路径，可留空。收藏目录会显示在位置选择器中。','Optional. Enter one vault-relative path per line. Favorites appear in the location picker.']],
-		['templates',['目录模板','Folder templates'],['每行一个模板目录的 Vault 相对路径。','One vault-relative template folder per line.']],
+		['parents',['收藏的父目录','Favorite parent folders'],['每行一个仓库相对路径，可留空。收藏目录会显示在位置选择器中。','Optional. Enter one vault-relative path per line. Favorites appear in the location picker.']],
+		['templates',['目录模板','Folder templates'],['每行一个模板目录的仓库相对路径。','One vault-relative template folder per line.']],
 	] as const;
 	const items:SettingDefinitionRender[] = folders.map(([field,label,desc]) => ({
 		name:t(label[0],label[1]),desc:t(desc[0],desc[1]),
@@ -345,15 +347,18 @@ export class ManagerSettings extends PluginSettingTab {
 		const t = plugin.t;
 		const refresh = () => this.update();
 		const pending = Object.keys(plugin.pendingLibraryPreferences).length;
+		const languageLabel=t('界面语言','Language');
 		const items:SettingGroupItem<string>[] = [{
-			name:t('界面语言','Language'),
+			name:languageLabel,
 			render(setting) {
-				setting.addDropdown(input => input
-					.addOptions({system:t('跟随 Obsidian','Follow Obsidian'),zh:'简体中文',en:'English'})
-					.setValue(plugin.prefs.language).onChange(async value => {
-						try { await plugin.saveSharedPreferences({language:value as Language}); await plugin.refresh(); refresh(); }
-						catch (error) { new Notice(String(error)); }
-					}));
+				setting.addDropdown(input => {
+					input.selectEl.setAttribute('aria-label',languageLabel);
+					input.addOptions({system:t('跟随 Obsidian','Follow Obsidian'),zh:'简体中文',en:'English'})
+						.setValue(plugin.prefs.language).onChange(async value => {
+							try { await plugin.saveSharedPreferences({language:value as Language}); await plugin.refresh(); refresh(); }
+							catch (error) { new Notice(String(error)); }
+						});
+				});
 			},
 		}];
 		if (pending) items.push({

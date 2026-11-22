@@ -84,7 +84,7 @@ function fileMenu(anchor:HTMLElement,options:ComparisonOptions,file:HistoryFile)
 	menu.showAtPosition({x:rect.left,y:rect.bottom},anchor.doc);
 }
 
-export async function renderHistoryComparison(el:HTMLElement,options:ComparisonOptions) {
+export async function renderHistoryComparison(el:HTMLElement,options:ComparisonOptions):Promise<'empty'|undefined> {
 	const {plugin,lib,dir,before,after,active,commitParent}=options,t=plugin.t;
 	const id=lib.identity!.id;
 	const loading=el.createEl('p',{text:t('正在读取文件变更…','Loading file changes…'),attr:{role:'status'}});
@@ -98,9 +98,7 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 		return;
 	}finally{loading.remove();}
 	if(!active())return;
-	if(!files.length){
-		el.createEl('p',{text:t('此比较没有文件变更','No file changes in this comparison')});return;
-	}
+	if(!files.length)return 'empty';
 	const reviewable=before.kind!=='working' && after.kind!=='working';
 	const keys=new Map(reviewable?files.map(file=>[file,fileReviewKey(before,after,file)]):[]);
 	const storage=plugin.manifest.id+':history-review:'+id;
@@ -178,4 +176,5 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 	};
 	toggle.onclick=()=>{tree=!tree;render();};
 	render();
+	return undefined;
 }

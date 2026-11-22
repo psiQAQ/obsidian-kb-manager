@@ -25,10 +25,10 @@ export async function registryIgnoreForm(plugin:MobilePlugin){
 	const before=(await disk.stat(path))?await disk.read(path):undefined;
 	const after=withIgnoreRule(before??null,rule);
 	if(after===before){
-		const dlg=new Dialog(plugin.app,tr('Vault Git 忽略规则','Vault Git ignore rule'));
+		const dlg=new Dialog(plugin.app,tr('仓库的 Git 忽略规则','Vault Git ignore rule'));
 		dlg.lines([path,rule,tr('规则已存在','Rule already present')]);dlg.open();return;
 	}
-	confirm(plugin,tr('写入 Vault Git 忽略规则','Write the Vault Git ignore rule'),[path,rule],async()=>{
+	confirm(plugin,tr('写入仓库的 Git 忽略规则','Write the Vault Git ignore rule'),[path,rule],async()=>{
 		await plugin.catalogWrite(()=>replaceText(disk,path,before,after));
 	});
 }

@@ -41,7 +41,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 	const draft={source:'',id:'',name:'',description:'',purpose:'starter',example:false};
 	dialog.contentEl.createEl('p',{text:tr('创建一个可编辑的模板目录，登记后可从“我的模板”新建知识库。',
 		'Create an editable template folder that appears under My templates when you create a library.')});
-	dialog.text(tr('模板目录（Vault 相对路径）','Template folder (vault-relative)'),'',v=>{draft.source=v;},{example:'my-template'});
+	dialog.text(tr('模板目录（仓库相对路径）','Template folder (vault-relative)'),'',v=>{draft.source=v;},{example:'my-template'});
 	dialog.text(tr('模板 ID（小写英文及连字符）','Template ID (lowercase and hyphens)'),'',v=>{draft.id=v;},{example:'my-template'});
 	dialog.text(tr('显示名','Display name'),'',v=>{draft.name=v;},{example:tr('我的模板','My template')});
 	dialog.multiline(tr('简介','Description'),'',v=>{draft.description=v;});
@@ -103,7 +103,7 @@ export function makeTemplateWizard(plugin:KnowledgeBaseManager,onRegistered:(sou
 			preview.close();dialog.close();
 			const done=new V3Dialog(plugin.app,tr('模板已登记','Template registered'));
 			done.facts([[tr('模板目录','Template folder'),source]]);
-			done.contentEl.createEl('p',{text:tr('可用此模板预览新库，确认后会在 Vault 中创建知识库。',
+			done.contentEl.createEl('p',{text:tr('可用此模板预览新库，确认后会在仓库中创建知识库。',
 				'Preview a library from this template. Confirming creates a library in the vault.')});
 			const doneActions=dialogContents(done.contentEl.createDiv({cls:'kb-wizard-actions'}));
 			doneActions.action(tr('完成','Done'),()=>{done.close();return Promise.resolve();});

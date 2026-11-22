@@ -39,7 +39,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 	const existing = preview.registry.paths.includes(location);
 	dialog.facts([
 		...libraryFacts(plugin,preview.library),
-		[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)],
+		[t('仓库登记文件','Vault registry file'),registryDataPath(disk.configDir)],
 		[t('登记状态','Registration'),existing ? t('此路径已登记','This path is registered') : t('此路径尚未登记','This path is unregistered')],
 		...(missing ? [[t('失联路径','Missing path'),missing.location],[t('找到的路径','Located path'),location]] as const : []),
 	]);
@@ -118,7 +118,7 @@ export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:
 	const {raw,paths} = await readVaultRegistry(disk);
 	if (!paths.includes(location)) throw new Error(t('登记已变化，请刷新','Registration changed. Refresh the manager.'));
 	const dialog = new Dialog(plugin.app,t('移除登记','Remove registration'),owner);
-	dialog.facts([[t('登记路径','Registered path'),location],[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
+	dialog.facts([[t('登记路径','Registered path'),location],[t('仓库登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
 	dialog.lines([t('此操作从列表移除此知识库，保留目录和文件。','This removes the library from the list and preserves the folder and files.')]);
 	dialog.action(t('移除登记','Remove registration'),async()=>{
 		await plugin.exclusive(location,()=>writeVaultRegistry(disk,raw,amendRegistry(paths,{remove:[location]},disk.configDir)));
@@ -135,14 +135,14 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string, com
 	let problem:string|undefined;
 	try { if (raw !== null) paths = parseRegistry(raw,disk.configDir); }
 	catch (error) { problem = String(error); }
-	if (problem && location) throw new Error(t('登记文件有误。请选择 Vault 根目录重建。','The registry is invalid. Select the Vault root to rebuild it.') + '\n' + problem);
+	if (problem && location) throw new Error(t('登记文件有误。请选择仓库根目录重建。','The registry is invalid. Select the Vault root to rebuild it.') + '\n' + problem);
 	const {libraries,skipped} = await scanVaultFolder(disk,config,location);
 	const existing = await Promise.all(paths.filter(path=>!libraries.some(lib=>lib.location===path)).map(path=>registryCandidate(disk,config,path)));
 	const seen = [...libraries,...existing.filter(lib=>lib!==undefined)];
 	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'),owner);
 	const protect=await reviewRegistryProtection(plugin,dialog);
-	dialog.facts([[t('扫描目录','Scanned folder'),location || t('Vault 根目录','Vault root')],
-		[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
+	dialog.facts([[t('扫描目录','Scanned folder'),location || t('仓库根目录','Vault root')],
+		[t('仓库登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
 	if(problem)dialog.lines([problem]);
 	if(skipped.length){
 		const details=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
@@ -190,8 +190,8 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string, com
 export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager,owner:Window=activeWindow) {
 	const {t,disk} = plugin;
 	const preview = await previewRegistryIgnore(disk);
-	const dialog = new Dialog(plugin.app,t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'),owner);
-	dialog.lines([t('Vault 根目录 .gitignore','Vault root .gitignore'),preview.rule]);
+	const dialog = new Dialog(plugin.app,t('预览仓库的 Git 忽略规则','Preview Vault Git ignore rule'),owner);
+	dialog.lines([t('仓库根目录 .gitignore','Vault root .gitignore'),preview.rule]);
 	if (preview.after === preview.before) dialog.lines([t('忽略规则已存在。','The ignore rule is in place.')]);
 	else dialog.action(t('确认写入规则','Write ignore rule'),async()=>{await applyIgnoreRule(disk,preview);dialog.close();});
 	dialog.open();
@@ -209,8 +209,8 @@ export function manageRegistry(plugin:KnowledgeBaseManager,owner:Window=activeWi
 	const folder=registryPathField({contentEl:panels.scan},plugin.app,'folder',{favorites:plugin.config.parents});
 	dialogContents(panels.scan).action(t('扫描并查看结果','Scan and review results'),()=>showScanPreview(plugin,folder(),()=>dialog.close(),owner)).setCta();
 	const options=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
-	options.createEl('summary',{text:t('Vault Git 忽略规则','Vault Git ignore rule')});
-	options.createEl('p',{text:t('登记列表保存在 '+registryDataPath(plugin.disk.configDir)+'。可将它加入 Vault 的 .gitignore。',
+	options.createEl('summary',{text:t('仓库的 Git 忽略规则','Vault Git ignore rule')});
+	options.createEl('p',{text:t('登记列表保存在 '+registryDataPath(plugin.disk.configDir)+'。可将它加入仓库的 .gitignore。',
 		'The registry is stored in '+registryDataPath(plugin.disk.configDir)+'. You can add it to the Vault .gitignore.')});
 	dialogContents(options).action(t('预览忽略规则','Preview ignore rule'),()=>showRegistryIgnorePreview(plugin,owner));
 	dialog.open();

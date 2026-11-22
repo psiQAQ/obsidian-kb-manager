@@ -26,23 +26,26 @@ function checkReadme(bytes:Uint8Array|undefined,checks:CheckDeclaration[]) {
 	const heading=bytes?'##':'#';
 	const markdownText=(value:string)=>value.trim().replace(/\s+/gu,' ').replace(/[\\`*_[\]<>]/gu,'\\$&');
 	const instructions=[
-		heading+' 检验本库',
+		heading+' '+tr('检验本库','Check this library'),
 		'',
-		'在本库根目录使用 Node.js 20 或更新版本运行：',
+		tr('在本库根目录使用 Node.js 20 或更新版本运行：','From the library root, run the following command with Node.js 20 or later.'),
 		'',
 		'```sh',
 		'node ./checks/kb-check.cjs --library . --checks all',
 		'```',
 		'',
-		'命令输出 JSON，报告保存在本库的 `.log/` 目录。使用 `--list` 查看通用和模板专项检验，使用 `--checks <id>` 指定检验。',
+		tr('命令输出 JSON，报告保存在本库的 `.log/` 目录。使用 `--list` 查看通用和模板专项检验，使用 `--checks <id>` 指定检验。',
+			'The command prints JSON and saves the report in the library’s `.log/` folder. Use `--list` to see the general and template checks, or `--checks <id>` to run a specific check.'),
 		'',
-		'逐项查看 `checks[].status`、`coverage` 和 `diagnostics`。在 Obsidian 外运行时，部分链接可能因缺少 Vault 上下文而无法判定。例如，`status: partial`、`coverage.checked: 17`、`coverage.unknown: 3` 表示已检查 17 项，还有 3 项待核对。需要 Vault 范围的解析时，可以提供 `--vault-root <path>`。',
+		tr('逐项查看 `checks[].status`、`coverage` 和 `diagnostics`。在 Obsidian 外运行时，部分链接可能因缺少 Vault 上下文而无法判定。例如，`status: partial`、`coverage.checked: 17`、`coverage.unknown: 3` 表示已检查 17 项，还有 3 项待核对。需要 Vault 范围的解析时，可以提供 `--vault-root <path>`。',
+			'Review `checks[].status`, `coverage`, and `diagnostics` for each check. Outside Obsidian, some links may be unresolved without vault context. For example, `status: partial`, `coverage.checked: 17`, and `coverage.unknown: 3` mean 17 items were checked and 3 need review. Pass `--vault-root <path>` for vault-wide resolution.'),
 		'',
 		...(checks.length?[
-			'本模板在 `kb-template.json` 中声明了以下专项检验。脚本位于 `checks/`，运行需通过脚本信任检查。',
+			tr('本模板在 `kb-template.json` 中声明了以下专项检验。脚本位于 `checks/`，运行需通过脚本信任检查。',
+				'This template declares the following checks in `kb-template.json`. The scripts are in `checks/` and must pass script trust checks before they run.'),
 			'',
-			...checks.map(({id,name,description})=>'- `'+id+'` · '+markdownText(name)+(description?.trim()?'（'+markdownText(description)+'）':'')),
-		]:['本模板未声明专项检验。']),
+			...checks.map(({id,name,description})=>'- `'+id+'` · '+markdownText(name)+(description?.trim()?tr('（',' (')+markdownText(description)+tr('）',')'):'')),
+		]:[tr('本模板未声明专项检验。','This template declares no template checks.')]),
 		'',
 	];
 	const section=instructions.join(newline);

@@ -23,7 +23,7 @@ interface Options extends Presentation {
 
 type Mode = 'manifest' | 'folder';
 type PathTab = 'browse' | 'favorites' | 'input';
-const showPath = (path: string) => path || tr('Vault 根目录（/）', 'Vault root (/)');
+const showPath = (path: string) => path || tr('仓库根目录（/）', 'Vault root (/)');
 
 function pathPolicy(app: App, mode: Mode, options: Options, blocked: readonly string[]) {
 	const {vault} = app;
@@ -136,8 +136,8 @@ async function openPathPicker(
 		});
 	}
 
-	const inputLabel = manifest ? tr('清单的 Vault 相对路径', 'Vault-relative manifest path')
-		: tr('目录的 Vault 相对路径', 'Vault-relative folder path');
+	const inputLabel = manifest ? tr('清单的仓库相对路径', 'Vault-relative manifest path')
+		: tr('目录的仓库相对路径', 'Vault-relative folder path');
 	let input!: HTMLInputElement;
 	new Setting(panels.input).setName(inputLabel).addText(field => {
 		input = field.inputEl;
@@ -151,8 +151,8 @@ async function openPathPicker(
 		});
 	});
 	if (!manifest) panels.input.createEl('p', {cls: 'kb-path-hint', text: options.allowNew
-		? tr('输入 / 可选中 Vault 根目录。缺失的父目录会在建库时创建。', 'Enter / to select the Vault root. Missing parent folders will be created with the library.')
-		: tr('输入 / 可选中 Vault 根目录。', 'Enter / to select the Vault root.')});
+		? tr('输入 / 可选中仓库根目录。缺失的父目录会在建库时创建。', 'Enter / to select the Vault root. Missing parent folders will be created with the library.')
+		: tr('输入 / 可选中仓库根目录。', 'Enter / to select the Vault root.')});
 
 	const footer = picker.contentEl.createDiv({cls: 'kb-path-footer'});
 	const candidateLabel = footer.createEl('p', {attr: {role: 'status'}});
@@ -169,7 +169,7 @@ async function openPathPicker(
 		confirm.setText(tab === 'input' ? tr('使用输入的路径', 'Use entered path')
 			: tab === 'favorites' ? tr('使用所选收藏目录', 'Use selected favorite')
 			: manifest ? tr('使用所选清单', 'Use selected manifest')
-			: path === '' ? tr('选择 Vault 根目录', 'Select Vault root') : tr('选择当前目录', 'Select this folder'));
+			: path === '' ? tr('选择仓库根目录', 'Select Vault root') : tr('选择当前目录', 'Select this folder'));
 		problem.empty();
 		confirm.disabled = true;
 		if (path === null) return;

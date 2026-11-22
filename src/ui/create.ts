@@ -88,7 +88,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	const details=dialogContents(detailsPage);
 	const templateSummary=detailsPage.createEl('p',{cls:'kb-v3-muted'});
 	const location=detailsPage.createEl('p',{cls:'kb-wizard-destination'});
-	const locationLabel=location.createSpan({text:tr('Vault 内位置','Location in vault')});
+	const locationLabel=location.createSpan({text:tr('仓库内位置','Location in vault')});
 	const destination=location.createEl('output',{attr:{'aria-label':locationLabel.textContent??''}});
 	const updateDestination=()=>{
 		if(parent===null || !input.name){
@@ -223,7 +223,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			const host=templateHost(plugin.app,plugin.manifest.version);
 			const optional=checkCreationRequirements(preview.template,host);
 			const confirmPage=newPage(),confirm=dialogContents(confirmPage);
-			confirm.facts([[tr('Vault 内位置','Location in vault'),preview.location+'/'],
+			confirm.facts([[tr('仓库内位置','Location in vault'),preview.location+'/'],
 				[tr('模板','Template'),chosen.name+' · '+preview.template.version],
 				[tr('显示名','Display name'),preview.input.displayName]]);
 			confirmPage.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
@@ -235,7 +235,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			details.createEl('summary',{text:tr('模板与登记详情','Template and registry details')});
 			showTemplateDetails(details,chosen);
 			dialogContents(details).facts([[tr('通用检验套件','Common check kit'),preview.checkKit.version],
-				[tr('Vault 知识库登记','Vault library registry'),registryDataPath(disk.configDir)]]);
+				[tr('仓库的知识库登记','Vault library registry'),registryDataPath(disk.configDir)]]);
 			pathList(details,tr('创建目录','Folders to create'),preview.template.folders.map(folder=>folder+'/'));
 			pathList(details,tr('跳过的模板路径','Skipped template paths'),preview.template.excluded);
 			const registry=await reviewRegistryProtection(plugin,confirm);

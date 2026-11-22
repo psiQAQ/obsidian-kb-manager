@@ -62,7 +62,7 @@ export async function ancestorWarnings(disk: VaultDisk, location: string): Promi
 			warnings.push(tr('父仓跟踪与忽略状态无法读取，请手动核对。','Unable to read parent tracking and ignore rules. Review them manually.'));
 			continue;
 		}
-		warnings.push(tr('父仓 ','Parent repository ') + (parts.slice(0,i).join('/') || '/') + '：' + (tracked ? tr('目标已被跟踪','destination is tracked') : ignored ? tr('目标已被忽略','destination is ignored') : tr('目标未被忽略','destination is not ignored')));
+		warnings.push(tr('父仓 ','Parent repository ') + (parts.slice(0,i).join('/') || '/') + tr('：',': ') + (tracked ? tr('目标已被跟踪','destination is tracked') : ignored ? tr('目标已被忽略','destination is ignored') : tr('目标未被忽略','destination is not ignored')));
 	}
 	return warnings;
 }

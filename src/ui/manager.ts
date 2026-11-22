@@ -1,7 +1,7 @@
 import { gitDisabled } from './device.ts';
 import { watchLibraryChanges } from './refresh.ts';
 import { cloneWizard } from './clone.ts';
-import { ItemView, Menu, Notice, Setting, TFile, Vault, WorkspaceLeaf } from 'obsidian';
+import { ButtonComponent, ItemView, Menu, Notice, Setting, TFile, Vault, WorkspaceLeaf } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
@@ -23,6 +23,7 @@ import { updateTemplateFiles } from './template-update.ts';
 
 export const managerType='knowledge-base-manager-view';
 type WorkspaceTab='changes'|'remote';
+let nextWorkspacePanelId=0;
 
 export class ManagerView extends ItemView {
 	readonly plugin: KnowledgeBaseManager;
@@ -99,10 +100,10 @@ export class ManagerView extends ItemView {
 			.addExtraButton(b=>b.setIcon('refresh-cw').setTooltip(tr('刷新知识库列表','Refresh library list')).onClick(async()=>{
 				try{await this.plugin.refresh();}catch(error){new Notice(String(error));}
 			}));
-		new Setting(el).setClass('kb-controls-only').setClass('kb-manager-entry-actions')
-			.addButton(b=>b.setButtonText(tr('新建',"Create")).setCta().onClick(()=>this.create()))
-			.addButton(b=>b.setButtonText(tr('克隆','Clone')).setDisabled(gitDisabled(this.plugin)).onClick(()=>cloneWizard(this.plugin,el.win)))
-			.addButton(b=>b.setButtonText(tr('登记已有库','Register existing library')).onClick(()=>manageRegistry(this.plugin,el.win)));
+		const actions=el.createDiv({cls:'kb-manager-entry-actions'});
+		new ButtonComponent(actions).setButtonText(tr('新建','Create')).setCta().onClick(()=>this.create());
+		new ButtonComponent(actions).setButtonText(tr('克隆','Clone')).setDisabled(gitDisabled(this.plugin)).onClick(()=>cloneWizard(this.plugin,el.win));
+		new ButtonComponent(actions).setButtonText(tr('登记已有知识库','Register existing libraries')).onClick(()=>manageRegistry(this.plugin,el.win));
 		try {
 			for(const record of Object.values(this.plugin.moves)){
 				if(record.phase==='complete')continue;
@@ -111,13 +112,13 @@ export class ManagerView extends ItemView {
 					.addButton(b=>b.setButtonText(tr('复核并继续',"Review and continue")).onClick(()=>reviewPendingMove(this.plugin,record,el.win)));
 			}
 			if(problem)throw new Error(problem);
-			if (!libraries?.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有库可选择 kb.toml 或扫描目录。',
+			if (!libraries?.length) el.createEl('p',{cls:'kb-manager-empty',text:tr('尚未登记知识库。新建可从模板开始，克隆需要 Git 远端地址。登记已有知识库可选择 kb.toml 或扫描目录。',
 				'No libraries are registered. Create from a template, clone from a Git remote, or register existing libraries by selecting kb.toml or scanning a folder.')});
 			for(const lib of libraries ?? []){
 				this.rows.set(lib.location,{host:el.createDiv({cls:'kb-library-row'})});
 				this.drawRow(lib,focusToggle,selectedInput);
 			}
-		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:String(error)}); }
+		} catch(error) { el.createEl('p',{cls:'kb-git-error',text:tr('无法显示知识库列表。','Could not display the library list.')+'\n'+String(error),attr:{role:'alert'}}); }
 	}
 	async refreshRows(libraries:readonly Library[],changed:ReadonlySet<string>){
 		if(libraries.length!==this.rows.size || libraries.some(lib=>!this.rows.has(lib.location))){
@@ -154,8 +155,12 @@ export class ManagerView extends ItemView {
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(host).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
-		if(!gitDisabled(this.plugin))row.addButton(button=>{
-			button.buttonEl.setAttribute('aria-expanded',String(this.expanded===key));
+		const expanded=this.expanded===key;
+		const panel=gitDisabled(this.plugin)?undefined:host.createDiv({cls:'kb-library-git',attr:{id:'kb-workspace-panel-'+ ++nextWorkspacePanelId}});
+		if(panel)panel.hidden=!expanded;
+		if(panel)row.addButton(button=>{
+			button.buttonEl.setAttribute('aria-expanded',String(expanded));
+			button.buttonEl.setAttribute('aria-controls',panel.id);
 			button.setButtonText(tr('Git 工作区','Git workspace')).onClick(()=>{
 				this.selection=key;
 				this.expanded=this.expanded===key ? undefined : key;
@@ -164,9 +169,9 @@ export class ManagerView extends ItemView {
 			});
 			if(focusToggle===key)button.buttonEl.focus();
 		});
-		if(this.expanded===key && (!lib.identity || lib.problem || lib.duplicate) && !gitDisabled(this.plugin)){
+		if(panel && expanded && (!lib.identity || lib.problem || lib.duplicate)){
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
-			host.createDiv({cls:'kb-library-git',text:reason});
+			panel.setText(reason);
 		}
 		if(!lib.identity || lib.problem || lib.duplicate)row.addButton(b=>b.setButtonText(tr('检验',"Check library")).onClick(async()=>{try{await checkLibrary(this.plugin,lib);}catch(error){new Notice(String(error));}}));
 		if(lib.problem){
@@ -263,8 +268,8 @@ export class ManagerView extends ItemView {
 				else new Notice(tr('入口不存在：',"Entry not found: ")+entry);
 			} catch(error){new Notice(String(error));}
 		}));
-		if(this.expanded===id && !gitDisabled(this.plugin)){
-			const panel=host.createDiv({cls:'kb-library-git',attr:{'data-kb-library-id':id}});
+		if(panel && expanded){
+			panel.dataset.kbLibraryId=id;
 			watchLibraryChanges(this.plugin,lib,panel,signal,async()=>this.drawRow(lib));
 			panel.createEl('h3',{text:tr('Git 工作区','Git workspace')+' · '+lib.identity.displayName});
 			const tabs: {id:WorkspaceTab;label:string}[]=[{id:'changes',label:tr('更改','Changes')}];
@@ -272,15 +277,33 @@ export class ManagerView extends ItemView {
 			const preferred=this.workspaceTabs.get(id);
 			const initial=tabs.some(tab=>tab.id===preferred)?preferred:'changes';
 			const rendered=new Set<WorkspaceTab>();
-			const load=(tab:WorkspaceTab)=>{
-				if(rendered.has(tab))return;
+			const load=(tab:WorkspaceTab,retry=false)=>{
+				if(signal.aborted || rendered.has(tab))return;
 				rendered.add(tab);
 				const content=panels[tab];
+				content.empty();
+				if(retry)content.focus();
 				const loading=content.createEl('p',{cls:'kb-workspace-meta',text:tr('正在读取 Git 状态…','Reading Git status…'),attr:{role:'status'}});
-				const work=tab==='changes'?sourcePanel(this.plugin,lib,content,this.drafts,signal):
-					networkPanel(this.plugin,lib,content,(icon,action)=>{if(!signal.aborted)this.networkActions.set(icon,action);});
-				const done=work.catch(error=>{
-					if(!signal.aborted)content.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});
+				const attempt=new AbortController();
+				const body=content.createDiv();
+				const actions=new Map<string,()=>Promise<void>>();
+				if(tab==='remote')this.networkActions.clear();
+				const work=tab==='changes'?sourcePanel(this.plugin,lib,body,this.drafts,AbortSignal.any([signal,attempt.signal])):
+					networkPanel(this.plugin,lib,body,(icon,action)=>actions.set(icon,action));
+				const done=work.then(()=>{
+					if(tab==='remote' && !signal.aborted)this.networkActions=actions;
+				}).catch(error=>{
+					attempt.abort();
+					if(signal.aborted)return;
+					rendered.delete(tab);
+					body.remove();
+					const label=tab==='remote'?tr('无法读取远端和分支。若仓库正在合并，请切换到「更改」复核。','Could not read remotes and branches. Open Changes to review a merge in progress.'):
+						tr('无法读取工作区状态。','Could not read the working tree status.');
+					content.createEl('p',{cls:'kb-git-error',text:label,attr:{role:'alert'}});
+					const details=content.createEl('details',{cls:'kb-v3-detail'});
+					details.createEl('summary',{text:tr('错误详情','Error details')});
+					details.createEl('p',{cls:'kb-git-error',text:String(error)});
+					new ButtonComponent(content).setButtonText(tr('重试','Retry')).onClick(()=>load(tab,true));
 				}).finally(()=>{
 					loading.remove();
 					if(tab==='changes' && !signal.aborted && selection?.id===id)

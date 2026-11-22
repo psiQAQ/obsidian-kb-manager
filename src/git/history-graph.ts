@@ -127,20 +127,30 @@ export interface GraphRow {
 	parents:Rail[];
 }
 
+export const historyTrackColors=8;
+
 /** The frontier contains the parents expected by rows above the next commit. */
 export class HistoryLanes {
 	private active:Lane[]=[];
 	private nextColor=0;
+	private allocateColor(lanes:Lane[]){
+		const used=new Set(lanes.map(lane=>lane.color%historyTrackColors));
+		let color=this.nextColor++;
+		if(used.size<historyTrackColors){
+			while(used.has(color%historyTrackColors))color=this.nextColor++;
+		}
+		return color;
+	}
 	append(commit:GraphCommit):GraphRow {
 		const before=this.active;
 		const found=before.findIndex(t=>t.oid===commit.oid);
 		const lane=found<0?before.length:found;
-		const color=before[lane]?.color??this.nextColor++;
+		const color=before[lane]?.color??this.allocateColor(before);
 		const after=before.filter(t=>t.oid!==commit.oid);
 		let insert=lane;
 		for(const [index,oid] of commit.parents.entries()){
 			if(after.some(t=>t.oid===oid))continue;
-			after.splice(insert++,0,{oid,color:index===0?color:this.nextColor++});
+			after.splice(insert++,0,{oid,color:index===0?color:this.allocateColor(after)});
 		}
 		const rail=(from:number,oid:string):Rail=>{
 			const to=after.findIndex(t=>t.oid===oid);

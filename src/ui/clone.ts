@@ -34,7 +34,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager,owner:Window=activeWindo
 		const auth=password?{username:username||'git',password}:undefined;
 		const target=await cloneTarget(plugin.disk,plugin.config,request);
 		const confirm=new V3Dialog(plugin.app,t('确认下载知识库','Confirm library download'),owner);
-		confirm.facts([[t('远端仓库','Remote repository'),target.display],[t('Vault 内位置','Location in vault'),target.relative+'/']]);
+		confirm.facts([[t('远端仓库','Remote repository'),target.display],[t('仓库内位置','Location in vault'),target.relative+'/']]);
 		confirm.contentEl.createEl('p',{text:t('先下载到临时目录，再检查文件、选择身份并导入。',
 			'Download to a temporary folder, then inspect files and select an identity before importing.')});
 		if(target.warnings.length)confirm.lines(target.warnings);
@@ -54,7 +54,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager,owner:Window=activeWindo
 				}
 			}
 			const preview=new ImportPreview(plugin.app,t('导入知识库','Import library'));
-			preview.facts([[t('Vault 内位置','Location in vault'),target.relative+'/'],
+			preview.facts([[t('仓库内位置','Location in vault'),target.relative+'/'],
 				[t('分支与提交','Branch and commit'),clone.branch+' · '+clone.head]]);
 			const files=preview.contentEl.createEl('details',{cls:'kb-v3-detail'});
 			files.createEl('summary',{text:t('下载的文件','Downloaded files')+' ('+clone.files.length+')'});

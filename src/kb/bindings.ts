@@ -28,7 +28,7 @@ export function rebind(source:string,previous:string,destination:string) {
 			const nodes=isSeq(conditions)?conditions.items.filter(isScalar):[];
 			const matches=nodes.filter(n=>n.value===old);
 			if(matches.length!==1 || !matches[0]?.range){
-				if(nodes.filter(n=>n.value===value).length!==1)manual.push((scope.view??tr('总过滤器','Global filter'))+'：'+old);
+				if(nodes.filter(n=>n.value===value).length!==1)manual.push((scope.view??tr('总过滤器','Global filter'))+tr('：',': ')+old);
 				continue;
 			}
 			if(old===value)continue;

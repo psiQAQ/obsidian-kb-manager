@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {initializeRepository} from '../src/git/repository.ts';
-import {GraphHistory, HistoryLanes, historyRefKey, historyTips, historyWorktree, snapshotHistory} from '../src/git/history-graph.ts';
+import {GraphHistory, HistoryLanes, historyRefKey, historyTips, historyTrackColors, historyWorktree, snapshotHistory} from '../src/git/history-graph.ts';
 import {history} from '../src/git/versions.ts';
 import {committedComparison} from '../src/git/index-history.ts';
 import {historyWindow,historyRowHeight} from '../src/ui/history-window.ts';
@@ -116,4 +116,29 @@ test('deep history retains native topological order and a bounded rendered windo
 	const {start,end}=historyWindow(1400*historyRowHeight,16*historyRowHeight,graph.rows.length);
 	assert.deepEqual([start,end],[1390,1426]);
 	assert.deepEqual(historyWindow(0,10*historyRowHeight,3),{start:0,end:3});
+
+	const interrupted=new GraphHistory(dir,graph.snapshot);
+	await interrupted.load(140);
+	let active=true;
+	const pending=interrupted.load(total+1,()=>active);
+	active=false;
+	await pending;
+	assert.equal(interrupted.rows.length,940,'only the already running page finishes after cancellation');
+	assert.equal(interrupted.complete,false);
+	await interrupted.load(1100);
+	assert.deepEqual(interrupted.rows,graph.rows.slice(0,1100));
+});
+
+test('active history lanes keep distinct palette slots and preserve each continuing rail color',()=>{
+	const layout=new HistoryLanes();
+	const append=(oid,parents=[])=>layout.append({oid,parents,author:'',timestamp:0,message:''});
+	const parents=Array.from({length:historyTrackColors},(_,i)=>'branch-'+i);
+	const first=append('merge',parents);
+	assert.equal(new Set(first.parents.map(rail=>rail.color%historyTrackColors)).size,historyTrackColors);
+
+	const released=append(parents[3]);
+	const replacement=append('unrelated',['another-parent']);
+	assert.equal(replacement.color%historyTrackColors,released.color%historyTrackColors);
+	assert.notEqual(replacement.color,released.color);
+	assert.deepEqual(replacement.rails.map(rail=>rail.color),released.rails.map(rail=>rail.color));
 });

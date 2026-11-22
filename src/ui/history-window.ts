@@ -11,6 +11,7 @@ export function historyWindow(scrollTop:number,height:number,count:number) {
 export class HistoryWindow {
 	private readonly list:HTMLElement;
 	private readonly createRow:(index:number)=>HTMLButtonElement;
+	private readonly baseLabel:string;
 	private readonly approachingEnd:()=>void;
 	private readonly top:HTMLElement;
 	private readonly rows:HTMLElement;
@@ -20,12 +21,13 @@ export class HistoryWindow {
 	private frame=0;
 	private count=0;
 	private selected=-1;
+	private base='';
 	private focusIndex=0;
 
 	constructor(
-		list:HTMLElement,createRow:(index:number)=>HTMLButtonElement,approachingEnd:()=>void,
+		list:HTMLElement,createRow:(index:number)=>HTMLButtonElement,baseLabel:string,approachingEnd:()=>void,
 	){
-		this.list=list;this.createRow=createRow;this.approachingEnd=approachingEnd;
+		this.list=list;this.createRow=createRow;this.baseLabel=baseLabel;this.approachingEnd=approachingEnd;
 		this.top=list.createDiv({attr:{'aria-hidden':'true'}});
 		this.rows=list.createDiv();
 		this.bottom=list.createDiv({attr:{'aria-hidden':'true'}});
@@ -46,8 +48,9 @@ export class HistoryWindow {
 		this.paint();
 	}
 
-	mark(index:number){
+	mark(index:number,base:string){
 		this.selected=index;
+		this.base=base;
 		if(index>=0)this.focusIndex=index;
 		this.paint();
 	}
@@ -62,6 +65,7 @@ export class HistoryWindow {
 	}
 
 	focusVisible(){
+		this.paint();
 		for(const node of this.mounted.values())if(node.tabIndex===0){node.focus({preventScroll:true});return;}
 		this.list.focus({preventScroll:true});
 	}
@@ -81,12 +85,17 @@ export class HistoryWindow {
 		this.top.setCssProps({height:start*historyRowHeight+'px'});
 		this.bottom.setCssProps({height:(this.count-end)*historyRowHeight+'px'});
 		const next=new Map<number,HTMLButtonElement>();
-		const tabStop=this.focusIndex>=start && this.focusIndex<end?this.focusIndex:
-			Math.max(start,Math.floor(this.list.scrollTop/historyRowHeight));
+		const visibleStart=Math.floor(this.list.scrollTop/historyRowHeight);
+		const visibleEnd=Math.ceil((this.list.scrollTop+this.list.clientHeight)/historyRowHeight);
+		const tabStop=this.focusIndex>=visibleStart && this.focusIndex<visibleEnd?this.focusIndex:visibleStart;
 		for(const [index,node] of this.mounted)if(index<start || index>=end)node.remove();
 		for(let index=start;index<end;index++){
 			const node=this.mounted.get(index)??this.createRow(index);
 			node.setAttribute('aria-pressed',String(index===this.selected));
+			const base=!!this.base && node.dataset.oid===this.base;
+			node.toggleAttribute('data-comparison-base',base);
+			if(base)node.setAttribute('aria-description',this.baseLabel);
+			else node.removeAttribute('aria-description');
 			node.tabIndex=index===tabStop?0:-1;
 			if(!node.parentElement)this.rows.insertBefore(node,this.rows.children[index-start]??null);
 			next.set(index,node);

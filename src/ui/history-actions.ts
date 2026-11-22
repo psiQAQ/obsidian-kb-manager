@@ -165,15 +165,21 @@ export function showHistoryMenu(options:HistoryMenuOptions){
 		addHistoryRemoteActions({plugin,id,dir,ref,add,modal,confirm,checkWrite});
 		if(!oid) add(t('贮藏未提交的改动','Stash uncommitted changes'),'archive',async()=>{
 			await checkWrite();
-			const form=modal(t('贮藏未提交的改动','Stash uncommitted changes'));let include=false,message='';
-			new Setting(form.contentEl).setName(t('包含未跟踪的文件','Include untracked files')).addToggle(toggle=>toggle.onChange(value=>{include=value;}));
-			form.text(t('贮藏说明','Stash message'),'',value=>{message=value;});
-			form.action(t('预览贮藏','Preview stash'),async()=>{
-				const plan=await graphStashSavePlan(dir,include),description=message;
-				const label=t('贮藏这些改动','Stash these changes'),review=modal(label);
-				review.facts([[t('当前分支','Current branch'),plan.branch+' · '+plan.head]]);review.lines(plan.files);
-				confirm(review,label,()=>saveGraphStash(dir,plan,description));form.close();review.open();
-			}).setCta();form.open();
+			const edit=(include=false,message='')=>{
+				const form=modal(t('贮藏未提交的改动','Stash uncommitted changes'));
+				new Setting(form.contentEl).setName(t('包含未跟踪的文件','Include untracked files'))
+					.addToggle(toggle=>toggle.setValue(include).onChange(value=>{include=value;}));
+				form.text(t('贮藏说明','Stash message'),message,value=>{message=value;});
+				form.action(t('预览贮藏','Preview stash'),async()=>{
+					const untracked=include,description=message;
+					const plan=await graphStashSavePlan(dir,untracked);
+					const label=t('贮藏这些改动','Stash these changes'),review=modal(label);
+					review.facts([[t('当前分支','Current branch'),plan.branch+' · '+plan.head]]);review.lines(plan.files);
+					review.action(t('返回编辑','Back to edit'),()=>{review.close();edit(untracked,description);return Promise.resolve();});
+					confirm(review,label,()=>saveGraphStash(dir,plan,description));form.close();review.open();
+				}).setCta();form.open();
+			};
+			edit();
 		});
 		if(ref?.kind==='stash'){
 			const labels={apply:t('应用贮藏','Apply stash'),pop:t('应用并移除贮藏','Pop stash'),drop:t('删除贮藏','Drop stash'),branch:t('从贮藏创建分支','Create branch from stash')};

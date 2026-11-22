@@ -15,6 +15,7 @@ import { auditLibrary } from '../src/kb/audit.ts';
 import {instanceManifestSeed} from '../src/kb/template-declaration.ts';
 import { readMapping } from '../src/kb/mapping.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
+import { setLanguage } from '../src/i18n.ts';
 
 async function setup(t) {
 	await fs.mkdir('.tmp',{recursive:true});
@@ -362,4 +363,30 @@ test('parent repository exposure appears in preview without modifying its index'
 	assert.match((await ancestorWarnings(disk,'knowledge-base/ignored'))[0],/目标已被忽略/);
 	assert.match((await ancestorWarnings(disk,'knowledge-base/fresh'))[0],/未被忽略/);
 	assert.deepEqual(await fs.readFile(index),previous);
+});
+
+test('English creation appends check instructions and preserves template-authored text',async t=>{
+	const {root,disk,config,input,skeleton}=await setup(t);
+	setLanguage('en');
+	t.after(()=>setLanguage('zh'));
+	const source=path.join(root,'样板');
+	await fs.mkdir(path.join(source,'checks'),{recursive:true});
+	const original='\uFEFF# 作者原文\r\n\r\n保留已有正文。\r\n';
+	await fs.writeFile(path.join(source,'README.md'),original);
+	await fs.writeFile(path.join(source,'kb-template.json'),JSON.stringify({
+		id:'example',version:'1',
+		checks:[{id:'example-check',name:'作者定义的检验',description:'作者写的说明',path:'checks/example.mjs'}],
+	}));
+	await fs.writeFile(path.join(source,'checks','example.mjs'),'export default () => [];\n');
+	execFileSync('git',['-C',root,'init','-q','-b','parent']);
+	const preview=await previewCreate(disk,config,{...input,source:'样板'},skeleton);
+	assert.deepEqual(preview.warnings,['Parent repository /: destination is not ignored']);
+	const result=await createLibrary(disk,config,preview,skeleton);
+	const readme=await fs.readFile(path.join(result.path,'README.md'),'utf8');
+	assert.ok(readme.startsWith(original+'\r\n## Check this library\r\n'));
+	assert.match(readme,/`example-check` · 作者定义的检验 \(作者写的说明\)/u);
+	assert.doesNotMatch(readme,/检验本库|[（）]/u);
+	assert.equal(await fs.readFile(path.join(source,'README.md'),'utf8'),original);
+	const list=execFileSync(process.execPath,['./checks/kb-check.cjs','--library','.','--list'],{cwd:result.path,encoding:'utf8'});
+	assert.equal(JSON.parse(list).checks[0].id,'example-check');
 });
