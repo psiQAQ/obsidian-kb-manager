@@ -34,6 +34,7 @@ export function dependencyLabel(dependency:TemplateDependency) {
 
 export type TemplateChoice = Pick<PackDescriptor,'name'|'description'|'purpose'|'purposes'|'dependencies'|'sources'> & {
 	source:string;
+	id?:string;
 	entry?:string;
 	personal?:boolean;
 	invalid?:string;

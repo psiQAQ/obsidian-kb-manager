@@ -2,7 +2,7 @@ import { parse, stringify } from 'smol-toml';
 import { tr } from '../i18n.ts';
 
 type Address = (string|number)[];
-type Value = string|number|boolean|string[];
+type Value = string|number|boolean|string[]|number[];
 interface Assignment { address:Address; start:number; end:number; lineStart:number; lineEnd:number; comment:number }
 interface Edit { start:number; end:number; content:string }
 

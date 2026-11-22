@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { VaultDisk, statIfPresent } from '../fs/vault.ts';
 import type { Mapping } from './mapping.ts';
 import type { GitPreferences } from '../preferences.ts';
+import type {TemplateFileRecord} from './template-file-record.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import { registryCandidate } from '../registry/discovery.ts';
 
@@ -15,6 +16,7 @@ export * from './identity-core.ts';
 export interface Library {
 	location: string; identity?: Identity; mapping?: Mapping; problem?: string; duplicate?: boolean;
 	git: 'local' | 'missing' | 'special'; signature?: string; missing?: boolean; preferences?: Partial<GitPreferences>;
+	templateFiles?:TemplateFileRecord;
 }
 export interface Config { parents: string[]; templates: string[] }
 export const defaults: Config = { parents:[], templates:[] };

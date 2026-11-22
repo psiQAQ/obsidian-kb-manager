@@ -19,6 +19,7 @@ import { builtinPacks } from '../kb/template-pack.ts';
 import { checkLibrary } from './v3-health.ts';
 import { createPanelTabs } from './panel-tabs.ts';
 import { captureInputSelection } from './input-selection.ts';
+import { updateTemplateFiles } from './template-update.ts';
 
 export const managerType='knowledge-base-manager-view';
 type WorkspaceTab='changes'|'remote';
@@ -226,6 +227,7 @@ export class ManagerView extends ItemView {
 			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib,owner));
 			action(tr('检验','Check library'),'activity',()=>checkLibrary(this.plugin,lib));
 			action(tr('维护受管文件','Maintain managed files'),'file-cog',()=>maintainBindings(this.plugin,lib,owner));
+			if(lib.templateFiles && !lib.identity?.archived)action(tr('更新受管模板文件','Update template files'),'package-check',()=>updateTemplateFiles(this.plugin,lib,owner));
 			if(lib.identity?.schemaVersion===1 && !lib.identity.archived)action(tr('预览清单升级','Preview manifest upgrade'),'file-up',()=>upgradeManifest(this.plugin,lib,owner));
 			action(tr('预览登记及路径绑定','Preview registration and bindings'),'map-pin',()=>showImportPreview(this.plugin,lib.location,undefined,undefined,owner));
 			action(tr('移除登记','Remove registration'),'list-x',()=>removeRegistryEntry(this.plugin,lib.location,owner));

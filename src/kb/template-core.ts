@@ -11,6 +11,7 @@ import { parseDocument, isScalar } from 'yaml';
 export interface TemplateFile { name: string; bytes: Uint8Array }
 export interface Template {
 	id: string; version: string; entry?: string;
+	managedFiles?:string[];
 	suggestedExcludedFolders?:string[];
 	paths?:Record<string,string>; rootSlots?: Record<string, number[]>; overview?: boolean; files: TemplateFile[]; folders: string[]; excluded: string[];
 }
@@ -58,8 +59,8 @@ export function kepanoTemplate(skeleton:Record<string,string>, root:string):Temp
 	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^README\.v[12]\.md$/u.test(name)));
 	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(bundledText(name,text))}));
 	files.push(builtinAttributesFile());
-	const suggestedExcludedFolders=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']).suggestedExcludedFolders:undefined;
-	return {id:'kepano',version:'5',entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders};
+	const {suggestedExcludedFolders,managedFiles}=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']):{};
+	return {id:'kepano',version:'5',entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders,managedFiles};
 }
 
 export function renderBase(source: string, root: string): string {
@@ -81,7 +82,7 @@ export function renderBase(source: string, root: string): string {
 }
 
 export function builtinTemplate(skeleton: Record<string,string>, vars: Variables): Template {
-	const {paths,suggestedExcludedFolders}=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']):{};
+	const {paths,suggestedExcludedFolders,managedFiles}=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']):{};
 	const files = Object.entries(skeleton).filter(([name])=>name!=='kb.toml' || !paths).map(([name, text]) => {
 		if (name === 'README.md') text = text.replace(/\{\{kb_name\}\}|\{\{description\}\}/gu,
 			token => token === '{{kb_name}}' ? vars.displayName : vars.description);
@@ -89,7 +90,7 @@ export function builtinTemplate(skeleton: Record<string,string>, vars: Variables
 		return { name, bytes: new TextEncoder().encode(bundledText(name,text)) };
 	});
 	files.push(builtinAttributesFile());
-	return { id:'llm-wiki', version:wikiVersion, paths, entry:'wiki/index.md', files, folders:[], excluded:[], suggestedExcludedFolders };
+	return { id:'llm-wiki', version:wikiVersion, paths, entry:'wiki/index.md', files, folders:[], excluded:[], suggestedExcludedFolders,managedFiles };
 }
 
 export const excludedNames = new Set(['.git',defaultConfigDir,'.log','.cache','.venv','__pycache__','node_modules']);

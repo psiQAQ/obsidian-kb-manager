@@ -6,6 +6,8 @@ import type { GitPreferences } from '../preferences.ts';
 import { mappingFromPaths } from './mapping.ts';
 import { TomlEdits } from './toml-edit.ts';
 import { exclusionFolders } from './template-exclusions.ts';
+import {validateManagedPath} from './template-file-record.ts';
+import type {TemplateFileRecord} from './template-file-record.ts';
 
 export const identityFile = 'kb.toml';
 export interface ManagedFile { path: string; fingerprint: string; root?: string; offsets?:number[]; role?: 'overview-bindings' | 'kepano-bindings' | 'template-root' }
@@ -36,6 +38,21 @@ export function parseCheckKit(input:unknown):CheckKitRecord {
 		return [path,digest];
 	});
 	return {protocol:1,version:value.version,digests:Object.fromEntries(entries)};
+}
+
+function parseTemplateFiles(input:unknown):TemplateFileRecord{
+	const value=table(input),digests=table(value?.digests);
+	const invalid=()=>new Error(tr('受管模板文件记录无效','Invalid managed template file record'));
+	if(typeof value?.version!=='string' || !value.version.trim() || !digests)throw invalid();
+	const paths=new Set<string>();
+	const entries=Object.entries(digests).map(([file,digest]):[string,string]=>{
+		validateManagedPath(file);
+		const key=file.normalize('NFC').toLowerCase();
+		if(typeof digest!=='string' || !/^[a-f0-9]{64}$/u.test(digest) || paths.has(key))throw invalid();
+		paths.add(key);
+		return [file,digest];
+	});
+	return {version:value.version,digests:Object.fromEntries(entries)};
 }
 
 function manager(input:unknown):Identity {
@@ -110,6 +127,7 @@ export function readManifest(raw:string) {
 		mapping,
 		preferences:readGit(preferences),
 		...(data.checkKit!==undefined && {checkKit:parseCheckKit(data.checkKit)}),
+		...(data.templateFiles!==undefined && {templateFiles:parseTemplateFiles(data.templateFiles)}),
 	};
 }
 
@@ -143,12 +161,30 @@ export function writeIdentity(raw:string, identity:Identity) {
 				const value=next.managed[index]?.[field];
 				if(value!==binding[field])changes.field(['manager','managed',index],field,value);
 			}
+			const offsets=next.managed[index]?.offsets;
+			if(JSON.stringify(offsets)!==JSON.stringify(binding.offsets))changes.field(['manager','managed',index],'offsets',offsets);
 		}
 		if(next.managed.length>current.managed.length)
 			changes.append(stringify({manager:{managed:next.managed.slice(current.managed.length)}}));
 	}
 	const output=changes.finish();
 	parseIdentity(output);
+	return output;
+}
+
+export function writeTemplateFileRecord(raw:string,record:TemplateFileRecord){
+	const current=readManifest(raw).templateFiles;
+	const next=parseTemplateFiles({...record,digests:{...current?.digests,...record.digests}});
+	const changes=new TomlEdits(raw);
+	if(!current)changes.append(stringify({templateFiles:{...next}}));
+	else {
+		if(current.version!==next.version)changes.field(['templateFiles'],'version',next.version);
+		for(const [file,digest] of Object.entries(next.digests)){
+			if(current.digests[file]!==digest)changes.field(['templateFiles','digests'],file,digest);
+		}
+	}
+	const output=changes.finish();
+	readManifest(output);
 	return output;
 }
 

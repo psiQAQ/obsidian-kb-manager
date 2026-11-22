@@ -6,7 +6,7 @@ import {tr} from '../i18n.ts';
 import {initialCommitOptions} from '../git/initial-options.ts';
 import type {InitialOptions} from '../git/initial-options.ts';
 import {assertUnreservedLibraryPath,libraryDestination,validateRegistryPath,vaultPath} from '../registry/paths.ts';
-import {identityFile,readManifest,withLibraryIgnores,writeCheckKit,writeIdentity} from '../kb/identity-core.ts';
+import {identityFile,readManifest,withLibraryIgnores,writeCheckKit,writeIdentity,writeTemplateFileRecord} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import {addCreationCheckKit,assertCreationFilesTracked} from '../kb/check-kit-creation.ts';
 import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
@@ -18,6 +18,7 @@ import {initializeMobileGit,previewInitialFiles,verifyInitialCommit} from './cre
 import {effectiveAuthor} from './git.ts';
 import type {Author} from './git.ts';
 import {endpoint} from './http.ts';
+import {declaredTemplateFiles} from '../kb/template-file-record.ts';
 
 export {discoverMobile,verifyLibrary} from './registration.ts';
 export type {Catalog,Library} from './registration.ts';
@@ -78,7 +79,7 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 	await scan(root);
 	verifyDeclaration(spec,files.map(file=>file.name),folders);
 	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,rootSlots,paths:spec.paths,excluded,
-		entry:spec.entry,overview:!!spec.managed?.length,suggestedExcludedFolders:spec.suggestedExcludedFolders};
+		entry:spec.entry,overview:!!spec.managed?.length,suggestedExcludedFolders:spec.suggestedExcludedFolders,managedFiles:spec.managedFiles};
 }
 export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,id:string=crypto.randomUUID()){
 	const location=await destination(ctx,input.parent,input.name,true);
@@ -174,7 +175,12 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:input.source?'overview-bindings':undefined});
 	}
 	const asset=template.files.find(file=>file.name===identityFile);
-	const manifest=writeCheckKit(writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity),confirmed.checkKit);
+	let manifest=writeCheckKit(writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity),confirmed.checkKit);
+	const managed=declaredTemplateFiles(template);
+	if(managed.length){
+		const digests=Object.fromEntries(await Promise.all(managed.map(async file=>[file.name,await hash(file.bytes)] as const)));
+		manifest=writeTemplateFileRecord(manifest,{version:template.version,digests});
+	}
 	const manifestPath=location+'/'+identityFile;
 	const verified=async()=>{
 		if(await ctx.disk.read(manifestPath)!==manifest)throw new Error(tr('目标清单已变化','The destination manifest changed')+' · '+manifestPath);

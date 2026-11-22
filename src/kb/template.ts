@@ -54,5 +54,5 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 	verifyDeclaration(spec,files.map(file=>file.name),folders);
 	return { id:spec.id ?? 'folder', version:spec.version ?? digest(JSON.stringify([spec,folders,sourceFiles])),
 		paths:spec.paths, overview:!!spec.managed?.length, entry:spec.entry, rootSlots, files, folders, excluded,
-		suggestedExcludedFolders:spec.suggestedExcludedFolders };
+		suggestedExcludedFolders:spec.suggestedExcludedFolders,managedFiles:spec.managedFiles };
 }

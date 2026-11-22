@@ -14,7 +14,7 @@ import { VaultDisk, digest, key, statIfPresent } from '../fs/vault.ts';
 import { headOid, repository } from '../git/repository.ts';
 import { commitInitialRepository, initialConfig, previewInitialRepository, reviewInitialRepository, verifyInitialRepository } from '../git/initial.ts';
 import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial.ts';
-import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeCheckKit, writeIdentity } from './catalog.ts';
+import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeCheckKit, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
 import type { CheckKitRecord, Config, Library } from './catalog.ts';
 import { addCreationCheckKit, assertCreationFilesTracked } from './check-kit-creation.ts';
 import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
@@ -22,6 +22,7 @@ import type { Template } from './template.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { registerVaultLibrary, validateLibraryLocation } from '../registry/discovery.ts';
 import { assertUnreservedLibraryPath, libraryDestination } from '../registry/paths.ts';
+import {declaredTemplateFiles} from './template-file-record.ts';
 
 export interface CreateInput {
 	parent: string; name: string; displayName: string; description: string; source: string;
@@ -95,9 +96,10 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	if(ignore)ignore.bytes=bytes;
 	else template.files.push({name:'.gitignore',bytes});
 	const checkKit=await addCreationCheckKit(template,digest);
+	const digests=Object.fromEntries(declaredTemplateFiles(template).map(file=>[file.name,digest(file.bytes)]));
 	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,checkKit,
-		template.files.map(file=>[file.name,digest(file.bytes)])]));
-	return {input,location,template,signature,warnings,checkKit};
+		template.files.map(file=>[file.name,digest(file.bytes)]),digests]));
+	return {input,location,template,signature,warnings,checkKit,digests};
 }
 
 async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>,excludedFolders?:string[]){
@@ -126,7 +128,9 @@ async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof descr
 				role:input.source?'overview-bindings':undefined});
 		}
 	}
-	const raw=writeCheckKit(writeIdentity(original || instanceManifestSeed(template),manifest),creation.checkKit);
+	let raw=writeCheckKit(writeIdentity(original || instanceManifestSeed(template),manifest),creation.checkKit);
+	if(Object.keys(creation.digests).length)
+		raw=writeTemplateFileRecord(raw,{version:template.version,digests:creation.digests});
 	await fs.writeFile(path.join(dir,identityFile),raw,{flag:'wx'});
 	return {manifest,manifestSignature:digest(raw)};
 }

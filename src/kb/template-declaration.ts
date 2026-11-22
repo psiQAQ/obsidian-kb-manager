@@ -4,6 +4,7 @@ import { tr } from '../i18n.ts';
 import { exclusionFolders } from './template-exclusions.ts';
 import {validMinimum} from './template-requirements.ts';
 import type {TemplateRequirements} from './template-requirements.ts';
+import {validateManagedPath} from './template-file-record.ts';
 
 export interface CheckDeclaration {id:string; name:string; path:string; description?:string; linkEvidence?:boolean}
 export interface TemplateSource {url:string; author:string; commit:string; license:string; path?:string}
@@ -38,11 +39,8 @@ export function declaration(raw:string):Declaration {
 		const files=data.managedFiles;
 		if(new Set(files.map(file=>file.normalize('NFC').toLowerCase())).size!==files.length)bad('managedFiles');
 		if(files.length && (!data.id || !data.version))bad('managedFiles require id and version');
-		for(const file of files){
-			segments(file);
-			if(/^(?:checks\/|kb-template\.json$|kb\.toml$|kb-manager\.json$)/iu.test(file) ||
-				!/\.(?:md|base|canvas|txt|json|ya?ml|css)$/iu.test(file))bad('managedFiles.'+file);
-		}
+		for(const file of files)validateManagedPath(file);
+		if(Array.isArray(data.managed) && files.some(file=>file.toLowerCase()==='knowledge.base'))bad('managedFiles.knowledge.base');
 	}
 	if('dependencies' in data){
 		if(!Array.isArray(data.dependencies))bad('dependencies');
