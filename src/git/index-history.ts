@@ -7,6 +7,7 @@ import {statIfPresent} from '../fs/paths.ts';
 import {guardGit} from './guard.ts';
 import {gitResult} from './network-native.ts';
 import {fields,headOid,readCommit} from './repository.ts';
+import {withIndexCopy} from './index-transaction.ts';
 
 export type HistorySide = {kind:'commit';oid:string}|{kind:'empty'}|{kind:'working'};
 type CommittedSide = Exclude<HistorySide,{kind:'working'}>;
@@ -111,9 +112,9 @@ const options=['--raw','--no-abbrev','--no-ext-diff','--no-textconv','--find-ren
 const treeish=(side:CommittedSide)=>side.kind==='commit'?side.oid:emptyTree;
 
 async function workingDeltas(dir:string,before:CommittedSide,followUntrackedRenames=true) {
-	const [raw,untracked]=await Promise.all([
-		gitResult(dir,['diff',...options,treeish(before),'--']),
-		gitResult(dir,['ls-files','--others','--exclude-standard','-z']),
+	const [raw,untracked]=await withIndexCopy(dir,async indexFile=>[
+		await gitResult(dir,['-c','diff.autoRefreshIndex=true','diff',...options,treeish(before),'--'],{indexFile}),
+		await gitResult(dir,['ls-files','--others','--exclude-standard','-z'],{indexFile}),
 	]);
 	const extras=new Set(fields(untracked.stdout));
 	const files=new Map<string,HistoryFile>();

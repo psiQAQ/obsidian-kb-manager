@@ -3,6 +3,31 @@ import { join } from 'node:path';
 import { statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 
+async function copyIndex(index:string,candidate:string){
+	const old=await statIfPresent(index);
+	if(!old)return;
+	if(!old.isFile() || old.nlink!==1)throw new Error(tr('需要独立的 Git 索引文件','Expected an ordinary unlinked Git index'));
+	await fs.copyFile(index,candidate);
+	// Git uses the index mtime to decide when same-size worktree files need rehashing.
+	// Round down so copying the index never advances that cutoff.
+	await fs.utimes(candidate,old.atime,Math.floor(old.mtimeMs / 1000));
+	return old;
+}
+
+/** Git can refresh stat data during diff. Keep that refresh outside the live index. */
+export async function withIndexCopy<T>(dir:string,action:(indexFile:string)=>Promise<T>){
+	const gitdir=join(dir,'.git'),temporary=await fs.mkdtemp(join(gitdir,'kb-index-view-'));
+	const candidate=join(temporary,'index');
+	try{
+		await copyIndex(join(gitdir,'index'),candidate);
+		return await action(candidate);
+	}finally{
+		await fs.rm(candidate,{force:true});
+		await fs.rm(candidate+'.lock',{force:true});
+		await fs.rmdir(temporary);
+	}
+}
+
 // Git's index.lock reserves the real index. Git commands build a candidate in
 // a separate file so a failed batch cannot partly overwrite staged changes.
 export async function withIndex<T>(dir:string,action:(indexFile:string,locks:Set<string>,publish:()=>Promise<void>)=>Promise<T>){
@@ -15,14 +40,8 @@ export async function withIndex<T>(dir:string,action:(indexFile:string,locks:Set
 	};
 	try{
 		temporary=await fs.mkdtemp(join(gitdir,'kb-index-'));
-		const candidate=join(temporary,'index'),old=await statIfPresent(index);
-		if(old){
-			await fs.copyFile(index,candidate);
-			// Git uses the index mtime to decide when same-size worktree files need rehashing.
-			// Round down so copying the index never advances that cutoff.
-			await fs.utimes(candidate,old.atime,Math.floor(old.mtimeMs / 1000));
-			await handle.chmod(old.mode&0o777);
-		}
+		const candidate=join(temporary,'index'),old=await copyIndex(index,candidate);
+		if(old)await handle.chmod(old.mode&0o777);
 		return await action(candidate,new Set([lockPath]),async()=>{
 			const stat=await fs.stat(candidate);
 			await handle.writeFile(await fs.readFile(candidate));

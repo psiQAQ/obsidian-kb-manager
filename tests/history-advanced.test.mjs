@@ -52,7 +52,14 @@ test('graph previews bind bytes, keep local management files and restore only th
 	await assert.rejects(advancedPreview(dir,{action:'attach',oid:tip,ref:'refs/heads/main'}));
 	await assert.rejects(advancedPreview(dir,{action:'restore',oid:tip,file:'note.md'}));
 	await write('note.md',checkedOut);
-	await execute({action:'attach',oid:tip,ref:'refs/heads/main'});assert.equal(git('branch','--show-current'),'main');
+	// Changed stat data with identical contents must not produce a different confirmation signature.
+	const mtime=new Date('2024-01-01T00:00:00Z');
+	await fs.utimes(path.join(dir,'note.md'),mtime,mtime);
+	assert.deepEqual(await compareHistory(dir,before,after),[]);
+	assert.deepEqual(await fs.readFile(path.join(dir,'.git','index')),index);
+	const attach=await advancedPreview(dir,{action:'attach',oid:tip,ref:'refs/heads/main'});
+	assert.deepEqual(await fs.readFile(path.join(dir,'.git','index')),index);
+	await applyAdvanced(dir,attach);assert.equal(git('branch','--show-current'),'main');
 });
 
 test('graph operations preview paths and recover a conflicting cherry-pick',async t=>{

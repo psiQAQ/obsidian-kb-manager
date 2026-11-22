@@ -9,7 +9,7 @@ import { gitResult } from './network-native.ts';
 import { fields,headOid,readCommit } from './repository.ts';
 import { checkedIdentityArgs,readRepositoryIdentity } from './identity.ts';
 import type { GitIdentity, IdentityValue } from './identity.ts';
-import { withIndex } from './index-transaction.ts';
+import { withIndex,withIndexCopy } from './index-transaction.ts';
 
 export interface Change {file:string;head:number;work:number;stage:number;fingerprint?:string;workBytes?:number}
 export interface VersionPreview {
@@ -30,7 +30,8 @@ export async function previewVersion(dir:string,ownLocks:ReadonlySet<string>=new
 	// Porcelain can report a stat-only M after an editor saves a CRLF file as LF.
 	// Ask Git for the actual index-to-worktree diff, keeping staged changes separate.
 	const modified=records.some(record=>record[1]==='M')
-		? new Set(fields((await gitResult(dir,['diff','--numstat','-z','--no-renames','--no-ext-diff','--no-textconv','--'])).stdout)
+		? new Set(fields((await withIndexCopy(dir,indexFile=>gitResult(dir,
+			['-c','diff.autoRefreshIndex=true','diff','--numstat','-z','--no-renames','--no-ext-diff','--no-textconv','--'],{indexFile}))).stdout)
 			.map(line=>line.slice(line.indexOf('\t',line.indexOf('\t')+1)+1)))
 		: undefined;
 	for(const record of records){

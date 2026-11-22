@@ -13,6 +13,7 @@ import type {Credentials} from './network.ts';
 import {gitResult} from './network-native.ts';
 import {address} from './network-http.ts';
 import {fields,headOid,readCommit} from './repository.ts';
+import {withIndexCopy} from './index-transaction.ts';
 
 export type AdvancedAction = 'cherry-pick'|'revert'|'drop'|'soft'|'mixed'|'hard'|'clean'|'restore'|
 	'detach'|'attach'|'force-push'|'continue'|'abort'|'resolve';
@@ -38,10 +39,16 @@ export async function advancedPreview(dir:string,request:AdvancedRequest,credent
 	}
 	const index=await fs.readFile(join(dir,'.git','index'));
 	const config=await fs.readFile(join(dir,'.git','config'));
-	const tracked=await list(dir,['diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z','HEAD','--']);
-	const staged=await list(dir,['diff','--cached','--no-renames','--name-only','-z','HEAD','--']);
-	const untracked=await list(dir,['ls-files','--others','--exclude-standard','-z']);
-	const unstaged=await list(dir,['diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z','--']);
+	const {tracked,staged,untracked,unstaged}=await withIndexCopy(dir,async indexFile=>{
+		const read=async(args:string[])=>fields((await gitResult(dir,args,{indexFile})).stdout);
+		const diff=['-c','diff.autoRefreshIndex=true','diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z'];
+		return {
+			tracked:await read([...diff,'HEAD','--']),
+			staged:await read([...diff,'--cached','HEAD','--']),
+			untracked:await read(['ls-files','--others','--exclude-standard','-z']),
+			unstaged:await read([...diff,'--']),
+		};
+	});
 	const changed=[...new Set([...tracked,...staged,...unstaged,...untracked])].sort();
 	const bytes:string[]=[];
 	for(const name of changed){
