@@ -66,6 +66,7 @@ const updateLabels = {
 	current:['最新','Up to date'],replace:['可更新','Ready to update'],add:['可添加','Ready to add'],
 	modified:['已修改，需人工合并','Edited · merge manually'],missing:['已缺失，保留现状','Missing · left as is'],
 	unavailable:['无法读取，需人工检查','Unavailable · review manually'],
+	blocked:['等待复核配套文件','Companion file needs review'],
 } as const;
 
 export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location: string, refresh: () => Promise<void>) {
@@ -75,10 +76,12 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 	dialog.facts([[tr('知识库','Library'),location]]);
 	changeComparison(dialog.contentEl,[{label:tr('检验工具版本','Check kit version'),before:plan.installedVersion,
 		after:plan.targetVersion,afterLabel:plan.canApply?undefined:tr('插件提供版本','Bundled version')}]);
+	const files = [...plan.files,...plan.courseworkFiles];
 	if (plan.downgrade) dialog.contentEl.createEl('p',{text:tr('此知识库已安装更新的检验工具包。','This library has a newer check kit installed.')});
-	else if (plan.files.some(file => file.change === 'modified' || file.change === 'missing' || file.change === 'unavailable'))
+	else if (files.some(file => file.change === 'modified' || file.change === 'missing' || file.change === 'unavailable'))
 		dialog.contentEl.createEl('p',{text:tr('已修改、缺失或无法读取的文件需要人工处理。','Review edited, missing, or unavailable files manually.')});
-	for (const file of plan.files) {
+	for (const file of files) {
+		if (file === plan.courseworkFiles[0]) dialog.contentEl.createEl('h3',{text:tr('课程与截止日检查','Course and due date check')});
 		const entry = dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
 		const heading = entry.createEl('summary');
 		heading.createSpan({text:file.path});
@@ -87,21 +90,22 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 		if (file.reason) entry.createEl('p',{text:file.reason});
 		const fingerprints: [string,string][] = [];
 		if (file.installedDigest) fingerprints.push([tr('本地 SHA-256','Local SHA-256'),file.installedDigest]);
-		fingerprints.push([tr('官方 SHA-256','Bundled SHA-256'),file.targetDigest]);
+		if (file.targetDigest) fingerprints.push([tr('更新后 SHA-256','Updated SHA-256'),file.targetDigest]);
 		const facts = entry.createEl('dl',{cls:'kb-preview-facts'});
 		for (const [label,value] of fingerprints) {
 			facts.createEl('dt',{text:label});
 			facts.createEl('dd',{text:value});
 		}
-		if (file.change === 'current') continue;
+		const after = file.after;
+		if (file.change === 'current' || after === undefined) continue;
 		const reviewContents=()=>{
 			if (!entry.open) return;
 			entry.removeEventListener('toggle',reviewContents);
 			const applies=plan.canApply && (file.change==='add' || file.change==='replace');
 			const before=file.before ?? (file.change==='unavailable'?tr('无法读取文件','File unavailable'):
 				file.installedDigest?tr('无法显示为 UTF-8 文本','Unavailable as UTF-8 text'):tr('文件缺失','File missing'));
-			changeComparison(entry,[{label:tr('文件内容','File content'),before,after:file.after,code:true,
-				afterLabel:applies?undefined:tr('内置候选内容','Bundled candidate')}]);
+			changeComparison(entry,[{label:tr('文件内容','File content'),before,after,code:true,
+				afterLabel:applies?undefined:tr('候选内容','Proposed content')}]);
 		};
 		entry.addEventListener('toggle',reviewContents);
 	}

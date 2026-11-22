@@ -6,8 +6,10 @@ import {digest, statIfPresent} from '../fs/vault.ts';
 import type {VaultDisk} from '../fs/vault.ts';
 import {tr} from '../i18n.ts';
 import {checkKitFiles, checkKitVersion} from './check-kit.ts';
+import {courseworkDeclaration, courseworkLinkDeclaration, courseworkScript, courseworkTemplate, previousCourseworkDigests} from './coursework-check.ts';
 import {identityFile, readManifest, writeCheckKit} from './identity-core.ts';
 import {readManifestFile, replaceLibraryManifest} from './manifest-disk.ts';
+import {officialCheckDigests, packText} from './template-pack.ts';
 
 const byteLimit = 1024 * 1024;
 
@@ -44,15 +46,20 @@ async function readKitFile(disk: VaultDisk, location: string, name: string): Pro
 	} finally { await file.close(); }
 }
 
-type Change = 'current' | 'add' | 'replace' | 'modified' | 'missing' | 'unavailable';
+type Change = 'current' | 'add' | 'replace' | 'modified' | 'missing' | 'unavailable' | 'blocked';
 interface KitFile {
 	path: string;
 	change: Change;
 	before?: string;
-	after: string;
+	after?: string;
 	installedDigest?: string;
-	targetDigest: string;
+	targetDigest?: string;
 	reason?: string;
+}
+type EligibleFile = KitFile & {change: 'current' | 'add' | 'replace'; after: string; targetDigest: string};
+
+function eligible(file: KitFile): file is EligibleFile {
+	return (file.change === 'current' || file.change === 'add' || file.change === 'replace') && file.after !== undefined && !!file.targetDigest;
 }
 
 export interface CheckKitUpdate {
@@ -63,6 +70,7 @@ export interface CheckKitUpdate {
 	canApply: boolean;
 	downgrade: boolean;
 	files: KitFile[];
+	courseworkFiles: KitFile[];
 }
 
 function changed(name: string) {
@@ -79,37 +87,73 @@ function versionIsNewer(installed: string, bundled: string) {
 	return false;
 }
 
+async function inspectKitFile(disk: VaultDisk, location: string, path: string): Promise<KitFile> {
+	try {
+		const file = await readKitFile(disk, location, path);
+		if (file.digest === undefined) return {path,change:'missing'};
+		let before: string | undefined;
+		if (!file.bytes.includes(0)) {
+			try { before = new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(file.bytes); }
+			catch { /* Keep binary copies available for manual merge. */ }
+		}
+		return {path,change:'modified',before,installedDigest:file.digest};
+	} catch (error) {
+		return {path,change:'unavailable',reason:String(error)};
+	}
+}
+
+function candidate(file: KitFile, after: string, change: Change): KitFile {
+	const targetDigest = digest(after);
+	if (file.installedDigest === targetDigest) return {...file,change:'current',before:undefined,after,targetDigest};
+	return {...file,change,after,targetDigest};
+}
+
+async function previewCourseworkFiles(disk: VaultDisk, location: string, version: string): Promise<KitFile[]> {
+	const source = packText(courseworkTemplate)[courseworkScript];
+	if (!source || !officialCheckDigests().includes(digest(source))) return [];
+	const [script, descriptor] = await Promise.all([
+		inspectKitFile(disk,location,courseworkScript),inspectKitFile(disk,location,courseworkDeclaration),
+	]);
+	const nextScript = candidate(script,source,script.installedDigest && previousCourseworkDigests.includes(script.installedDigest) ? 'replace' : script.change);
+	let after: string | undefined;
+	if (descriptor.before !== undefined) {
+		try { after = courseworkLinkDeclaration(descriptor.before,version); }
+		catch { /* The library's declaration needs manual review. */ }
+	}
+	const nextDescriptor = after === undefined ? descriptor : candidate(descriptor,after,'replace');
+	const files = [nextScript,nextDescriptor];
+	if (files.every(eligible)) return files;
+	return files.map(file => {
+		if (file.change !== 'replace') return file;
+		const paired = file === nextScript ? courseworkDeclaration : courseworkScript;
+		return {...file,change:'blocked',reason:tr('请先检查配套文件','Review the companion file first') + ' · ' + paired};
+	});
+}
+
 export async function previewCheckKitUpdate(disk: VaultDisk, location: string): Promise<CheckKitUpdate | undefined> {
 	const filename = await disk.path(location + '/' + identityFile);
 	if (!await statIfPresent(filename)) return;
 	const manifest = await readManifestFile(filename);
-	const kit = readManifest(manifest.raw).checkKit;
+	const {checkKit:kit, identity} = readManifest(manifest.raw);
 	if (!kit) return;
-	const files = await Promise.all(Object.entries(checkKitFiles()).map(async ([path, after]): Promise<KitFile> => {
-		const targetDigest = digest(after);
-		try {
-			const file = await readKitFile(disk, location, path);
-			const installedDigest = file.digest;
+	const [files, courseworkFiles] = await Promise.all([
+		Promise.all(Object.entries(checkKitFiles()).map(async ([path, after]) => {
+			const file = await inspectKitFile(disk, location, path);
 			const recorded = kit.digests[path];
-			const change = installedDigest === targetDigest ? 'current' : file.digest === undefined ? (recorded ? 'missing' : 'add') :
-				installedDigest === recorded ? 'replace' : 'modified';
-			let before: string | undefined;
-			if (file.digest !== undefined && change !== 'current' && !file.bytes.includes(0)) {
-				try { before = new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(file.bytes); }
-				catch { /* Keep binary copies available for manual merge. */ }
-			}
-			return {path,change,before,after,installedDigest,targetDigest};
-		} catch (error) {
-			return {path,change:'unavailable',after,targetDigest,reason:String(error)};
-		}
-	}));
+			return candidate(file,after,recorded && file.installedDigest === recorded ? 'replace' :
+				file.change === 'missing' && !recorded ? 'add' : file.change);
+		})),
+		identity?.template.id === courseworkTemplate ? previewCourseworkFiles(disk,location,identity.template.version) : [],
+	]);
 	const downgrade = versionIsNewer(kit.version,checkKitVersion);
 	const canApply = !downgrade && (files.some(file => file.change === 'add' || file.change === 'replace') ||
-		files.some(file => file.change === 'current' && (kit.version !== checkKitVersion || kit.digests[file.path] !== file.targetDigest)));
-	return {location,manifestDigest:manifest.signature,installedVersion:kit.version,targetVersion:checkKitVersion,canApply,downgrade,files};
+		files.some(file => file.change === 'current' && (kit.version !== checkKitVersion || kit.digests[file.path] !== file.targetDigest)) ||
+		courseworkFiles.some(file => file.change === 'replace'));
+	return {location,manifestDigest:manifest.signature,installedVersion:kit.version,targetVersion:checkKitVersion,canApply,downgrade,files,courseworkFiles};
 }
 
-async function publishKitFile(disk: VaultDisk, location: string, file: KitFile) {
+async function publishKitFile(disk: VaultDisk, location: string,
+	file: Pick<EligibleFile,'path'|'change'|'after'|'installedDigest'>) {
 	const relative = location + '/' + file.path;
 	const output = await disk.path(relative);
 	if (file.change === 'add') {
@@ -130,28 +174,66 @@ async function publishKitFile(disk: VaultDisk, location: string, file: KitFile) 
 	} finally { await rm(temporary, {force:true}); }
 }
 
+async function assertFileDigest(disk: VaultDisk, location: string, file: KitFile, expected: string | undefined) {
+	if ((await readKitFile(disk,location,file.path)).digest !== expected) throw changed(file.path);
+}
+
+async function applyCourseworkFiles(disk: VaultDisk, location: string, files: KitFile[]) {
+	const [script, descriptor] = files;
+	if (!script || !descriptor || !eligible(script) || !eligible(descriptor)) return;
+	await assertFileDigest(disk,location,script,script.installedDigest);
+	await assertFileDigest(disk,location,descriptor,descriptor.installedDigest);
+	if (script.change === 'replace') await publishKitFile(disk,location,script);
+	try {
+		await assertFileDigest(disk,location,script,script.targetDigest);
+		if (descriptor.change === 'replace') await publishKitFile(disk,location,descriptor);
+	} catch (error) {
+		if (script.change === 'replace' && script.before !== undefined) {
+			try {
+				const installed = descriptor.change === 'replace' ? await readKitFile(disk,location,descriptor.path).catch(() => undefined) : undefined;
+				const current = await readKitFile(disk,location,script.path);
+				if (installed?.digest !== descriptor.targetDigest && current.digest === script.targetDigest) await publishKitFile(disk,location,{
+					path:script.path,change:'replace',installedDigest:script.targetDigest,after:script.before,
+				});
+			} catch (rollback) {
+				throw new AggregateError([error,rollback],tr('课程检查文件更新中断，请重新预览。',
+					'The course check update was interrupted. Preview again.'));
+			}
+		}
+		throw error;
+	}
+	await assertFileDigest(disk,location,script,script.targetDigest);
+	await assertFileDigest(disk,location,descriptor,descriptor.targetDigest);
+}
+
+function matchesApproval(files: KitFile[], approved: KitFile[]) {
+	return files.length === approved.length && files.every((file,index) => {
+		const seen = approved[index];
+		if (!seen || file.path !== seen.path || file.targetDigest !== seen.targetDigest) return false;
+		if (file.change === 'current' && (seen.change === 'replace' || seen.change === 'add')) return true;
+		return file.change === seen.change && file.installedDigest === seen.installedDigest;
+	});
+}
+
 export async function applyCheckKitUpdate(disk: VaultDisk, location: string, approved: CheckKitUpdate) {
 	if (approved.location !== location || !approved.canApply) throw changed(location);
 	const plan = await previewCheckKitUpdate(disk, location);
 	if (!plan || plan.downgrade || plan.manifestDigest !== approved.manifestDigest || plan.targetVersion !== approved.targetVersion ||
-		plan.files.length !== approved.files.length || plan.files.some((file,index) => {
-			const seen = approved.files[index];
-			if (!seen || file.path !== seen.path || file.targetDigest !== seen.targetDigest) return true;
-			if (file.change === 'current' && (seen.change === 'replace' || seen.change === 'add')) return false;
-			return file.change !== seen.change || file.installedDigest !== seen.installedDigest;
-		})) throw changed(location);
+		!matchesApproval(plan.files,approved.files) || !matchesApproval(plan.courseworkFiles,approved.courseworkFiles)) throw changed(location);
 	const manifest = await readManifestFile(await disk.path(location + '/' + identityFile));
 	const kit = readManifest(manifest.raw).checkKit;
 	if (!kit || plan.manifestDigest !== manifest.signature) throw changed(location);
 	const digests = {...kit.digests};
-	const managed = plan.files.filter(file => file.change === 'current' || file.change === 'replace' || file.change === 'add');
+	const managed = plan.files.filter(eligible);
 	for (const file of managed) digests[file.path] = file.targetDigest;
 	const next = writeCheckKit(manifest.raw, {...kit,version:plan.targetVersion,digests});
 	for (const file of managed) {
 		if (file.change === 'replace' || file.change === 'add') await publishKitFile(disk, location, file);
 	}
-	for (const file of managed) {
-		if ((await readKitFile(disk, location, file.path)).digest !== file.targetDigest) throw changed(file.path);
+	if (plan.courseworkFiles.some(file => file.change === 'replace')) {
+		if ((await readManifestFile(await disk.path(location+'/'+identityFile))).signature !== plan.manifestDigest) throw changed(identityFile);
+		await applyCourseworkFiles(disk,location,plan.courseworkFiles);
 	}
+	for (const file of managed) await assertFileDigest(disk,location,file,file.targetDigest);
 	await replaceLibraryManifest(disk, location, plan.manifestDigest, next);
 }

@@ -76,7 +76,7 @@ const negative = {
 	'media-tracker': ['Media/远岸电台.md', { progress:7 }, 'invalid-media-progress'],
 	'knowledge-garden': ['Guides/如何记录检索失败.md', { related:[`[[${root}/Drafts/内部提纲]]`] }, 'sharing-private-reference'],
 	'technology-radar': ['Radar/本地全文索引.md', { adoption_reason:'' }, 'radar-adoption-unsupported'],
-	'coursework': ['Courses/实验入门/Assignments/图表作业.md', { due:'2026-02-30' }, 'assignment-schedule-invalid'],
+	'coursework': ['Courses/实验入门/Assignments/图表作业.md', { due:'2026-02-30' }, 'assignment-due-invalid'],
 	'exam-practice': ['Practice/读时间复杂度.md', { attempts:[] }, 'retry-record-missing'],
 	'gtd': ['Actions/等待确认取样时间.md', { follow_up:'' }, 'waiting-follow-up-missing'],
 	'project-review': ['Archives/公开说明.md', {}, 'archived-project-open-task', '\n- [ ] 漏做的行动'],
@@ -92,8 +92,10 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 30);
+	assert.equal(digests.length, 31);
 	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
+	assert.ok(digests.includes('0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601'), 'coursework v1 stays trusted');
+	assert.ok(digests.includes('9dafdf6d9f9c35aee095e8671fb6abd123fc8d2275781e25c3b363e828492e13'), 'coursework v2/v3 stay trusted');
 	assert.ok(digests.includes('811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20'), 'LLM Wiki v6 stays trusted');
 	assert.ok(digests.includes('6bc3cc10b5e931db171727b903ad6ce0d54ca0fb65f0373e995b6e3400ab22cf'), 'Kepano v5 stays trusted');
 	const purposes = new Map();

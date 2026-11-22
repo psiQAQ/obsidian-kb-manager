@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {declaration,verifyDeclaration} from '../src/kb/template-declaration.ts';
+import {previousCourseworkDigests} from '../src/kb/coursework-check.ts';
 import {segments} from '../src/fs/segments.ts';
 
 export function templateCatalog(root){
@@ -11,7 +12,7 @@ export function templateCatalog(root){
 		// Earlier checkers continue to be trusted for existing library instances.
 		'4cfce7c700ad14cb9e0b28c575d7158243c99cc12e11372fb137fe4d500dff63', // ai-worklog v1
 		'811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20', // llm-wiki v6
-		'0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601', // coursework v1
+		...previousCourseworkDigests,
 		'127ac61fe3c08d92fd482c1d8c4c70025e141634dcd432ad106eb5ef5d80eb00', // domain-reading v1
 		'5cf311c9f4bd3b9c063cc4028f930ba602302e5128e468bdc7342eefa31a103c', // zettelkasten v1
 		'a74bcdacab2e21ce1380a4c79bce9d3016f44336be4c5ccb0e5b6499a5b7b2ac', // research-evidence v1
