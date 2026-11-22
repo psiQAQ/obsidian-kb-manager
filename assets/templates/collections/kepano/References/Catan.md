@@ -1,6 +1,6 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Board games]]"
+  - "[[../Categories/Board games]]"
 type: []
 maker:
 rating: 7

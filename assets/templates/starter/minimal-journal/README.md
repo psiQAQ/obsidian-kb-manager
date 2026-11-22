@@ -6,7 +6,7 @@
 
 ## 日记和札记
 
-![[{{kb_root}}/Views/Notes.base]]
+![[./Views/Notes.base]]
 
 从 [一条日记](./Journal/2026-09-07.md) 走到 [相关札记](./Notes/2026/图书馆札记.md)。
 

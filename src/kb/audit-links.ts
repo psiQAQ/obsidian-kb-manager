@@ -17,6 +17,7 @@ interface LinkInput {
 interface Target {file:string; fragment:string}
 const outsideAbsolute=(name:string)=>/^(?:\/|[A-Za-z]:)|[\\\0]/u.test(name);
 const outside=(file:string)=>file==='..' || file.startsWith('../') || outsideAbsolute(file);
+const explicitRelative=(file:string)=>/^\.\.?\//u.test(file);
 const inside=(file:string,folder:string)=>file.startsWith(folder+'/');
 const withExtension=(file:string,files:ReadonlySet<string>)=>!files.has(file) && files.has(file+'.md') ? file+'.md' : file;
 
@@ -34,7 +35,12 @@ export function markdownTarget(from:string,url:string,files:ReadonlySet<string>)
 export function referenceTarget(from:string,value:string,location:string,files:ReadonlySet<string>):string|undefined {
 	const wiki=/^\[\[([^\]\n]+)\]\]$/u.exec(value.trim());
 	if(wiki){
-		const name=wiki[1]!.split(/[|#]/u)[0]!.trim(), full=path.normalize(name);
+		const name=wiki[1]!.split(/[|#]/u)[0]!.trim();
+		if(explicitRelative(name)){
+			const relative=path.join(path.dirname(from),name);
+			return outside(relative) ? undefined : withExtension(relative,files);
+		}
+		const full=path.normalize(name);
 		if(!outsideAbsolute(name) && inside(full,location))return withExtension(full.slice(location.length+1),files);
 		return;
 	}
@@ -108,7 +114,9 @@ export async function checkLinks({location,mapping,files,notes,parsed,readBody,r
 			const raw=match[1]!.split('|')[0]!.replace(/\\$/u,'').trim();
 			const hash=raw.indexOf('#'),name=hash<0?raw:raw.slice(0,hash),fragment=hash<0?'':raw.slice(hash+1);
 			let target=from;
-			if(name.includes('/') || outsideAbsolute(name)){
+			if(explicitRelative(name)){
+				target=withExtension(path.join(path.dirname(from),name),files);
+			}else if(name.includes('/') || outsideAbsolute(name)){
 				const full=path.normalize(name);
 				if(outsideAbsolute(name) || !inside(full,location)){
 					report(level,'cross-kb-link',from,tr('Wiki 链接越出当前库 ','Wikilink outside selected library: ')+name);continue;
@@ -116,7 +124,7 @@ export async function checkLinks({location,mapping,files,notes,parsed,readBody,r
 				target=withExtension(full.slice(location.length+1),files);
 			}else if(name){
 				if(strict){
-					report('error','ambiguous-wikilink',from,tr('知识页链接须含 Vault 相对路径 ','Use a vault-relative wikilink: ')+name);continue;
+					report('error','ambiguous-wikilink',from,tr('知识页双链须写出明确路径 ','Use an explicit path in the wikilink: ')+name);continue;
 				}
 				short.add(name);
 				const matches=byName.get(name) ?? byName.get(name+'.md') ?? [];

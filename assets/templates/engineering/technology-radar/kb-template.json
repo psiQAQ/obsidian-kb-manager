@@ -1,6 +1,6 @@
 {
   "id": "technology-radar",
-  "version": "2",
+  "version": "3",
   "name": "技术雷达",
   "description": "用评估、试用、采用和暂缓记录工具选型及证据。",
   "purpose": "engineering",
@@ -12,9 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
     "Views/Radar.base": [
       "kb_root"
     ]

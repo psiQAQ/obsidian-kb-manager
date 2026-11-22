@@ -3,4 +3,4 @@ tags:
   - categories
 ---
 
-![[__KB_ROOT__/Templates/Bases/Products.base]]
+![[../Templates/Bases/Products.base]]

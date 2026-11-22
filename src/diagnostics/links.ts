@@ -127,7 +127,7 @@ export function linkResolver(options: EvidenceOptions, inventory: Inventory, roo
 	async function resolve(file: string, link: LinkRequest): Promise<LinkResolution> {
 		signal?.throwIfAborted();
 		if (link.fragment?.startsWith('##')) return {status: 'unknown', reason: tr('链接搜索依赖 Obsidian 的全 Vault 索引。','This search link depends on Obsidian’s vault-wide index.')};
-		const {target, fragment, syntax, canvasPath} = link;
+		const {target, fragment, canvasPath} = link;
 		if (options.resolveLink) {
 			try {
 				const found = await options.resolveLink(link);
@@ -140,7 +140,7 @@ export function linkResolver(options: EvidenceOptions, inventory: Inventory, roo
 				return found;
 			} catch {signal?.throwIfAborted(); return {status: 'unknown'};}
 		}
-		const explicit = syntax === 'markdown' && /^(?:\.\.?\/)/u.test(target);
+		const explicit = !canvasPath && /^\.\.?\//u.test(target);
 		let candidate: string;
 		if (!target) candidate = file;
 		else if (explicit) candidate = path.normalize(path.join(path.dirname(file), target));

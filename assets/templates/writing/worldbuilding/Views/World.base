@@ -11,12 +11,12 @@ views:
     filters:
       and:
         - type == "world-character" || type == "world-place" || type == "world-faction" || type == "world-event" || type == "world-culture" || type == "world-belief" || type == "world-item"
+    groupBy:
+      property: type
+      direction: ASC
     order:
       - file.name
       - type
       - role
       - faction
       - location
-    groupBy:
-      property: type
-      direction: ASC

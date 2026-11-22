@@ -6,7 +6,7 @@
 
 ## 当前选型
 
-![[{{kb_root}}/Views/Radar.base]]
+![[./Views/Radar.base]]
 
 
 

@@ -3,4 +3,4 @@ tags:
   - categories
 ---
 
-![[__KB_ROOT__/Templates/Bases/Board games.base]]
+![[../Templates/Bases/Board games.base]]

@@ -227,6 +227,21 @@ test('offline ignores literal examples, checks explicit local paths and does not
 	assert.deepEqual(codes(result(report,'anchors')),['dynamic-block-skipped','missing-anchor']);
 });
 
+test('offline resolves relative wikilinks in properties and Base embeds', async t => {
+	const {options,put} = await fixture(t);
+	await put('Views/Journal.base','views:\n  - type: table\n    name: Local View\n');
+	await put('notes/example.md', [
+		'---','refs: ["[[./target|Local note]]"]','---',
+		'![[../Views/Journal.base#Local View]]','![[../Views/missing.base]]','[[../../same/target]]',
+	].join('\n'));
+	const report = await runDiagnostics({...options, selected:['links','anchors','portability']});
+	const links = result(report,'links');
+	assert.deepEqual(links.diagnostics.map(({code,line}) => [code,line]),[['missing-attachment',5],['unverified-link',6]]);
+	assert.deepEqual(links.coverage,{checked:3,skipped:0,unknown:1});
+	assert.deepEqual(result(report,'anchors').coverage,{checked:1,skipped:0,unknown:0});
+	assert.deepEqual(result(report,'portability').diagnostics,[]);
+});
+
 test('scan gaps affect checks that need to read the file', async t => {
 	const {options,put} = await fixture(t);
 	const selected = ['manifest','properties','links','anchors','canvas','bases','bindings','portability'];

@@ -6,7 +6,7 @@
 
 ## 设定实体
 
-![[{{kb_root}}/Views/World.base]]
+![[./Views/World.base]]
 
 ## 人物与阵营
 

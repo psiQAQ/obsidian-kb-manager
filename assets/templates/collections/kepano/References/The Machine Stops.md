@@ -1,15 +1,15 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Books]]"
+  - "[[../Categories/Books]]"
 author:
-  - "[[__KB_ROOT__/References/E. M. Forster]]"
+  - "[[./E. M. Forster]]"
 cover:
 genre:
-  - "[[__KB_ROOT__/References/Sci-fi]]"
+  - "[[./Sci-fi]]"
 year: 1909
 rating: 7
 topics:
-  - "[[__KB_ROOT__/References/Humanism]]"
+  - "[[./Humanism]]"
 created: 2023-09-12
 last: 2023-09-12
 tags:

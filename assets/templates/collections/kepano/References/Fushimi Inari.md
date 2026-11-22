@@ -1,12 +1,12 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Places]]"
+  - "[[../Categories/Places]]"
 type:
-  - "[[__KB_ROOT__/References/Parks]]"
-  - "[[__KB_ROOT__/References/Shrines]]"
+  - "[[./Parks]]"
+  - "[[./Shrines]]"
 loc:
-  - "[[__KB_ROOT__/References/Kyoto]]"
-  - "[[__KB_ROOT__/References/Japan]]"
+  - "[[./Kyoto]]"
+  - "[[./Japan]]"
 rating: 7
 created: 2023-09-12
 coordinates:

@@ -4,9 +4,9 @@ tags:
 ---
 ## Favorites
 
-![[__KB_ROOT__/Templates/Bases/Movies.base#Favorites]]
+![[../Templates/Bases/Movies.base#Favorites]]
 
 
 ## Last seen
 
-![[__KB_ROOT__/Templates/Bases/Movies.base#Last seen]]
+![[../Templates/Bases/Movies.base#Last seen]]

@@ -11,12 +11,12 @@ views:
     filters:
       and:
         - type == "review-project"
-    order:
-      - file.name
-      - status
     groupBy:
       property: status
       direction: ASC
+    order:
+      - file.name
+      - status
   - type: table
     name: 周期笔记
     filters:

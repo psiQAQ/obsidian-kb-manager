@@ -11,13 +11,13 @@ views:
     filters:
       and:
         - type == "research-project"
+    groupBy:
+      property: status
+      direction: ASC
     order:
       - file.name
       - status
       - evidence
-    groupBy:
-      property: status
-      direction: ASC
   - type: table
     name: 研究记录
     filters:

@@ -11,6 +11,9 @@ views:
     filters:
       and:
         - type == "chapter"
+    groupBy:
+      property: manuscript
+      direction: ASC
     order:
       - file.name
       - manuscript
@@ -19,6 +22,3 @@ views:
     sort:
       - property: chapter
         direction: ASC
-    groupBy:
-      property: manuscript
-      direction: ASC

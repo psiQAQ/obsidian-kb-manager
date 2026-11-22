@@ -6,7 +6,7 @@
 
 ## 工作卡与决策
 
-![[{{kb_root}}/Views/Work.base]]
+![[./Views/Work.base]]
 
 
 

@@ -1,8 +1,8 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Companies]]"
-  - "[[__KB_ROOT__/References/Apps]]"
+  - "[[../Categories/Companies]]"
+  - "[[./Apps]]"
 type:
-  - "[[__KB_ROOT__/References/Apps]]"
+  - "[[./Apps]]"
 url: https://obsidian.md/
 ---

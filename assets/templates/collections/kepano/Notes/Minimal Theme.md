@@ -1,14 +1,14 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Projects]]"
+  - "[[../Categories/Projects]]"
 type:
-  - "[[__KB_ROOT__/References/UI]]"
+  - "[[../References/UI]]"
 org:
-  - "[[__KB_ROOT__/References/Obsidian]]"
+  - "[[../References/Obsidian]]"
 year: 2020
 url: https://minimal.guide
 status:
-  - "[[__KB_ROOT__/References/Active]]"
+  - "[[../References/Active]]"
 ---
 ## To-do
 

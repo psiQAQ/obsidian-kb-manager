@@ -4,7 +4,7 @@
 
 ## 复做队列
 
-![[{{kb_root}}/Views/Practice.base]]
+![[./Views/Practice.base]]
 
 
 

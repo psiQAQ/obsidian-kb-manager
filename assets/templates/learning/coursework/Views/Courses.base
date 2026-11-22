@@ -11,12 +11,12 @@ views:
     filters:
       and:
         - type == "course"
-    order:
-      - file.name
-      - status
     groupBy:
       property: status
       direction: ASC
+    order:
+      - file.name
+      - status
   - type: table
     name: 已排期作业
     filters:

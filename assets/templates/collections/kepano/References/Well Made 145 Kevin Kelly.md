@@ -1,9 +1,9 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Podcast episodes]]"
-show: "[[__KB_ROOT__/References/Well Made]]"
+  - "[[../Categories/Podcast episodes]]"
+show: "[[./Well Made]]"
 guests:
-  - "[[__KB_ROOT__/References/Kevin Kelly]]"
+  - "[[./Kevin Kelly]]"
 topics: []
 episode: "145"
 rating: 7

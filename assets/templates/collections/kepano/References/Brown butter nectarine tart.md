@@ -1,15 +1,15 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Recipes]]"
-  - "[[__KB_ROOT__/Categories/Clippings]]"
+  - "[[../Categories/Recipes]]"
+  - "[[../Categories/Clippings]]"
 cuisine:
-  - "[[__KB_ROOT__/References/American]]"
+  - "[[./American]]"
 type:
-  - "[[__KB_ROOT__/References/Dessert]]"
+  - "[[./Dessert]]"
 ingredients:
-  - "[[__KB_ROOT__/References/Nectarine]]"
+  - "[[./Nectarine]]"
 author:
-  - "[[__KB_ROOT__/References/Steph Ango]]"
+  - "[[./Steph Ango]]"
 url: https://stephango.com/brown-butter-nectarine-tart
 servings: 8 slices (11 inch tart)
 rating: 7

@@ -1,6 +1,6 @@
 {
   "id": "exam-practice",
-  "version": "1",
+  "version": "2",
   "name": "专题备考与错题复做",
   "description": "按专题训练题型，记录错因和复做结果。",
   "purpose": "learning",
@@ -12,12 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Practice/读时间复杂度.md": [
-      "kb_root"
-    ],
     "Views/Practice.base": [
       "kb_root"
     ]

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {checkIndex,checkLinks} from '../src/kb/audit-links.ts';
+import {checkIndex,checkLinks,referenceTarget} from '../src/kb/audit-links.ts';
 import {checkOperations} from '../src/kb/audit-operations.ts';
 import {parseMarkdown,candidates,contains,sourceBody} from '../src/kb/audit-markdown.ts';
 
@@ -69,6 +69,15 @@ test('intentional human links are reviewable; custom templates have no LLM Wiki 
 	assert.ok(result.findings.some(([level,code])=>level==='error'&&code==='ambiguous-wikilink'));
 	const custom=await run({'wiki/p.md':'[[photo]]'},['raw/photo.md'],['wiki/p.md'],false);
 	assert.deepEqual(custom.findings,[['review','human-wikilink-scope','wiki/p.md']]);
+});
+
+test('explicit relative wikilinks resolve against their source and stay within the library',async()=>{
+	const source='wiki/p.md', local='raw/本地.md', outside='../../B/raw/本地';
+	const {findings,reads}=await run({[source]:`[[../raw/本地#A B!|原件]] [[${outside}#A B!]]`},[local]);
+	assert.deepEqual(reads,[local]);
+	assert.deepEqual(findings,[['error','cross-kb-link',source]]);
+	assert.equal(referenceTarget(source,'[[../raw/本地#A B!|原件]]','knowledge-base/A',new Set([local])),local);
+	assert.equal(referenceTarget(source,`[[${outside}]]`,'knowledge-base/A',new Set([local])),undefined);
 });
 
 test('No material accepts the Raw line in a real ingest record, including reference definitions',async()=>{

@@ -1,6 +1,6 @@
 {
   "id": "coursework",
-  "version": "2",
+  "version": "3",
   "name": "课程学习",
   "description": "用课程结构管理课堂、讲义、作业和截止日期。",
   "purpose": "learning",
@@ -13,15 +13,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Courses/实验入门/Lectures/第一课.md": [
-      "kb_root"
-    ],
-    "Courses/实验入门/Assignments/图表作业.md": [
-      "kb_root"
-    ],
     "Integrations/建立课程结构.md": [
       "kb_root"
     ],

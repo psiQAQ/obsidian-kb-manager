@@ -6,7 +6,7 @@
 
 ## 章节顺序
 
-![[{{kb_root}}/Views/Chapters.base]]
+![[./Views/Chapters.base]]
 
 
 

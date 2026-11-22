@@ -1,6 +1,6 @@
 {
   "id": "minimal-journal",
-  "version": "2",
+  "version": "3",
   "name": "日记与知识札记",
   "description": "日记保留当天经过，札记按年归档并关联想法。",
   "purpose": "starter",
@@ -13,9 +13,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
     "Integrations/归档当前札记.md": [
       "kb_root"
     ],

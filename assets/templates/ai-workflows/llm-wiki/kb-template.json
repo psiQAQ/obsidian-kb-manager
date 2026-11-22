@@ -1,6 +1,6 @@
 {
   "id": "llm-wiki",
-  "version": "7",
+  "version": "8",
   "name": "融合 LLM Wiki",
   "description": "保存资料原件，建立可追溯的知识页、索引和操作日志。",
   "purpose": "ai-workflows",

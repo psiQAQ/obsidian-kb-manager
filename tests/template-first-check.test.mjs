@@ -102,8 +102,9 @@ test('first general and specialized checks find no errors in newly created libra
 				assert.equal(offline.environment,'offline');
 				assert.ok(offline.logPath,offline.logError);
 				const workflow = offline.checks.find(check=>check.id==='workflow');
-				assert.ok(workflow?.diagnostics.some(row=>row.code==='assignment-course-unverified'),data);
-				assert.ok(workflow.coverage.unknown > 0,data);
+				assert.deepEqual(workflow?.diagnostics,[],data);
+				assert.equal(workflow.coverage.checked,1,data);
+				assert.equal(offline.checks.find(check=>check.id==='links')?.status,'passed',data);
 				assert.ok(offline.checks.every(check=>check.status!=='failed'),data);
 			}
 			const {paths:registeredPaths} = await readVaultRegistry(disk);

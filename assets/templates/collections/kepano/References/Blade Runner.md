@@ -1,13 +1,13 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Movies]]"
+  - "[[../Categories/Movies]]"
 cover:
 genre:
-  - "[[__KB_ROOT__/References/Sci-fi]]"
+  - "[[./Sci-fi]]"
 director:
-  - "[[__KB_ROOT__/References/Ridley Scott]]"
+  - "[[./Ridley Scott]]"
 cast:
-  - "[[__KB_ROOT__/References/Harrison Ford]]"
+  - "[[./Harrison Ford]]"
 rating: 7
 year: 1982
 last: 2023-09-14

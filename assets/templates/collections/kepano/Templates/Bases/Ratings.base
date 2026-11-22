@@ -20,7 +20,7 @@ views:
       - last
       - categories
     sort:
-      - column: note.last
+      - property: last
         direction: DESC
     columnSize:
       file.name: 238
@@ -35,6 +35,6 @@ views:
       - last
       - categories
     sort:
-      - column: note.last
+      - property: last
         direction: DESC
     limit: 100

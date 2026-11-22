@@ -6,7 +6,7 @@
 
 ## 课题与记录
 
-![[{{kb_root}}/Views/Research.base]]
+![[./Views/Research.base]]
 
 
 

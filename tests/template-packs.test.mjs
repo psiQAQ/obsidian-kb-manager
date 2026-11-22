@@ -29,7 +29,7 @@ const directory = new URL('../assets/templates/', import.meta.url);
 const { packs, digests } = templateCatalog(fileURLToPath(directory));
 globalThis.KB_TEMPLATE_PACKS = packs;
 const { renderPack } = await import('../src/kb/template-pack.ts');
-const { renderKepano } = await import('../src/kb/kepano.ts');
+const { kepanoTemplate } = await import('../src/kb/template-core.ts');
 const root = 'Libraries/测试库 + 样例';
 const other = 'Libraries/他库';
 const decoder = new TextDecoder();
@@ -40,7 +40,9 @@ const checkers = {
 };
 
 function instance(id, destination = root) {
-	return Object.fromEntries(renderPack(id, { destination, displayName:'测试库', description:'实例验证' }).files
+	const template = id === 'kepano' ? kepanoTemplate(packs.kepano.text, destination)
+		: renderPack(id, { destination, displayName:'测试库', description:'实例验证' });
+	return Object.fromEntries(template.files
 		.map(({ name, bytes }) => [name, decoder.decode(bytes)]));
 }
 
@@ -51,6 +53,20 @@ function notes(text) {
 			? { path, properties:parse(header[1]) ?? {}, body:source.slice(header[0].length) }
 			: { path, properties:{}, body:source };
 	});
+}
+
+function linkInventory(text, noteList) {
+	return {files:new Set(Object.keys(text)), excluded:new Set(), unreadableDirectories:new Set(),
+		notes:noteList.map(note => ({...note, lineOffset:0}))};
+}
+
+function fixtureTarget(text, {source, target}) {
+	const candidate = /^\.\.?\//u.test(target) ? posix.join(posix.dirname(source), target) : target;
+	const library = [root, other].find(value => candidate.startsWith(value + '/'));
+	if (!library) return {status:'missing'};
+	const relative = candidate.slice(library.length + 1);
+	const file = relative in text ? relative : relative + '.md';
+	return file in text ? {status:'resolved', path:library + '/' + file} : {status:'missing'};
 }
 
 const negative = {
@@ -99,7 +115,19 @@ for (const [id, pack] of Object.entries(packs)) {
 	test(`${id} has usable starter links and distinct passing and failing check inputs`, async () => {
 		const { descriptor } = pack;
 		const legacy = ['llm-wiki', 'kepano'].includes(id);
-		const text = id === 'kepano' ? renderKepano(pack.text, root) : instance(id);
+		const text = instance(id);
+		const second = instance(id, other);
+		for (const [location, batch] of [[root, text], [other, second]]) {
+			const inventory = linkInventory(batch, notes(batch));
+			const links = await collectCheckLinkEvidence({}, inventory, '.', location);
+			for (const {path} of inventory.notes) {
+				for (const {target, status, path:resolved} of links[path].references) {
+					if (!/^\.\.?\//u.test(target)) continue;
+					assert.equal(status, 'resolved', `${id}: ${location}/${path} → ${target}`);
+					assert.ok(resolved.startsWith(location + '/'), `${id}: ${path} → ${resolved}`);
+				}
+			}
+		}
 		if (!legacy) {
 			assert.ok(text['LICENSE.upstream.txt']);
 			assert.ok(text['Examples/Checks.md']);
@@ -121,7 +149,6 @@ for (const [id, pack] of Object.entries(packs)) {
 				assert.ok(view.filters.and.includes(`this.file.path.startsWith("${root}/")`), path);
 				assert.ok(view.views.length, path);
 			}
-			const second = instance(id, other);
 			for (const file of Object.keys(descriptor.text)) {
 				assert.ok(second[file].includes(other), file);
 				assert.ok(!second[file].includes(root), file);
@@ -132,14 +159,8 @@ for (const [id, pack] of Object.entries(packs)) {
 		const context = { template:descriptor, manifest:{ paths:{ wiki:'wiki' } }, libraryRoot:root, notes:initial };
 		async function findings(ctx) {
 			if (descriptor.checks.some(check => check.linkEvidence)) {
-				const inventory = {files:new Set(Object.keys(text)), excluded:new Set(), unreadableDirectories:new Set(),
-					notes:ctx.notes.map(note => ({...note, lineOffset:0}))};
-				const resolveLink = ({target}) => {
-					if (!target.startsWith(root + '/')) return {status:'missing'};
-					const relative = target.slice(root.length + 1);
-					const path = relative in text ? relative : relative + '.md';
-					return path in text ? {status:'resolved', path:root + '/' + path} : {status:'missing'};
-				};
+				const inventory = linkInventory(text, ctx.notes);
+				const resolveLink = link => fixtureTarget(text, link);
 				ctx = {...ctx, links:await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root)};
 			}
 			const result = await validator(ctx);
@@ -228,17 +249,16 @@ test('YAML short links use actual resolution and keep unknown links unverified',
 		['kepano','References/The Machine Stops.md','categories','Categories/Books.md'],
 	];
 	for (const [id, path, property, target] of cases) {
-		const files = id === 'kepano' ? renderKepano(packs.kepano.text, root) : instance(id);
+		const files = instance(id);
 		const initial = notes(files);
 		const source = initial.find(note => note.path === path);
 		assert.ok(source && files[target], id);
 		const short = posix.basename(target, '.md');
-		const inventory = {files:new Set(Object.keys(files)), excluded:new Set(), unreadableDirectories:new Set(),
-			notes:initial.map(note => ({...note, lineOffset:0}))};
+		const inventory = linkInventory(files, initial);
 		async function run(status, destination, written = short) {
 			source.properties[property] = `[[${written}|显示名]]`;
-			const resolveLink = status ? ({target: link}) => link === written ? {status, path:destination}
-				: {status:'resolved', path:link + '.md'} : undefined;
+			const resolveLink = status ? link => link.target === written ? {status, path:destination}
+				: fixtureTarget(files, link) : undefined;
 			const links = await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root);
 			return checkers[id]({libraryRoot:root, notes:initial, links});
 		}
@@ -259,10 +279,12 @@ test('YAML short links use actual resolution and keep unknown links unverified',
 			assert.ok(offline.findings.some(row => row.file === path && row.severity === 'info'), id);
 		}
 	}
-	const chapters = notes(instance('manuscript'));
+	const files = instance('manuscript');
+	const chapters = notes(files);
 	const chapter = chapters.find(note => note.properties.type === 'chapter');
 	chapter.properties.manuscript = `[[${root}/Outline/回声计划大纲]]`;
-	assert.deepEqual((await manuscript({libraryRoot:root,notes:chapters})).findings.map(row => row.code), ['chapter-manuscript-invalid']);
+	const links = await collectCheckLinkEvidence({vaultRoot:'.'}, linkInventory(files, chapters), '.', root);
+	assert.deepEqual((await manuscript({libraryRoot:root,notes:chapters,links})).findings.map(row => row.code), ['chapter-manuscript-invalid']);
 });
 
 test('new reading libraries have no shared flashcard deck and each question needs an answer', async () => {

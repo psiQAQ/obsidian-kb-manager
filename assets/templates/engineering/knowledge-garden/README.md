@@ -6,7 +6,7 @@
 
 ## 种子箱
 
-![[{{kb_root}}/Views/Garden.base]]
+![[./Views/Garden.base]]
 
 
 

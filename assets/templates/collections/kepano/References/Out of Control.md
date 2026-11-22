@@ -1,18 +1,18 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Books]]"
+  - "[[../Categories/Books]]"
 cover:
 isbn: 201483408
 isbn13: 9780201483406
 pages: 528
 year: 1992
 author:
-  - "[[__KB_ROOT__/References/Kevin Kelly]]"
+  - "[[./Kevin Kelly]]"
 genre:
-  - "[[__KB_ROOT__/References/Futurism]]"
-  - "[[__KB_ROOT__/References/Nonfiction]]"
+  - "[[./Futurism]]"
+  - "[[./Nonfiction]]"
 topics:
-  - "[[__KB_ROOT__/References/Emergence]]"
+  - "[[./Emergence]]"
 created: 2023-09-12
 last: 2023-09-12
 rating: 7

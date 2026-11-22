@@ -1,6 +1,6 @@
 {
   "id": "research-project",
-  "version": "2",
+  "version": "3",
   "name": "课题研究",
   "description": "把研究问题、资料、研究日志和阶段结论联系起来。",
   "purpose": "research",
@@ -12,15 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Projects/同一份样品的重复测量.md": [
-      "kb_root"
-    ],
-    "Records/重复测量观察.md": [
-      "kb_root"
-    ],
     "Views/Research.base": [
       "kb_root"
     ]

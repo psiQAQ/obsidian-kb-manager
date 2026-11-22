@@ -132,7 +132,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('受管路径发生变化：','Managed path changed: ')+item.file);
 		const bytes=await fs.readFile(f),hash=digest(bytes);
 		if(hash===item.before && binding?.role==='template-root' && binding.root && binding.offsets &&
-			rebindSlots(bytes.toString('utf8'),binding.offsets,binding.root,record.destination)!==item.after)
+			rebindSlots(bytes.toString('utf8'),binding.offsets,binding.root,record.destination,binding.path)!==item.after)
 			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}

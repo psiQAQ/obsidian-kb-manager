@@ -1,6 +1,6 @@
 {
   "id": "ai-worklog",
-  "version": "2",
+  "version": "3",
   "name": "AI 协作工作记忆",
   "description": "由工作卡、会话交接和决策页接续同库的人机工作。",
   "purpose": "ai-workflows",
@@ -12,15 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Handoffs/首轮入口调整.md": [
-      "kb_root"
-    ],
-    "Decisions/采用本地索引.md": [
-      "kb_root"
-    ],
     "Views/Work.base": [
       "kb_root"
     ]

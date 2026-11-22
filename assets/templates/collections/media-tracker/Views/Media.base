@@ -25,13 +25,13 @@ views:
       and:
         - type == "media-item"
         - status == "queued" || status == "paused"
+    groupBy:
+      property: status
+      direction: ASC
     order:
       - file.name
       - medium
       - status
-    groupBy:
-      property: status
-      direction: ASC
   - type: table
     name: 已完成
     filters:

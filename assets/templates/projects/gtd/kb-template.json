@@ -1,6 +1,6 @@
 {
   "id": "gtd",
-  "version": "2",
+  "version": "3",
   "name": "行动清单与 GTD",
   "description": "从收件箱整理下一步行动、等待事项和重复行动。",
   "purpose": "projects",
@@ -13,12 +13,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Actions/等待确认取样时间.md": [
-      "kb_root"
-    ],
     "Views/Actions.base": [
       "kb_root"
     ]

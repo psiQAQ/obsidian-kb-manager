@@ -11,7 +11,7 @@
 
 ## 阅读队列
 
-![[{{kb_root}}/Views/Reading.base]]
+![[./Views/Reading.base]]
 
 
 

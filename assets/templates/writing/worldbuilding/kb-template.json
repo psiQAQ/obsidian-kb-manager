@@ -1,6 +1,6 @@
 {
   "id": "worldbuilding",
-  "version": "2",
+  "version": "3",
   "name": "世界观与时间线",
   "description": "用人物、地点、阵营和事件等互链建立可查询设定。",
   "purpose": "writing",
@@ -13,21 +13,6 @@
   ],
   "text": {
     "README.md": [
-      "kb_root"
-    ],
-    "Characters/沈禾.md": [
-      "kb_root"
-    ],
-    "Places/芦汀驿站.md": [
-      "kb_root"
-    ],
-    "Events/驿站换班.md": [
-      "kb_root"
-    ],
-    "Cultures/沿河聚落.md": [
-      "kb_root"
-    ],
-    "Items/手绘到站图.md": [
       "kb_root"
     ],
     "Views/World.base": [

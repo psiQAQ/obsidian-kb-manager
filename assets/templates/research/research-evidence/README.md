@@ -6,7 +6,7 @@
 
 ## 证据和来源
 
-![[{{kb_root}}/Views/Evidence.base]]
+![[./Views/Evidence.base]]
 
 
 

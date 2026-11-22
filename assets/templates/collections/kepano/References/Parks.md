@@ -7,5 +7,5 @@ color: green
 
 ## Places
 
-![[__KB_ROOT__/Templates/Bases/Map.base#Type]]
-![[__KB_ROOT__/Templates/Bases/Places.base#Type]]
+![[../Templates/Bases/Map.base#Type]]
+![[../Templates/Bases/Places.base#Type]]

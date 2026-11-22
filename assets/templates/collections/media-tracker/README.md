@@ -8,7 +8,7 @@
 
 ## 作品
 
-![[{{kb_root}}/Views/Media.base]]
+![[./Views/Media.base]]
 
 ## 年度完成记录
 

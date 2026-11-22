@@ -6,7 +6,7 @@
 
 ## 行动中心
 
-![[{{kb_root}}/Views/Actions.base]]
+![[./Views/Actions.base]]
 
 
 

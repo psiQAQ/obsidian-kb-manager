@@ -1,6 +1,6 @@
 {
   "id": "media-tracker",
-  "version": "2",
+  "version": "3",
   "name": "媒体体验记录",
   "description": "统一记录书影音进度、评分、体验感想和合集。",
   "purpose": "collections",
@@ -14,9 +14,6 @@
   ],
   "text": {
     "README.md": [
-      "kb_root"
-    ],
-    "Media/远岸电台.md": [
       "kb_root"
     ],
     "Collections/短篇声音故事.md": [

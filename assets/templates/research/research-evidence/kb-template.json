@@ -1,6 +1,6 @@
 {
   "id": "research-evidence",
-  "version": "2",
+  "version": "3",
   "name": "研究证据图谱",
   "description": "用作者、来源、原子证据和主题页组织跨资料分析。",
   "purpose": "research",
@@ -12,15 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Sources/读数报告.md": [
-      "kb_root"
-    ],
-    "Evidence/重复测量.md": [
-      "kb_root"
-    ],
     "Views/Evidence.base": [
       "kb_root"
     ]

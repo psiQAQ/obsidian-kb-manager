@@ -16,7 +16,7 @@ export interface BindingPreview {
 
 function rebindFile(item:ManagedFile,identity:Identity,source:string,location:string,skeleton:Record<string,string>){
 	if(!item.root || item.root===location)return undefined;
-	if(item.role==='template-root' && item.offsets)return {content:rebindSlots(source,item.offsets,item.root,location),manual:[]};
+	if(item.role==='template-root' && item.offsets)return {content:rebindSlots(source,item.offsets,item.root,location,item.path),manual:[]};
 	if(item.role==='kepano-bindings' && isKepano(identity.template)){
 		const assets=kepanoBindingAssets(skeleton,identity.template.version);
 		return kepanoBinding(assets,item.path)?rebindKepano(item.path,source,item.root,location,assets):undefined;

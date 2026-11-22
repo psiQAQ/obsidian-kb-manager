@@ -2,11 +2,15 @@ filters:
   and:
     - file.path.startsWith("__KB_ROOT__/")
     - list(genre).contains(this)
-display:
-  note.rating: Rating
-  note.categories: Category
-  note.last: Last
-  file.name: Name
+properties:
+  note.rating:
+    displayName: Rating
+  note.categories:
+    displayName: Category
+  note.last:
+    displayName: Last
+  file.name:
+    displayName: Name
 views:
   - type: table
     name: Genre
@@ -16,9 +20,9 @@ views:
       - categories
       - last
     sort:
-      - column: note.rating
+      - property: rating
         direction: DESC
-      - column: note.last
+      - property: last
         direction: DESC
     columnSize:
       file.name: 248

@@ -1,15 +1,15 @@
 ---
 categories:
-  - "[[__KB_ROOT__/Categories/Meetings]]"
+  - "[[../Categories/Meetings]]"
 type: []
 date: 2023-09-12
 org:
-  - "[[__KB_ROOT__/References/Obsidian]]"
+  - "[[../References/Obsidian]]"
 loc:
   - Remote
 people:
-  - "[[__KB_ROOT__/References/Steph Ango]]"
+  - "[[../References/Steph Ango]]"
 topics:
-  - "[[__KB_ROOT__/References/Emergence]]"
+  - "[[../References/Emergence]]"
 ---
-- Discussed the book [[__KB_ROOT__/References/Out of Control]] on the topic of [[__KB_ROOT__/References/Emergence]]
+- Discussed the book [[../References/Out of Control]] on the topic of [[../References/Emergence]]

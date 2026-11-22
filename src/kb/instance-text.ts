@@ -1,19 +1,30 @@
-import {isScalar,parseDocument,visit} from 'yaml';
+import {parseDocument,visit} from 'yaml';
 import {tr} from '../i18n.ts';
 import {validateKepanoRoot} from './kepano.ts';
 import type {Variables} from './template-core.ts';
 
+function singleQuotedScalars(source:string){
+	const doc=parseDocument(source);
+	if(doc.errors.length)throw new Error(doc.errors[0]?.message);
+	const scalars: {start:number;end:number;value:string}[]=[];
+	visit(doc,{Scalar(_,node){
+		if(node.type==='QUOTE_SINGLE' && node.range && typeof node.value==='string')
+			scalars.push({start:node.range[0],end:node.range[1],value:node.value});
+	}});
+	return scalars;
+}
+
 export function instanceText(file:string, source:string, fields:readonly string[], vars:Variables) {
 	const offsets:number[]=[];
-	if(fields.includes('kb_root')){
-		validateKepanoRoot(vars.destination);
-		if(file.endsWith('.base') && source.includes('{{kb_root}}')){
-			const doc=parseDocument(source);
-			if(doc.errors.length)throw new Error(doc.errors[0]?.message);
-			visit(doc,{Scalar(_,node){
-				if(isScalar(node) && typeof node.value==='string' && node.value.includes('{{kb_root}}'))node.type='QUOTE_DOUBLE';
-			}});
-			source=doc.toString({lineWidth:0});
+	const bindRoot=fields.includes('kb_root');
+	if(bindRoot)validateKepanoRoot(vars.destination);
+	if(bindRoot && file.endsWith('.base') && source.includes('{{kb_root}}')){
+		const scalars=singleQuotedScalars(source);
+		if(vars.destination.includes("'")){
+			// Obsidian saves these scalars double-quoted once their value has an apostrophe.
+			for(const {start,end,value} of scalars.sort((a,b)=>b.start-a.start)){
+				if(value.includes('{{kb_root}}'))source=source.slice(0,start)+JSON.stringify(value)+source.slice(end);
+			}
 		}
 	}
 	let cursor=0, content='';
@@ -30,15 +41,19 @@ export function instanceText(file:string, source:string, fields:readonly string[
 	return {content:content+source.slice(cursor),offsets};
 }
 
-export function rebindSlots(source:string, offsets:readonly number[], previous:string, destination:string) {
+export function rebindSlots(source:string, offsets:readonly number[], previous:string, destination:string, file='') {
 	validateKepanoRoot(destination);
-	let cursor=0, content='';
-	for(const [index,offset] of offsets.entries()){
-		const start=offset+index*previous.length;
-		if(start<cursor || source.slice(start,start+previous.length)!==previous)
+	const quoted=file.endsWith('.base') && (previous.includes("'") || destination.includes("'"))?singleQuotedScalars(source):[];
+	let cursor=0, content='', rootLength=0;
+	for(const offset of offsets){
+		const start=offset+rootLength;
+		const singleQuoted=quoted.some(range=>start>=range.start && start<range.end);
+		const old=singleQuoted?previous.replaceAll("'","''"):previous;
+		if(start<cursor || source.slice(start,start+old.length)!==old)
 			throw new Error(tr('声明的位置与文件内容不符，需人工核对','Declared positions differ from file contents. Review manually.'));
-		content+=source.slice(cursor,start)+destination;
-		cursor=start+previous.length;
+		content+=source.slice(cursor,start)+(singleQuoted?destination.replaceAll("'","''"):destination);
+		cursor=start+old.length;
+		rootLength+=old.length;
 	}
 	return content+source.slice(cursor);
 }

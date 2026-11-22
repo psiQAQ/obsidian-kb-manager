@@ -6,7 +6,7 @@
 
 ## 课程和截止日期
 
-![[{{kb_root}}/Views/Courses.base]]
+![[./Views/Courses.base]]
 
 
 

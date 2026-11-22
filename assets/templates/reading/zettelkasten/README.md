@@ -6,7 +6,7 @@
 
 ## 等待整理
 
-![[{{kb_root}}/Views/Cards.base]]
+![[./Views/Cards.base]]
 
 
 

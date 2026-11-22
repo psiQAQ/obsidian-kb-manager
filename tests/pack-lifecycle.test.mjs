@@ -37,10 +37,29 @@ test('template catalogue is unique and binary files round-trip without decoding'
 test('declared root positions survive multiple renames, literal equal text and apostrophes',()=>{
 	const old="库/O'Brien",next='库/新目录';
 	const vars={destination:old,displayName:old,description:''};
-	const source='views:\n  - type: table\n    name: "本库"\nfilters: \'file.inFolder("{{kb_root}}")\'\n';
-	const base=instanceText('现有.base',source,['kb_root'],vars);
-	assert.equal(parse(base.content).filters,'file.inFolder("'+old+'")');
-	assert.equal(parse(rebindSlots(base.content,base.offsets,old,next)).filters,'file.inFolder("'+next+'")');
+	const file='现有.base';
+	const source=`filters:
+  and:
+    - file.path.startsWith("{{kb_root}}/")
+    - '!file.inFolder("{{kb_root}}/Templates")'
+    - '!file.inFolder("{{kb_root}}/Integrations")'
+views:
+  - type: table
+    name: "本库"
+`;
+	const base=instanceText(file,source,['kb_root'],vars);
+	assert.deepEqual(parse(base.content).filters.and,parse(source).filters.and.map(filter=>filter.replace('{{kb_root}}',old)));
+	assert.ok(base.content.includes(`- ${JSON.stringify('!file.inFolder("'+old+'/Templates")')}`));
+	const baseMoved=rebindSlots(base.content,base.offsets,old,next,file);
+	assert.equal(baseMoved,base.content.replaceAll(old,next));
+	assert.equal(rebindSlots(baseMoved,base.offsets,next,old,file),base.content);
+	const normal=instanceText(file,source,['kb_root'],{...vars,destination:next});
+	assert.equal(normal.content,source.replaceAll('{{kb_root}}',next));
+	const fromNormal=rebindSlots(normal.content,normal.offsets,next,old,file);
+	assert.deepEqual(parse(fromNormal),parse(base.content));
+	assert.equal(rebindSlots(fromNormal,normal.offsets,old,next,file),normal.content);
+	const legacy=String.raw`filters: "file.inFolder(\"${old}\")"`+'\n';
+	assert.equal(parse(rebindSlots(legacy,[legacy.indexOf(old)],old,next,file)).filters,'file.inFolder("'+next+'")');
 	const page=instanceText('页面.md','{{kb_name}} [[{{kb_root}}/甲]] [[{{kb_root}}/乙]] {{title}}',['kb_name','kb_root'],vars);
 	const rebound=rebindSlots(page.content,page.offsets,old,next);
 	assert.equal(rebound,old+' [['+next+'/甲]] [['+next+'/乙]] {{title}}');

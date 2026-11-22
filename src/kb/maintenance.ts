@@ -41,7 +41,7 @@ export async function examineBindings(disk:VaultDisk,lib:Library,skeleton:Record
 			if(!stat?.isFile() || stat.nlink!==1)throw new Error(tr('受管文件缺失或不再是独立文件','Managed file is missing or linked'));
 			const text=await fs.readFile(file,'utf8');
 			if(digest(text)!==binding.fingerprint)throw new Error(tr('受管文件已编辑，保留原文','Managed file was edited. Keeping contents.'));
-			const after=rebindSlots(text,binding.offsets,binding.root,destination);
+			const after=rebindSlots(text,binding.offsets,binding.root,destination,binding.path);
 			if(text!==after){
 				originals?.set(binding.path,text);
 				repairs.push({file:binding.path,before:binding.fingerprint,after,fields:[binding.root+' → '+destination]});

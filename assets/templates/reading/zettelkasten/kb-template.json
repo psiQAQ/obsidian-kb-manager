@@ -1,6 +1,6 @@
 {
   "id": "zettelkasten",
-  "version": "2",
+  "version": "3",
   "name": "卡片盒",
   "description": "把闪念和文献批注提炼成永久卡，由结构页编排阅读脉络。",
   "purpose": "reading",
@@ -12,12 +12,6 @@
     "Templates"
   ],
   "text": {
-    "README.md": [
-      "kb_root"
-    ],
-    "Permanent/理解需要检验.md": [
-      "kb_root"
-    ],
     "Views/Cards.base": [
       "kb_root"
     ]

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { posix } from 'node:path';
 import { parse } from 'yaml';
 import { renderKepano, rebindKepano } from '../src/kb/kepano.ts';
 import { kepanoBindingAssets, kepanoTemplate } from '../src/kb/template-core.ts';
@@ -26,7 +27,7 @@ test('built-in Kepano edition contains the pinned templates, categories, example
 	assert.equal(names.filter(n => /^Categories\/[^/]+\.md$/u.test(n)).length, 21);
 	assert.equal(names.filter(n => n.endsWith('.base')).length, 30);
 	assert.ok(['README.md','Clippings/Buy wisely.md','Daily/2023-09-12.md','Notes/2023 Japan Trip.md','References/Out of Control.md','Attachments/.gitkeep'].every(n => names.includes(n)));
-	assert.ok(names.every(n => ['Bindings.v5.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
+	assert.ok(names.every(n => ['Bindings.v5.json','Bindings.v6.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
 	assert.match(skeleton['LICENSE.md'], /Copyright \(c\) 2023 Steph Ango/u);
 	assert.match(skeleton['LICENSE.md'], /473697347a0eaac790a6596229c741b3915f3b77/u);
 	for (const [name, text] of Object.entries(skeleton)) {
@@ -45,7 +46,7 @@ test('new Kepano fields feed the instance views without carrying example-only va
 	assert.equal(metadata(rendered,'References/Out of Control.md').pages, 528);
 	assert.deepEqual(template('Podcast Episode').guests, []);
 	assert.deepEqual(base('Podcast episodes').views.find(view => view.name === 'Guest').filters.and, ['list(guests).contains(this)']);
-	assert.ok(metadata(rendered,'References/Well Made 145 Kevin Kelly.md').guests.includes(`[[${previous}/References/Kevin Kelly]]`));
+	assert.ok(metadata(rendered,'References/Well Made 145 Kevin Kelly.md').guests.includes('[[./Kevin Kelly]]'));
 	assert.equal(base('Clippings').views.find(view => view.name === 'Author').sort[0].property, 'created');
 	assert.equal(metadata(rendered,'Clippings/Buy wisely.md').created, '2023-11-18');
 	assert.deepEqual(template('City').coordinates, []);
@@ -92,8 +93,10 @@ test('two instances resolve every generated link, view and category without borr
 				const metadata = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text);
 				if (metadata) parse(metadata[1]);
 				for (const match of text.matchAll(/\[\[([^|#\]]+)(?:#([^|\]]+))?(?:\|[^\]]+)?\]\]/gu)) {
-					assert.ok(match[1].startsWith(root + '/'), name + ': ' + match[0]);
-					const path = match[1].slice(root.length + 1);
+					const target = match[1];
+					const template = name.startsWith('Templates/');
+					assert.ok(template ? target.startsWith(root + '/') : /^\.\.?\//u.test(target), name + ': ' + match[0]);
+					const path = template ? target.slice(root.length + 1) : posix.join(posix.dirname(name), target);
 					assert.ok(collection[path] || collection[path + '.md'], name + ': ' + path);
 					if (match[2] && path.endsWith('.base')) {
 						assert.ok(parse(collection[path]).views.some(view => view.name === match[2]), name + ': ' + match[0]);
@@ -127,15 +130,16 @@ test('rebind preserves edited and additional YAML fields, comments, Markdown and
 	assert.equal(result.content, custom.replace('file.path.startsWith("' + previous + '/")',
 		'file.path.startsWith("' + destination + '/")'));
 
+	const historical = kepanoBindingAssets(skeleton, '6');
 	const file = 'Categories/Podcasts.md';
 	const link = '![[' + previous + '/Templates/Bases/Podcasts.base]]';
 	const userText = '\n~~~md\n' + link + '\n~~~\n' + previous + ' personal note\n';
-	const source = rendered[file].replace('related:', 'renamed:') + userText;
-	const note = rebindKepano(file, source, previous, destination, skeleton);
+	const source = renderKepano(historical, previous)[file].replace('related:', 'renamed:') + userText;
+	const note = rebindKepano(file, source, previous, destination, historical);
 	assert.equal(note.content, source.replace(link, '![[' + destination + '/Templates/Bases/Podcasts.base]]'));
 	assert.equal(note.manual.length, 1);
 	assert.ok(note.content.endsWith(userText));
-	const duplicate = rebindKepano(file, source + link + '\n', previous, destination, skeleton);
+	const duplicate = rebindKepano(file, source + link + '\n', previous, destination, historical);
 	assert.equal(duplicate.content, source + link + '\n');
 	assert.deepEqual(rebindKepano('Notes/Personal.md', source, previous, destination, skeleton),
 		{ content: source, edits: [], manual: [] });

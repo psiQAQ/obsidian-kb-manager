@@ -11,13 +11,13 @@ views:
     filters:
       and:
         - type == "reading-item"
+    groupBy:
+      property: status
+      direction: ASC
     order:
       - file.name
       - status
       - source
-    groupBy:
-      property: status
-      direction: ASC
   - type: table
     name: 待复习术语
     filters:

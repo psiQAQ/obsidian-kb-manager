@@ -6,7 +6,7 @@
 
 ## 活跃和归档项目
 
-![[{{kb_root}}/Views/Projects.base]]
+![[./Views/Projects.base]]
 
 也可以 [查看样例周回顾](./Reviews/2026-W38.md)。
 
