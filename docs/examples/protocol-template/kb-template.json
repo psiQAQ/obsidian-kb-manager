@@ -1,0 +1,26 @@
+{
+  "protocolVersion": 1,
+  "id": "reading-notebook-example",
+  "version": "1",
+  "name": "阅读手记",
+  "entry": "首页.md",
+  "pageTemplates": [
+    "Templates"
+  ],
+  "text": {
+    "首页.md": [
+      "kb_name",
+      "kb_root"
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "templater-obsidian",
+      "required": false,
+      "minVersion": "2.11.1"
+    }
+  ],
+  "managedFiles": [
+    "Templates/读书卡.md"
+  ]
+}

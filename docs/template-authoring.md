@@ -21,6 +21,18 @@
 
 另一个可用变量为 `kb_root`，表示最终 Vault 相对目录。可用 `hidden` 数组声明允许复制的隐藏文件相对路径。未声明的 `{{date:YYYY-MM-DD}}` 等笔记模板变量原样保留。目录模板不指定入口时，**打开** 会列出本库可打开的 Markdown 笔记。
 
+## 声明协议与双实例验收
+
+编辑器可以将 `kb-template.json` 关联到仓库的 [JSON Schema](schemas/kb-template.schema.json)。在支持 JSON Schema 的编辑器中选择本地文件，或填写指向本地副本的 `$schema`。模板协议用 `protocolVersion` 表示，模板自身的发布编号仍使用 `version`。旧声明可以省略协议版本。发布需要指定管理器最低版本时使用 `minManagerVersion`，填写已经实际验证的三段式版本号。
+
+[阅读手记样例](examples/protocol-template/kb-template.json)包含一个可选的 Templater 工作流和一个允许由模板升级的读书卡。将整个 `examples/protocol-template` 复制到测试 Vault 的 `样板/阅读手记`，登记为目录模板，再验证以下结果。
+
+1. 用同一模板分别创建 `书架/甲` 和 `书架/乙`，从两个首页点击“读书卡模板”。查看实际打开的文件路径，应分别位于各自的 `Templates` 目录。
+2. 在甲库另建一篇读书笔记，在乙库的 `Templates/读书卡.md` 尾部加一行批注。将模板源的 `version` 改为 `2`，并在模板源的读书卡中添加“## 引文”。
+3. 分别打开两库的模板更新预览。甲库的读书卡可以应用“引文”变动，新建的笔记继续保留。乙库的读书卡应标为冲突，保留批注。对比每个库的工作区差异。
+
+`dependencies` 中的字符串仍表示可选社区插件。对象形式可声明 `id`、`required` 和 `minVersion`。新模板可通过 `managedFiles` 逐个列出要参与后续升级的模板文件。仅列入确实由模板维护的资源，供用户长期写作的文件不应加入。
+
 ## 一套课题模板
 
 在 `样板/实验课题` 建立下面五个文件。首页、笔记、页面模板和脚本都使用 UTF-8。
