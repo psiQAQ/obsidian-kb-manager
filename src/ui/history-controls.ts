@@ -9,7 +9,7 @@ type Column=typeof historyColumns[number];
 type Translator=KnowledgeBaseManager['t'];
 type Width='authorWidth'|'dateWidth'|'shaWidth';
 export type HistoryOptions=Partial<Record<Column,boolean> & Record<Width,number> & {
-	refPosition:'before'|'after';detailLayout:'below'|'side';
+	refPosition:'before'|'after';detailLayout:'inline'|'below'|'side';
 }>;
 export type HistoryDisplay=Required<HistoryOptions>;
 export type SearchField='all'|'message'|'author'|'sha'|'refs'|'date';
@@ -33,7 +33,7 @@ export function historyOptions(plugin:KnowledgeBaseManager):HistoryOptions {
 			if(typeof value==='number' && Number.isInteger(value) && value>=6 && value<=32)result[key]=value;
 		}
 		if(fields.refPosition==='before' || fields.refPosition==='after')result.refPosition=fields.refPosition;
-		if(fields.detailLayout==='below' || fields.detailLayout==='side')result.detailLayout=fields.detailLayout;
+		if(fields.detailLayout==='inline' || fields.detailLayout==='below' || fields.detailLayout==='side')result.detailLayout=fields.detailLayout;
 	}
 	return result;
 }
@@ -154,7 +154,9 @@ export function historyDisplayControl(
 			select.onchange=()=>{values[key]=select.value as HistoryDisplay[K];};
 		};
 		choice('refPosition',t('引用标签位置','Ref label position'),{before:t('标题前','Before subject'),after:t('标题后','After subject')});
-		choice('detailLayout',t('详情位置','Details position'),{below:t('下方','Below'),side:t('右侧','Alongside')});
+		choice('detailLayout',t('详情位置','Details position'),{
+			inline:t('提交行下方','Under commit row'),below:t('列表下方','Below list'),side:t('右侧','Alongside'),
+		});
 		for(const [key,text] of [
 			['authorWidth',t('作者列宽','Author column width')],['dateWidth',t('日期列宽','Date column width')],
 			['shaWidth',t('SHA 列宽','SHA column width')],

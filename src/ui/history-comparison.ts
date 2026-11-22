@@ -93,6 +93,7 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 	try{
 		assertGitEnabled(plugin);
 		await recheck(plugin.disk,plugin.config,lib);
+		if(!active())return;
 		files=await compareHistory(dir,before,after);
 	}catch(error){
 		if(active())el.createEl('p',{cls:'kb-git-error',text:String(error),attr:{role:'alert'}});
@@ -154,9 +155,20 @@ export async function renderHistoryComparison(el:HTMLElement,options:ComparisonO
 			const rename=file.before && file.before.file!==file.file;
 			const path=rename?file.before!.file+' → '+file.file:file.file;
 			const [zh,en]=changeLabel[file.status],description=t(zh,en);
-			const button=row.createEl('button',{cls:'kb-comparison-open',attr:{type:'button',title:description+' · '+path,'aria-label':description+' · '+path}});
-			button.createSpan({cls:'kb-history-change',text:file.status,attr:{'aria-hidden':'true'}});
-			button.createSpan({text:rename?file.before!.file+' → '+(tree?basename:file.file):tree?basename:file.file});
+			const counts=file.status==='A' || file.status==='D'?undefined:file.lineCounts;
+			const label=description+' · '+path+(counts?' (+'+counts.additions+'|-'+counts.deletions+')':'');
+			const button=row.createEl('button',{cls:'kb-comparison-open',attr:{type:'button',title:label,'aria-label':label}});
+			button.createSpan({cls:'kb-history-change',text:file.status,attr:{'data-status':file.status,'aria-hidden':'true'}});
+			const displayPath=tree?basename:file.file;
+			button.createSpan({cls:'kb-history-file-name',text:rename?file.before!.file+' → '+displayPath:displayPath});
+			if(counts){
+				const stat=button.createSpan({cls:'kb-history-line-count'});
+				stat.append('(');
+				stat.createSpan({cls:'kb-history-added',text:'+'+counts.additions});
+				stat.append('|');
+				stat.createSpan({cls:'kb-history-deleted',text:'-'+counts.deletions});
+				stat.append(')');
+			}
 			const key=keys.get(file);
 			const review=key?row.createEl('input',{type:'checkbox',attr:{'aria-label':t('标记为已审阅','Mark as reviewed')+' · '+path}}):undefined;
 			if(key && review){

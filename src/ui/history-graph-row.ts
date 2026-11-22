@@ -2,14 +2,14 @@ import type { GraphRow } from '../git/history-graph.ts';
 import { historyTrackColors } from '../git/history-graph.ts';
 import { historyRowHeight } from './history-window.ts';
 
+const x=(lane:number)=>8+15*lane;
+const trackClass=(color:number)=>'kb-track-'+color%historyTrackColors;
+
 /** Continue the same tracks through adjacent rows; edge coordinates use lane units. */
 export function drawCommitGraph(row:HTMLElement,item:GraphRow,tooltip:string,node:'commit'|'merge'|'head'|'worktree'|'stash') {
-	const spacing=15;
-	const x=(lane:number)=>8+spacing*lane;
 	const svg=row.createSvg('svg',{cls:'kb-history-graph',attr:{
 		height:historyRowHeight,'aria-hidden':'true',
 	}});
-	const trackClass=(color:number)=>'kb-track-'+color%historyTrackColors;
 	const path=(d:string,color:number)=>svg.createSvg('path',{cls:trackClass(color),attr:{d}});
 	for(const {from,to,color} of item.rails)
 		path('M '+x(from)+' 0 C '+x(from)+' 16 '+x(to)+' 16 '+x(to)+' 32',color);
@@ -26,4 +26,14 @@ export function drawCommitGraph(row:HTMLElement,item:GraphRow,tooltip:string,nod
 	const marker=svg.createSvg('circle',{cls:[trackClass(item.color),'kb-history-node-'+node],
 		attr:{cx:x(item.lane),cy:16,r:node==='merge' || node==='head'?5:4}});
 	marker.createSvg('title').textContent=tooltip;
+}
+
+export function drawCommitGraphContinuation(detail:HTMLElement,item:GraphRow){
+	const svg=detail.createSvg('svg',{cls:['kb-history-graph','kb-history-graph-continuation'],attr:{
+		'aria-hidden':'true',
+	}});
+	const exits=new Map([...item.rails,...item.parents].map(({to,color})=>[to,color]));
+	for(const [lane,color] of exits)svg.createSvg('line',{cls:trackClass(color),attr:{
+		x1:x(lane),x2:x(lane),y1:0,y2:'100%',
+	}});
 }
