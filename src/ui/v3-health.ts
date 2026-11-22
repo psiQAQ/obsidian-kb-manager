@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { statIfPresent } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { commonCheckTrusted, listCommonChecks } from '../diagnostics/common.ts';
-import { generalChecks, listDiagnosticHistory, listSpecialChecks, portabilityCheck, runDiagnostics } from '../diagnostics/index.ts';
+import { diagnosticFreshness, generalChecks, listDiagnosticHistory, listSpecialChecks, portabilityCheck, runDiagnostics } from '../diagnostics/index.ts';
 import { linkCandidateIndex } from '../diagnostics/links.ts';
 import { commonRuleSources } from '../kb/common-rules.ts';
 import { officialCheckDigests, packText } from '../kb/template-pack.ts';
@@ -14,6 +14,8 @@ import type KnowledgeBaseManager from '../main.ts';
 import { createPanelTabs } from './panel-tabs.ts';
 import { Dialog, V3Dialog, showJsonPreview } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
+import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
+import type { ReportHistory } from './v3-diagnostic-report.ts';
 
 type Options = Parameters<typeof runDiagnostics>[0];
 type Report = Awaited<ReturnType<typeof runDiagnostics>>;
@@ -142,7 +144,7 @@ async function openDiagnostic(plugin:KnowledgeBaseManager,library:Library,item:D
 	await plugin.app.workspace.getLeaf(false).openFile(file,item.line?{eState:{line:item.line-1}}:undefined);
 }
 
-function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library) {
+function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library,history?:ReportHistory) {
 	container.empty();
 	const results=container.createDiv({cls:'kb-v3-results'});
 	const header=results.createDiv({cls:'kb-v3-report-heading'});
@@ -150,14 +152,14 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 	summaryStatus(header,report.status,report.checks.flatMap(check=>check.diagnostics));
 	const total=report.checks.reduce((all,{coverage})=>({checked:all.checked+coverage.checked,skipped:all.skipped+coverage.skipped,unknown:all.unknown+coverage.unknown}),{checked:0,skipped:0,unknown:0});
 	coverage(results,total);
-	const when=new Date(report.startedAt);
-	results.createEl('time',{cls:'kb-v3-muted',text:Number.isNaN(when.getTime())?report.startedAt:when.toLocaleString(),attr:{datetime:report.startedAt,title:report.startedAt}});
+	results.createEl('time',{cls:'kb-v3-muted',text:reportDate(report.startedAt),attr:{datetime:report.startedAt,title:report.startedAt}});
 	if(report.logPath){
 		const log=results.createEl('details',{cls:'kb-check-evidence'});
 		log.createEl('summary',{text:tr('日志位置','Log file')});
 		log.createEl('code',{cls:'kb-check-location',text:report.logPath});
 	}
 	if(report.logError)results.createEl('p',{cls:'kb-git-error',text:tr('日志保存失败','Could not save log')+' · '+report.logError});
+	diagnosticReportDetails(results,report,checkName,history);
 	if(report.status==='cancelled')results.createEl('p',{text:tr('已保留完成的检查结果。本次取消未写入历史。','Completed results are shown here. This cancelled run was not saved to history.')});
 	const scope=results.createEl('details',{cls:'kb-v3-detail'});
 	scope.open=report.status==='cancelled'||report.checks.some(check=>check.status==='partial'||check.status==='failed');
@@ -273,6 +275,8 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	let installed=false;
 	let running:AbortController|undefined;
 	let history:AbortController|undefined;
+	let knownTemplateChecks:Options['knownTemplateChecks'];
+	let choiceRequest=0;
 	lifetime.addEventListener('abort',()=>{running?.abort();history?.abort();},{once:true});
 	let custom=false;
 	let allVaultCandidates=false;
@@ -314,13 +318,16 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			if(request.signal.aborted)return;
 			panel.empty();
 			if(!reports.length)panel.createEl('p',{text:tr('尚无检验报告。运行一次检验后可在这里查看。','Run a check to see its report here.')});
-			for(const report of reports){
-				const row=new Setting(panel).setName(report.startedAt).setDesc(report.logPath??report.runId);
+			for(const [index,report] of reports.entries()){
+				const row=new Setting(panel).setName(reportDate(report.startedAt)).setDesc(report.logPath??report.runId);
 				badge(row.nameEl,report.status);
 				row.addButton(b=>b.setButtonText(tr('查看报告','View report')).onClick(()=>{
 					panel.empty();
 					new ButtonComponent(panel).setButtonText(tr('返回历史列表','Back to history')).onClick(()=>{void loadHistory();});
-					reportView(panel.createDiv(),report,plugin,lib);
+					reportView(panel.createDiv(),report,plugin,lib,{
+						previous:reports.slice(index+1),signal:request.signal,
+						freshness:()=>diagnosticFreshness({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,signal:request.signal},report),
+					});
 				}));
 			}
 		} catch(e){if(!request.signal.aborted)panel.setText(String(e));}
@@ -346,10 +353,15 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	}
 	async function renderChoices(){
 		if(lifetime.aborted)return;
+		const request=++choiceRequest;
 		choices.empty();controls.length=0;candidateScope=undefined;
-		const [common,special]=await Promise.all([listCommonChecks(root,lifetime),listSpecialChecks(root,lifetime)]);
-		if(lifetime.aborted)return;
+		const [common,special]=await Promise.all([listCommonChecks(root,lifetime),listSpecialChecks(root,lifetime)]).catch((error:unknown)=>{
+			if(lifetime.aborted)return [];
+			throw error;
+		});
+		if(lifetime.aborted||request!==choiceRequest||!common||!special)return;
 		installed=common.mode==='kit';
+		knownTemplateChecks=special.checks;
 		const general=installed?common.checks:[...generalChecks,portabilityCheck];
 		guidance.setText(tr('常规检查 '+generalChecks.length+' 项，模板专项 '+special.checks.length+' 项。可移植性和脚本授权见「自选检查项」。',generalChecks.length+' general checks and '+special.checks.length+' template checks. Choose individual checks for portability or script approval.'));
 		const approved=trustedDigests(plugin);
@@ -404,8 +416,9 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		output.createEl('p',{text:tr('正在检验…','Running checks…'),attr:{role:'status'}});
 		try{
 			const registry=await readVaultRegistry(plugin.disk).catch(()=>undefined);
+			if(lifetime.aborted)return;
 			const report=await runDiagnostics({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,
-				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,signal,
+				registered:registry?.paths.includes(lib.location),registeredPaths:registry?.paths,duplicate:lib.duplicate,selected:checks,signal,knownTemplateChecks,
 				trustedDigests:trustedDigests(plugin),officialDigests:official,...linkOptions(plugin,lib.location,registry?.paths ?? [],allVaultCandidates,signal)});
 			if(!lifetime.aborted)display(report);
 		} catch(error) {

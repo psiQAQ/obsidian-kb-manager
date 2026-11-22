@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import {statIfPresent} from '../fs/vault.ts';
 import {gitResult} from '../git/network-native.ts';
 import {tr} from '../i18n.ts';
+import {validInputVersion, validRuleVersion} from './provenance.ts';
 import {decode, libraryLocation, readRelative, relativePath} from './snapshot.ts';
 import {isRecord} from './types.ts';
 import type {DiagnosticReport} from './types.ts';
@@ -120,12 +121,15 @@ function reportFromLog(value: unknown, filename: string): DiagnosticReport | und
 		typeof value.finishedAt !== 'string' || !Number.isFinite(Date.parse(value.finishedAt)) ||
 		value.logPath !== `${logDirectory}/${filename}` || (value.environment !== 'offline' && value.environment !== 'desktop') ||
 		typeof value.status !== 'string' || !status.has(value.status) || !isRecord(value.library) || !Array.isArray(value.checks)) return;
+	if (!validInputVersion(value.inputVersion)) delete value.inputVersion;
+	if (typeof value.engineVersion !== 'string' || value.engineVersion.length > 128) delete value.engineVersion;
 	for (const row of value.checks as unknown[]) {
 		if (!isRecord(row) || typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.status !== 'string' || !status.has(row.status) ||
 			!isRecord(row.coverage) || !['checked','skipped','unknown'].every(key => {
 				const count = (row.coverage as Record<string, unknown>)[key];
 				return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0;
 			}) || !Array.isArray(row.diagnostics)) return;
+		if (!validRuleVersion(row.rule)) delete row.rule;
 		for (const item of row.diagnostics as unknown[]) {
 			if (!isRecord(item) || typeof item.severity !== 'string' || !allowedSeverity.has(item.severity) || typeof item.code !== 'string' ||
 				typeof item.message !== 'string' || (item.file !== undefined && !relativePath(item.file)) ||

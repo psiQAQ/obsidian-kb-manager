@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {setTimeout as delay} from 'node:timers/promises';
 import {build} from 'esbuild';
-import {listDiagnosticHistory, listSpecialChecks, runDiagnostics} from '../src/diagnostics/index.ts';
+import {compareDiagnosticReports, diagnosticFreshness, listDiagnosticHistory, listSpecialChecks, runDiagnostics} from '../src/diagnostics/index.ts';
 import {saveDiagnosticReport} from '../src/diagnostics/history.ts';
 import {setLanguage} from '../src/i18n.ts';
 import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
@@ -110,6 +110,37 @@ test('a library executes reviewed common and template sources and reports failur
 	assert.deepEqual(codes(result(missing,'properties')),['checker-unavailable']);
 	assert.equal(result(missing,'properties').diagnostics[0].file,entry);
 	assert.equal(result(missing,'bases').status,'passed');
+});
+
+test('only common rules with matching official paths and digests run without a local Node executable', async t => {
+	const {options,root,put} = await fixture(t);
+	const {['checks/common/manifest.mjs']:officialManifest,['checks/common/properties.mjs']:officialProperties} = checkKitFiles();
+	const manifestPath = 'checks/common/manifest.mjs', propertiesPath = 'checks/common/properties.mjs';
+	await put('kb.toml',writeCheckKit(manifest,{protocol:1,version:checkKitVersion,digests:{
+		[manifestPath]:digest(officialManifest),[propertiesPath]:digest(officialProperties),
+	}}));
+	await put(manifestPath,officialManifest);
+	await put(propertiesPath,officialManifest);
+	const special = 'export default () => [];';
+	await put('checks/checker.mjs',special);
+	const attempt = await runDiagnostics({...options,selected:['manifest','properties','fixture.check'],
+		nodeExecutable:path.join(root,'missing-node.exe'),officialDigests:[digest(special)]});
+	assert.equal(result(attempt,'manifest').status,'passed');
+	assert.deepEqual(result(attempt,'manifest').rule,{
+		engine:'bundled',version:checkKitVersion,path:manifestPath,digest:digest(officialManifest),
+	});
+	assert.deepEqual(codes(result(attempt,'properties')),['checker-untrusted']);
+	assert.deepEqual(codes(result(attempt,'fixture.check')),['checker-node']);
+	assert.equal(result(attempt,'fixture.check').rule.engine,'node');
+	const authorized = await runDiagnostics({...options,selected:['properties'],trustedDigests:[digest(officialManifest)],
+		nodeExecutable:path.join(root,'missing-node.exe')});
+	assert.deepEqual(codes(result(authorized,'properties')),['checker-node']);
+	assert.equal(result(authorized,'properties').rule.engine,'node');
+	await put(propertiesPath,officialProperties);
+	assert.equal(await diagnosticFreshness(options,attempt),'stale');
+	const bundled = await runDiagnostics({...options,selected:['properties'],nodeExecutable:path.join(root,'missing-node.exe')});
+	assert.equal(result(bundled,'properties').status,'passed');
+	assert.equal(result(bundled,'properties').rule.engine,'bundled');
 });
 
 test('desktop native link evidence and partial coverage distinguish unresolved files and intended cross-library links', async t => {
@@ -618,6 +649,11 @@ test('cancelling during scan or before history publication leaves existing repor
 	const {options, root} = await fixture(t);
 	const selected = ['manifest','properties','fixture.check'];
 	const complete = await runDiagnostics({...options,selected:['manifest']});
+	const beforeStart = await runDiagnostics({...options,selected:'all',signal:AbortSignal.abort(),
+		knownTemplateChecks:[{id:'fixture.check',name:'Previously listed template check'}]});
+	assert.equal(beforeStart.status,'cancelled');
+	assert.equal(result(beforeStart,'fixture.check').status,'not-run');
+	assert.equal(result(beforeStart,'fixture.check').name,'Previously listed template check');
 	const readdir = fs.readdir;
 	const scan = new AbortController();
 	const mockScan = t.mock.method(fsPromises,'readdir',async (target,...args) => {
@@ -663,6 +699,57 @@ test('log writes work without hard links and never replace an existing report', 
 		assert.deepEqual((await listDiagnosticHistory(root))[0],JSON.parse(JSON.stringify(existing)));
 		assert.equal(unsupported.mock.callCount(),0);
 	} finally {unsupported.mock.restore();syncBuiltinESMExports();}
+});
+
+test('history preserves legacy reports and validates freshness within the original evidence scope', async t => {
+	const {root,options,put} = await fixture(t);
+	const manifestOnly = await runDiagnostics({...options,selected:['manifest']});
+	assert.match(manifestOnly.engineVersion,/^\d+\.\d+\.\d+$/u);
+	assert.ok(manifestOnly.inputVersion.files.includes('kb.toml'));
+	assert.ok(!manifestOnly.inputVersion.files.some(file => file.endsWith('.md')));
+	assert.equal(await diagnosticFreshness(options,manifestOnly),'fresh');
+	await put('notes/target.md','# Replacement body\n');
+	assert.equal(await diagnosticFreshness(options,manifestOnly),'fresh');
+	const properties = await runDiagnostics({...options,selected:['properties']});
+	assert.equal(await diagnosticFreshness(options,properties),'fresh');
+	// Creating another report does not make the previous report stale.
+	assert.equal(await diagnosticFreshness(options,manifestOnly),'fresh');
+	await put('notes/target.md','# Replacement body\nEdited later\n');
+	assert.equal(await diagnosticFreshness(options,properties),'stale');
+	assert.equal(await diagnosticFreshness(options,manifestOnly),'fresh');
+	await put('notes/new.md','# Added later');
+	assert.equal(await diagnosticFreshness(options,manifestOnly),'stale');
+	const old = {...manifestOnly};
+	delete old.engineVersion;
+	delete old.inputVersion;
+	old.checks = old.checks.map(check => {const row={...check};delete row.rule;return row;});
+	await put(old.logPath,JSON.stringify(old));
+	const restored = (await listDiagnosticHistory(root)).find(report=>report.runId===old.runId);
+	assert.equal(restored.status,old.status);
+	assert.equal(restored.checks[0].rule,undefined);
+	assert.equal(await diagnosticFreshness(options,restored),'unknown');
+});
+
+test('historical comparisons distinguish new, resolved, and relocated findings', async t => {
+	const {options,put} = await fixture(t);
+	const bad = '---\nstatus: [\n---\n# Body\n';
+	await put('notes/remains.md',bad);
+	await put('notes/resolved.md',bad);
+	const first = await runDiagnostics({...options,selected:['properties','manifest']});
+	await put('notes/remains.md',bad.replace('status: [','valid: string\nstatus: ['));
+	await put('notes/resolved.md','---\nstatus: ready\n---\n');
+	await put('notes/new.md',bad);
+	const second = await runDiagnostics({...options,selected:['properties']});
+	const difference = compareDiagnosticReports(first,second);
+	const files = rows => rows.map(({diagnostic})=>diagnostic.file);
+	assert.deepEqual(files(difference.introduced),['notes/new.md']);
+	assert.deepEqual(files(difference.resolved),['notes/resolved.md']);
+	assert.deepEqual(files(difference.remaining),['notes/remains.md']);
+	assert.notEqual(result(first,'properties').diagnostics[0].line,difference.remaining[0].diagnostic.line);
+	assert.deepEqual(difference.unavailableChecks,['manifest']);
+	const partial = {...second,checks:second.checks.map(check=>({...check,status:'partial',coverage:{...check.coverage,unknown:1}}))};
+	assert.deepEqual(compareDiagnosticReports(first,partial).resolved,[]);
+	assert.deepEqual(compareDiagnosticReports(first,{...second,environment:'desktop'}).introduced,[]);
 });
 
 test('selecting only an approved special check identifies files and directories omitted from its input', async t => {

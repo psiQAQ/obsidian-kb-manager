@@ -6,21 +6,22 @@ import {reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, maskLiterals, staticOccurrences} from './links.ts';
 import {footnoteEvidence} from './references.ts';
+import type {EvidenceOptions, InputTrace} from './provenance.ts';
 import {decode, hash, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, libraryLocation, manifestSnapshot} from './snapshot.ts';
 import {isRecord, result} from './types.ts';
-import type {DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkRequest} from './types.ts';
+import type {DiagnosticCheckResult, LinkOccurrence, LinkRequest} from './types.ts';
 
 type Manifest = Awaited<ReturnType<typeof manifestSnapshot>>;
 type Location = Awaited<ReturnType<typeof libraryLocation>>;
 
-async function* readStructured(root: string, inventory: Inventory, extension: string, signal?: AbortSignal) {
+async function* readStructured(root: string, inventory: Inventory, extension: string, {signal,trace}: EvidenceOptions) {
 	let remaining = 24 * 1024 * 1024;
 	for (const file of inventory.files) {
 		if (!file.toLowerCase().endsWith(extension)) continue;
 		let text: string | undefined;
 		try {
-			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024),signal);
+			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024),signal,trace);
 			remaining -= bytes.length;
 			text = decode(bytes);
 		} catch {signal?.throwIfAborted();}
@@ -36,17 +37,17 @@ function baseData(text: string) {
 	} catch {return undefined;}
 }
 
-async function bindings(root: string, manifest: Manifest, signal?: AbortSignal) {
+async function bindings(root: string, manifest: Manifest, signal?: AbortSignal, trace?: InputTrace) {
 	const entries = [];
 	for (const {path,fingerprint,root:bindingRoot} of manifest.parsed?.identity?.managed ?? []) {
 		const binding = {path,fingerprint,root:bindingRoot};
-		try {entries.push({...binding,status:'readable',digest:hash(await readRelative(root,path,undefined,signal))});}
+		try {entries.push({...binding,status:'readable',digest:hash(await readRelative(root,path,undefined,signal,trace))});}
 		catch (error) {signal?.throwIfAborted(); entries.push({...binding,status:isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'unreadable'});}
 	}
 	return entries;
 }
 
-export function commonEvidence(options: DiagnosticOptions, location: Location, inventory: Inventory,
+export function commonEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
 	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>) {
 	const {root, relative, vault, identifiedVault} = location;
 	const {signal} = options;
@@ -94,7 +95,7 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 	async function readCanvases() {
 		const {vaultPath} = getResolver();
 		const canvases = [];
-		for await (const {file,text} of readStructured(root,inventory,'.canvas',signal)) {
+		for await (const {file,text} of readStructured(root,inventory,'.canvas',options)) {
 			if (text === undefined) {canvases.push({file, unreadable:true}); continue;}
 			let data: unknown;
 			try {data = JSON.parse(text);} catch {canvases.push({file, malformed:true}); continue;}
@@ -134,12 +135,12 @@ export function commonEvidence(options: DiagnosticOptions, location: Location, i
 				registration:{registered:options.registered,duplicate:options.duplicate}, inventory:{files:[...inventory.files],
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
-		case 'bindings': return {result:check, manifest:{parsed:!!manifest.parsed,reason:manifest.reason}, bindings:await bindings(root,manifest,signal), libraryPath:identifiedVault ? relative : undefined};
+		case 'bindings': return {result:check, manifest:{parsed:!!manifest.parsed,reason:manifest.reason}, bindings:await bindings(root,manifest,signal,options.trace), libraryPath:identifiedVault ? relative : undefined};
 		case 'bases': {
 			const noteCoverage = result({id:check.id,name:check.name});
 			reportUnreadableNotes(noteCoverage,inventory);
 			const files = [];
-			for await (const {file,text} of readStructured(root,inventory,'.base',signal)) files.push({file,data:text === undefined ? undefined : baseData(text),unreadable:text === undefined});
+			for await (const {file,text} of readStructured(root,inventory,'.base',options)) files.push({file,data:text === undefined ? undefined : baseData(text),unreadable:text === undefined});
 			const notes = [];
 			for (const {path:file,problem,body,lineOffset} of inventory.notes) {
 				const pause = checkpoint?.();

@@ -5,10 +5,11 @@ import {baseViewNames} from './base-view.ts';
 import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {inspectFootnotes, inspectPdfFragment} from './references.ts';
+import type {EvidenceOptions} from './provenance.ts';
 import {decode, noteReader, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, NoteRecord} from './snapshot.ts';
 import {printable} from './types.ts';
-import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
+import type {Diagnostic, DiagnosticCheckResult, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
 
 const newlineOnly = (text: string) => text.replace(/[^\n]/gu, '');
 const local = (value: string) => !/^(?:[A-Za-z][\w+.-]*:|\/\/)/u.test(value);
@@ -75,11 +76,11 @@ export function linkCandidateIndex(paths: () => Iterable<string>) {
 	};
 }
 
-export function linkResolver(options: DiagnosticOptions, inventory: Inventory, root: string, location: string) {
-	const {signal} = options;
+export function linkResolver(options: EvidenceOptions, inventory: Inventory, root: string, location: string) {
+	const {signal,trace} = options;
 	const files = new Set(inventory.files);
 	const notes = new Map(inventory.notes.map(note => [note.path, note]));
-	const readNote = inventory.mode === 'paths' ? noteReader(root, signal) : undefined;
+	const readNote = inventory.mode === 'paths' ? noteReader(root, signal, trace) : undefined;
 	const anchors = new Map<string, {headings: Set<string>; blocks: Set<string>} | undefined>();
 	const baseViews = new Map<string, Promise<ReadonlySet<string> | undefined>>();
 	const vaultPath = (file: string) => location ? `${location}/${file}` : file;
@@ -88,7 +89,7 @@ export function linkResolver(options: DiagnosticOptions, inventory: Inventory, r
 		if (!within(vaultFile, location) || !files.has(file)) return 'unknown';
 		let views = baseViews.get(file);
 		if (!views) {
-			views = readRelative(root, file, undefined, signal).then(bytes => baseViewNames(decode(bytes))).catch(() => {
+			views = readRelative(root, file, undefined, signal, trace).then(bytes => baseViewNames(decode(bytes))).catch(() => {
 				signal?.throwIfAborted();
 				return undefined;
 			});
@@ -223,7 +224,7 @@ function reasonForUnknown(check: DiagnosticCheckResult) {
 		addReason(check, tr('部分结果需要 Obsidian 索引、受支持的链接语法或可读文件才能确认。','Some results need the Obsidian index, supported link syntax, or readable files to be verified.'));
 }
 
-export async function inspectLinks(options: DiagnosticOptions, inventory: Inventory, root: string, location: string,
+export async function inspectLinks(options: EvidenceOptions, inventory: Inventory, root: string, location: string,
 	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}) {
 	const {links, anchors, portability} = checks;
 	const checkpoint = diagnosticCheckpoint(options.signal);

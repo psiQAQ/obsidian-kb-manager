@@ -18,7 +18,11 @@ export interface DiagnosticCheckResult {
 	coverage: Coverage;
 	diagnostics: Diagnostic[];
 	reason?: string;
+	rule?: DiagnosticRuleVersion;
 }
+
+export interface DiagnosticRuleVersion {engine:'legacy'|'bundled'|'node'; version:string; path?:string; digest?:string}
+export interface DiagnosticInputVersion {schemaVersion:1; libraryPath:string; fingerprint:string; files:string[]; directories:string[]}
 
 export interface TemplateIdentity { id: string; version: string }
 export interface DiagnosticReport {
@@ -30,6 +34,8 @@ export interface DiagnosticReport {
 	library: { id?: string; template?: TemplateIdentity };
 	status: DiagnosticStatus;
 	checks: DiagnosticCheckResult[];
+	engineVersion?: string;
+	inputVersion?: DiagnosticInputVersion;
 	logPath?: string;
 	logError?: string;
 }
@@ -83,6 +89,8 @@ export interface DiagnosticOptions {
 	nodeExecutable?: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** Previously listed template checks for a cancellation before the declaration can be read. */
+	knownTemplateChecks?: readonly Pick<SpecialCheck,'id'|'name'>[];
 }
 
 export interface SpecialCheck { id: string; name: string; path: string; description?: string; digest?: string; reason?: string }

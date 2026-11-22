@@ -4,6 +4,7 @@ import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './cover
 import {fencedBlocks} from './fences.ts';
 import {dynamicTarget, linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
 import {inspectPdfFragment} from './references.ts';
+import type {EvidenceOptions, InputTrace} from './provenance.ts';
 import {decode, hash, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, manifestSnapshot} from './snapshot.ts';
 import {isRecord, printable} from './types.ts';
@@ -82,12 +83,12 @@ export function inspectProperties(check: DiagnosticCheckResult, inventory: Inven
 
 async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string, inventory: Inventory, extension: string,
 	inspect: (file: string, text: string) => void | Promise<void>,
-	options: {inventoryCoverage?: false; countFiles?: false; onUnreadable?: (diagnostic: Diagnostic) => void; signal?: AbortSignal} = {}) {
+	options: {inventoryCoverage?: false; countFiles?: false; onUnreadable?: (diagnostic: Diagnostic) => void; signal?: AbortSignal; trace?: InputTrace} = {}) {
 	if (options.inventoryCoverage !== false) reportInventoryCoverage(check, inventory);
 	for (const file of inventory.files) {
 		if (!file.toLowerCase().endsWith(extension)) continue;
 		let text: string;
-		try {text = decode(await readRelative(root, file, undefined, options.signal));}
+		try {text = decode(await readRelative(root, file, undefined, options.signal, options.trace));}
 		catch {
 			options.signal?.throwIfAborted();
 			check.coverage.unknown++;
@@ -112,7 +113,7 @@ const color = (value: unknown) => value === undefined || typeof value === 'strin
 const optionalEnum = (value: unknown, domain: Set<string>) => value === undefined || typeof value === 'string' && domain.has(value);
 
 export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticCheckResult; portability?: DiagnosticCheckResult},
-	root: string, inventory: Inventory, options: DiagnosticOptions, location: string) {
+	root: string, inventory: Inventory, options: EvidenceOptions, location: string) {
 	const check = canvas ?? portability;
 	if (!check) return;
 	const checkpoint = diagnosticCheckpoint(options.signal);
@@ -236,6 +237,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		}
 	}, {
 		signal: options.signal,
+		trace: options.trace,
 		inventoryCoverage: canvas ? undefined : false,
 		countFiles: canvas ? undefined : false,
 		onUnreadable: diagnostic => {
@@ -262,7 +264,7 @@ function validFilter(value: unknown, depth = 0): boolean {
 	return ['and','or','not'].includes(operator) && Array.isArray(operands) && operands.every(item => validFilter(item, depth + 1));
 }
 
-export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory, signal?: AbortSignal) {
+export async function inspectBases(check: DiagnosticCheckResult, root: string, inventory: Inventory, signal?: AbortSignal, trace?: InputTrace) {
 	const checkpoint = diagnosticCheckpoint(signal);
 	let dynamicExpressions = 0;
 	function inspect(file: string, text: string, line?: number) {
@@ -290,7 +292,7 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 			else dynamicExpressions++;
 		}
 	}
-	await inspectStructuredFiles(check, root, inventory, '.base', inspect, {signal});
+	await inspectStructuredFiles(check, root, inventory, '.base', inspect, {signal,trace});
 	reportUnreadableNotes(check, inventory);
 	for (const note of inventory.notes) {
 		const pause = checkpoint?.();
@@ -311,11 +313,11 @@ export async function inspectBases(check: DiagnosticCheckResult, root: string, i
 	if (dynamicExpressions) addReason(check, tr('动态表达式的运行结果须在 Obsidian 中确认。','Open the Base in Obsidian to verify the results of dynamic expressions.'));
 }
 
-export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string, signal?: AbortSignal) {
+export async function inspectBindings(check: DiagnosticCheckResult, manifest: Manifest, root: string, location?: string, signal?: AbortSignal, trace?: InputTrace) {
 	if (!manifest.parsed) {check.coverage.unknown++; check.reason = manifest.reason; return;}
 	for (const binding of manifest.parsed.identity?.managed ?? []) {
 		try {
-			const contents = await readRelative(root, binding.path, undefined, signal);
+			const contents = await readRelative(root, binding.path, undefined, signal, trace);
 			check.coverage.checked++;
 			if (hash(contents) !== binding.fingerprint) check.diagnostics.push({severity:'warning', code:'binding-drift', file:binding.path, message:tr('受管文件内容与登记指纹不同，请复核绑定。','The managed file differs from its saved fingerprint. Review its bindings.')});
 			if (binding.root && location !== undefined && binding.root !== location)

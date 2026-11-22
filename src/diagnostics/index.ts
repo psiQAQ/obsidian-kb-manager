@@ -1,21 +1,26 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
+import {diagnosticEngineVersion} from '../kb/common-rules.ts';
+import {bundledCommonRule} from './bundled-common.ts';
 import {collectCheckLinkEvidence} from './check-links.ts';
 import {commonCheckTrusted, commonSnapshot, runCommon} from './common.ts';
 import {commonEvidence} from './common-evidence.ts';
 import {addReason} from './coverage.ts';
 import {saveDiagnosticReport} from './history.ts';
 import {inspectLinks} from './links.ts';
+import {traceDiagnosticInputs} from './provenance.ts';
 import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelectedTemplateScripts, templateSnapshot} from './snapshot.ts';
 import {runSpecial, specialCheckTrusted} from './special.ts';
 import {inspectBases, inspectBindings, inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
-import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
+import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticRuleVersion, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
 
 export {generalChecks, portabilityCheck} from './types.ts';
 export {baseViewStatus} from './base-view.ts';
 export {commonCheckTrusted, listCommonChecks, readDiagnosticScript} from './common.ts';
 export {listDiagnosticHistory} from './history.ts';
+export {compareDiagnosticReports} from './comparison.ts';
+export {diagnosticFreshness} from './provenance.ts';
 export type * from './types.ts';
 
 export async function listSpecialChecks(libraryRoot: string, signal?: AbortSignal): Promise<{template?: TemplateIdentity; checks: SpecialCheck[]; reason?: string}> {
@@ -53,30 +58,45 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 	const all = !selected || selected === 'all';
 	const names = new Map([...generalChecks, portabilityCheck].map(rule => [rule.id as string,rule.name]));
 	const active = all ? generalChecks.map(item => item.id as string) : [...new Set(selected)];
+	const listedTemplateChecks = options.knownTemplateChecks ?? [];
+	for (const check of listedTemplateChecks) names.set(check.id,check.name);
+	let readTemplate = false;
 	const describe = (id: string) => ({id,name:names.get(id) ?? tr('专项检查','Template check')});
 	const startedAt = new Date().toISOString();
 	const report: DiagnosticReport = {schemaVersion:1, runId:randomUUID(), startedAt, finishedAt:startedAt,
-		environment: options.resolveLink ? 'desktop' : 'offline', library:{}, status:'skipped', checks:[]};
+		environment: options.resolveLink ? 'desktop' : 'offline', library:{}, status:'skipped', checks:[], engineVersion:diagnosticEngineVersion};
+	const trace = traceDiagnosticInputs();
 	let location: Awaited<ReturnType<typeof libraryLocation>> | undefined;
 	try {
 		const located = await libraryLocation(options);
 		location = located;
 		const {root, relative, vault, configDir, identifiedVault} = located;
 		const needsScripts = all || selected.some(id => !generalIds.has(id));
-		const template = await templateSnapshot(root, false, signal);
+		const template = await templateSnapshot(root, false, signal, trace);
+		readTemplate = true;
 		const specials = new Map(template.checks.map(check => [check.id,check]));
 		for (const check of specials.values()) names.set(check.id,check.name);
 		if (all) active.push(...specials.keys());
-		if (needsScripts) await readSelectedTemplateScripts(root, template, active, signal);
-		const manifest = await manifestSnapshot(root, signal);
+		if (needsScripts) await readSelectedTemplateScripts(root, template, active, signal, trace);
+		const manifest = await manifestSnapshot(root, signal, trace);
 		const identity = manifest.parsed?.identity;
 		report.library = {id:identity?.id, template:template.template ? {id:template.template.id, version:template.template.version} : identity?.template};
 		const dirs = new Set(template.template?.pageTemplates ?? []);
 		if (manifest.parsed?.mapping?.templates) dirs.add(manifest.parsed.mapping.templates);
 		const templateDirs = [...dirs];
 		const checks = new Map(active.map(id => [id, result(describe(id))]));
-		const common = await commonSnapshot(root,manifest.checkKit,active,signal);
+		const common = await commonSnapshot(root,manifest.checkKit,active,signal,trace);
 		const commonRules = new Map(common?.map(rule => [rule.id,rule]));
+		function ruleVersion(id: string): DiagnosticRuleVersion | undefined {
+			const commonRule = commonRules.get(id);
+			const specialRule = specials.get(id);
+			if (commonRule) return {engine:bundledCommonRule(commonRule) ? 'bundled' : 'node',
+				version:manifest.checkKit?.version ?? diagnosticEngineVersion, path:commonRule.path, digest:commonRule.digest};
+			if (specialRule) return {engine:'node', version:template.template?.version ?? diagnosticEngineVersion,
+				path:specialRule.path, digest:specialRule.digest};
+			if (generalIds.has(id)) return {engine:'legacy', version:diagnosticEngineVersion};
+			return undefined;
+		}
 		const availableGeneral = active.filter(id => {
 			if (!generalIds.has(id)) return false;
 			if (!common) return true;
@@ -89,14 +109,14 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		});
 		const needsNotes = templateNeedsNotes || availableGeneral.some(id => markdownChecks.has(id));
 		const needsPaths = availableGeneral.includes('manifest') || availableGeneral.includes('canvas');
-		const found = await inventory(root, configDir, needsNotes ? 'notes' : needsPaths ? 'paths' : 'none', signal);
+		const found = await inventory(root, configDir, needsNotes ? 'notes' : needsPaths ? 'paths' : 'none', signal, trace);
 		let readCommonEvidence: ReturnType<typeof commonEvidence> | undefined;
-		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined};
+		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined,trace};
 		const completed = new Set<string>();
 		const push = (check: DiagnosticCheckResult) => {
 			signal?.throwIfAborted();
 			completed.add(check.id);
-			report.checks.push(settle(check));
+			report.checks.push({...settle(check),rule:ruleVersion(check.id)});
 		};
 		if (!common) {
 			const links = {links:checks.get('links'), anchors:checks.get('anchors'), portability:checks.get('portability')};
@@ -130,7 +150,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		}
 		const context = needsScripts && template.template && manifest.parsed ? checkContext(relative,template.template,manifest,found.notes) : undefined;
 		let linkEvidence: ReturnType<typeof collectCheckLinkEvidence> | undefined;
-		const readLinks = () => linkEvidence ??= collectCheckLinkEvidence({...options,vaultRoot:identifiedVault ? vault : undefined}, found, root, relative);
+		const readLinks = () => linkEvidence ??= collectCheckLinkEvidence(linkOptions, found, root, relative);
 		for (const check of checks.values()) {
 			signal?.throwIfAborted();
 			if (completed.has(check.id)) continue;
@@ -139,7 +159,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 			try {
 				if (rule) {
 					push(await runCommon(rule, check, options, vault, () => {
-						readCommonEvidence ??= commonEvidence(options,located,found,manifest,template,templateDirs,new Set(commonRules.keys()));
+						readCommonEvidence ??= commonEvidence(linkOptions,located,found,manifest,template,templateDirs,new Set(commonRules.keys()));
 						return readCommonEvidence(check);
 					}));
 					continue;
@@ -151,8 +171,8 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				switch (check.id) {
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
-				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined, signal); break;
-				case 'bases': await inspectBases(check, root, found, signal); break;
+				case 'bindings': await inspectBindings(check, manifest, root, identifiedVault ? relative : undefined, signal, trace); break;
+				case 'bases': await inspectBases(check, root, found, signal, trace); break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}
@@ -162,6 +182,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 			}
 			push(check);
 		}
+		report.inputVersion = trace.finish(relative);
 	} catch {
 		if (signal?.aborted) return cancelled();
 		const message = location ? tr('无法扫描知识库。','Could not scan the library.') : tr('无法访问指定的知识库根目录。','Could not access the selected library folder.');
@@ -182,6 +203,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 	function cancelled() {
 		report.status = 'cancelled';
 		report.finishedAt = new Date().toISOString();
+		if (all && !readTemplate) active.push(...listedTemplateChecks.map(check => check.id));
 		for (const id of active) if (!report.checks.some(item => item.id === id)) report.checks.push({
 			...result(describe(id)), status:'not-run', reason:tr('检查取消时此项尚未完成。','This check had not finished when the run was cancelled.'),
 		});

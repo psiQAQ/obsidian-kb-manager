@@ -1,8 +1,7 @@
-import * as fs from 'node:fs/promises';
-import {join} from 'node:path';
 import {tr} from '../i18n.ts';
-import {commonRuleDigests} from '../kb/common-rules.ts';
-import {libraryLocation, manifestSnapshot, readChecker} from './snapshot.ts';
+import {bundledCommonRule, runBundledCommon} from './bundled-common.ts';
+import {entryVersion, libraryLocation, manifestSnapshot, readChecker, relativeEntry, unavailableVersion} from './snapshot.ts';
+import type {InputTrace} from './provenance.ts';
 import type {DeclaredCheck} from './snapshot.ts';
 import {readFindings, runChecker} from './special.ts';
 import {generalChecks, isRecord, portabilityCheck, printable, settle} from './types.ts';
@@ -14,19 +13,26 @@ const commonRules = [...generalChecks, portabilityCheck];
 const rulePath = (id: string) => `checks/common/${id}.mjs`;
 type KitDeclaration = Awaited<ReturnType<typeof manifestSnapshot>>['checkKit'];
 
-async function localKit(root: string, signal?: AbortSignal) {
+async function localKit(root: string, signal?: AbortSignal, trace?: InputTrace) {
 	// A plain Git checkout has tracked rule files but may not have a private kb.toml.
 	const stat = async (file: string) => {
-		signal?.throwIfAborted();
-		return fs.lstat(join(root,file)).catch(() => undefined);
+		try {
+			const {stat} = await relativeEntry(root,file,signal);
+			trace?.file(file,entryVersion(stat));
+			return stat;
+		} catch (error) {
+			signal?.throwIfAborted();
+			trace?.file(file,unavailableVersion(error));
+			return undefined;
+		}
 	};
 	if (!(await stat('checks'))?.isDirectory() || !(await stat('checks/kb-check.cjs'))?.isFile() || !(await stat('checks/common'))?.isDirectory()) return false;
 	for (const {id} of commonRules) if (await stat(rulePath(id))) return true;
 	return false;
 }
 
-export async function commonSnapshot(root: string, kit: KitDeclaration, selected?: readonly string[], signal?: AbortSignal) {
-	if (kit === undefined && !await localKit(root, signal)) return;
+export async function commonSnapshot(root: string, kit: KitDeclaration, selected?: readonly string[], signal?: AbortSignal, trace?: InputTrace) {
+	if (kit === undefined && !await localKit(root, signal, trace)) return;
 	const checks: DeclaredCheck[] = [];
 	for (const rule of commonRules) {
 		signal?.throwIfAborted();
@@ -36,7 +42,7 @@ export async function commonSnapshot(root: string, kit: KitDeclaration, selected
 		if (kit === null) {check.reason = invalidKit(); continue;}
 		if (kit && !Object.prototype.hasOwnProperty.call(kit.digests, check.path)) {check.reason = unavailable(); continue;}
 		try {
-			const {source, digest} = await readChecker(root, check.path, signal);
+			const {source, digest} = await readChecker(root, check.path, signal, trace);
 			check.source = source;
 			check.digest = digest;
 		} catch {signal?.throwIfAborted(); check.reason = unavailable();}
@@ -63,7 +69,7 @@ export async function readDiagnosticScript(libraryRoot: string, scriptPath: stri
 
 export function commonCheckTrusted(check: SpecialCheck, trustedDigests: readonly string[] = []) {
 	const {digest} = check;
-	return !!digest && (commonRuleDigests()[check.path] === digest || trustedDigests.includes(digest));
+	return !!digest && (!!bundledCommonRule(check) || trustedDigests.includes(digest));
 }
 
 function failure(check: DiagnosticCheckResult, path: string, code: string, message: string) {
@@ -88,7 +94,8 @@ export async function runCommon(rule: DeclaredCheck, result: DiagnosticCheckResu
 	if (!rule.source || !rule.digest) return fail('checker-unavailable', rule.reason ?? unavailable());
 	if (!commonCheckTrusted(rule, options.trustedDigests))
 		return fail('checker-untrusted', tr('运行前请审查并认可通用规则的当前摘要。','Review and approve the common rule’s current fingerprint before running it.'));
-	const response = await runChecker(rule.source, options, vault, readContext, true);
+	const bundled = bundledCommonRule(rule);
+	const response = bundled ? await runBundledCommon(bundled,readContext,options.signal) : await runChecker(rule.source, options, vault, readContext, true);
 	if ('error' in response) {
 		const message = response.error === 'checker-node'
 			? tr('找不到 Vault 外有效的本机 Node.js。','Node.js was not found outside the vault.')

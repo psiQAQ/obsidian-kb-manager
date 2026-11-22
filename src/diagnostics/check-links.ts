@@ -1,10 +1,11 @@
 import {dynamicTarget, linkRequest, linkResolver, staticOccurrences} from './links.ts';
 import {diagnosticCheckpoint} from './checkpoint.ts';
+import type {EvidenceOptions} from './provenance.ts';
 import type {Inventory} from './snapshot.ts';
 import {printable} from './types.ts';
-import type {CheckContext, CheckLinkEvidence, DiagnosticOptions, LinkOccurrence} from './types.ts';
+import type {CheckContext, CheckLinkEvidence, LinkOccurrence} from './types.ts';
 
-export async function collectCheckLinkEvidence(options: DiagnosticOptions, inventory: Inventory, root: string, libraryPath: string) {
+export async function collectCheckLinkEvidence(options: EvidenceOptions, inventory: Inventory, root: string, libraryPath: string) {
 	const checkpoint = diagnosticCheckpoint(options.signal);
 	const {resolve, vaultPath} = linkResolver(options, inventory, root, libraryPath);
 	const notes = new Map(inventory.notes.map(note => [vaultPath(note.path), note]));

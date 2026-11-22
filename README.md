@@ -6,7 +6,7 @@ Manage several knowledge bases in one Obsidian vault, each with its own template
 
 ## Install on desktop
 
-Use Obsidian 1.15.1 or later. Install Git for repository operations and Node.js to run a new library’s diagnostic rules in Obsidian or from the command line.
+Use Obsidian 1.15.1 or later. Install Git for repository operations. Install Node.js to run template-specific checks, approved edits to general rules, or the command-line runner.
 
 In **Settings → Community plugins → Browse**, search for **Knowledge Base Manager**, then select **Install** and **Enable**. You can also open the plugin directly from the [Obsidian community directory](https://community.obsidian.md/plugins/knowledge-base-manager).
 
@@ -46,7 +46,7 @@ The CLI writes JSON to standard output. Read `status`, each check’s `coverage`
 | Capability | When it is used |
 | --- | --- |
 | Filesystem access | Creating and moving a library, reading its Git metadata, and saving diagnostic logs in its `.log/` folder require direct access to local files. The desktop plugin uses Node.js filesystem APIs to check paths and filesystem links before managed operations. |
-| Local processes | The plugin starts system Git for repository operations and OpenSSH for SSH connections. It selects executables outside the vault and passes arguments directly when starting a process. Library-owned common and template-specific checks run in a separate local Node.js process with your operating-system account’s file and network permissions. Built-in checks are identified by their bundled fingerprints. For personal scripts, review the source and approve its SHA-256 fingerprint before running it. |
+| Local processes | The plugin starts system Git for repository operations and OpenSSH for SSH connections. It selects executables outside the vault and passes arguments directly. General rules whose path and SHA-256 match the installed plugin run from its bundle. Edited general rules and template-specific checks run in a separate local Node.js process with your operating-system account’s file and network permissions. Review personal scripts and approve their current SHA-256 fingerprint before running them. |
 | Vault paths and note contents | Select a manifest by path or scan a folder to register libraries. Portability checks look for same-name candidates in the current and registered libraries by default. Choose the whole-vault option to include other folders. Obsidian resolves actual link destinations across the vault in both modes. |
 | Diagnostic JSON | Open the report or debug information to inspect the JSON. You can select the text and use your system’s Copy command. |
 | Network and credentials | Git clone, fetch, pull, and push contact the remote you configure. A push sends the library’s commits, including their author information. Automatic sync requires authorization for that library. Desktop Git can use your system credential helper or SSH configuration. |
