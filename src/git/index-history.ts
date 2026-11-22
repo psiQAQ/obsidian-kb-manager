@@ -13,12 +13,14 @@ export type HistorySide = {kind:'commit';oid:string}|{kind:'empty'}|{kind:'worki
 type CommittedSide = Exclude<HistorySide,{kind:'working'}>;
 type ChangeStatus = 'A'|'D'|'M'|'R'|'C'|'T';
 type FileVersion = {file:string;mode:string;oid:string};
+type LineCounts = {additions:number;deletions:number};
 export interface HistoryFile {
 	file:string;
 	status:ChangeStatus;
 	before?:FileVersion;
 	after?:FileVersion;
 	rewritten?:boolean;
+	lineCounts?:LineCounts;
 }
 
 const emptyTree='4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -36,10 +38,26 @@ function requireFile(file:string) {
 		throw new Error(fromEnglish('Invalid history file path.','无效的历史文件路径。'));
 }
 
-function* diffRecords(raw:Buffer):Generator<HistoryFile|string> {
+const statKey=(oldFile:string,file:string)=>oldFile+'\0'+file;
+
+function readNumstat(tokens:string[],start:number,counts=new Map<string,LineCounts>()) {
+	for(let i=start;i<tokens.length;){
+		const match=/^(\d+|-)\t(\d+|-)\t([\s\S]*)$/u.exec(tokens[i++]!);
+		if(!match)throw new Error('Invalid Git numstat record');
+		const [,additions,deletions,pathname]=match;
+		const oldFile=pathname||tokens[i++],file=pathname||tokens[i++];
+		if(!oldFile || !file)throw new Error('Incomplete Git numstat path');
+		if(additions!=='-' && deletions!=='-')counts.set(statKey(oldFile,file),{additions:Number(additions),deletions:Number(deletions)});
+	}
+	return counts;
+}
+
+function* diffRecords(raw:Buffer,counts?:Map<string,LineCounts>):Generator<HistoryFile|string> {
 	const tokens=fields(raw);
 	for(let i=0;i<tokens.length;){
 		const entry=tokens[i++]!;
+		// In a combined -z diff Git emits every raw record before the first numstat record.
+		if(counts && !entry.startsWith(':')){readNumstat(tokens,i-1,counts);return;}
 		if(oidPattern.test(entry)){yield entry;continue;}
 		const oldFile=tokens[i++];
 		if(!oldFile)throw new Error('Incomplete Git tree change');
@@ -58,11 +76,16 @@ function* diffRecords(raw:Buffer):Generator<HistoryFile|string> {
 	}
 }
 
-function parseDeltas(raw:Buffer) {
+function parseDeltas(raw:Buffer,withStats=false) {
 	const files:HistoryFile[]=[];
-	for(const record of diffRecords(raw)){
+	const counts=withStats?new Map<string,LineCounts>():undefined;
+	for(const record of diffRecords(raw,counts)){
 		if(typeof record==='string')throw new Error('Unexpected Git diff header');
 		files.push(record);
+	}
+	if(counts)for(const file of files){
+		const lineCounts=counts.get(statKey(file.before?.file??file.file,file.file));
+		if(lineCounts)file.lineCounts=lineCounts;
 	}
 	return files;
 }
@@ -111,26 +134,38 @@ async function workingVersion(dir:string,entry:FileVersion,normalize=false) {
 const options=['--raw','--no-abbrev','--no-ext-diff','--no-textconv','--find-renames','-z'];
 const treeish=(side:CommittedSide)=>side.kind==='commit'?side.oid:emptyTree;
 
-async function workingDeltas(dir:string,before:CommittedSide,followUntrackedRenames=true) {
-	const [raw,untracked]=await withIndexCopy(dir,async indexFile=>[
-		await gitResult(dir,['-c','diff.autoRefreshIndex=true','diff',...options,treeish(before),'--'],{indexFile}),
-		await gitResult(dir,['ls-files','--others','--exclude-standard','-z'],{indexFile}),
-	]);
-	const extras=new Set(fields(untracked.stdout));
+async function workingDeltas(dir:string,before:CommittedSide,purpose:'comparison'|'successor'='comparison') {
+	const compare=purpose==='comparison';
+	const {deltas,extras,recreatedStats}=await withIndexCopy(dir,async indexFile=>{
+		const raw=await gitResult(dir,['-c','diff.autoRefreshIndex=true','diff',...options,
+			...(compare?['--numstat']:[]),treeish(before),'--'],{indexFile});
+		const untracked=await gitResult(dir,['ls-files','--others','--exclude-standard','-z'],{indexFile});
+		const deltas=parseDeltas(raw.stdout,compare),extras=new Set(fields(untracked.stdout));
+		if(!compare)return {deltas,extras};
+		const restored=deltas.flatMap(delta=>delta.before && extras.has(delta.before.file)?[delta.before]:[]);
+		if(!restored.length)return {deltas,extras};
+		// An unstaged file recreated after a staged deletion is absent from Git's original diff.
+		// Seed its old entry in the private index so Git counts the change against the working file.
+		const stdin=restored.map(file=>file.mode+' '+file.oid+'\t'+file.file+'\0').join('');
+		await gitResult(dir,['update-index','-z','--index-info'],{indexFile,stdin});
+		const {stdout}=await gitResult(dir,['diff','--numstat','--no-renames','--no-ext-diff','--no-textconv','-z',treeish(before),'--'],{indexFile});
+		return {deltas,extras,recreatedStats:readNumstat(fields(stdout),0)};
+	});
 	const files=new Map<string,HistoryFile>();
-	for(const delta of parseDeltas(raw.stdout)){
+	for(const delta of deltas){
 		if(delta.status==='R' && delta.before && extras.has(delta.before.file)){
 			const file=delta.before.file;
 			files.set(file,{file,status:'D',before:delta.before});
-			files.set(delta.file,{...delta,status:'A',before:undefined});
+			files.set(delta.file,{file:delta.file,status:'A',after:delta.after});
 		}else files.set(delta.file,delta);
 	}
 	for(const file of extras){
 		requireFile(file);
 		const before=files.get(file)?.before;
-		files.set(file,{file,status:before?'M':'A',before,after:{file,mode:'100644',oid:''}});
+		const lineCounts=before?recreatedStats?.get(statKey(file,file)):undefined;
+		files.set(file,{file,status:before?'M':'A',before,after:{file,mode:'100644',oid:''},...(lineCounts?{lineCounts}:{})});
 	}
-	if(!followUntrackedRenames)return [...files.values()];
+	if(!compare)return [...files.values()];
 	const deleted=new Map<string,HistoryFile[]>();
 	for(const delta of files.values()){
 		if(delta.status!=='D' || !delta.before)continue;
@@ -159,8 +194,9 @@ async function workingDeltas(dir:string,before:CommittedSide,followUntrackedRena
 }
 
 function reverseDelta(delta:HistoryFile):HistoryFile {
-	const {before,after,status}=delta;
-	return {file:before?.file??delta.file,before:after,after:before,status:status==='A'?'D':status==='D'?'A':status};
+	const {before,after,status,lineCounts}=delta;
+	return {file:before?.file??delta.file,before:after,after:before,status:status==='A'?'D':status==='D'?'A':status,
+		...(lineCounts?{lineCounts:{additions:lineCounts.deletions,deletions:lineCounts.additions}}:{})};
 }
 
 async function requireCommitSide(dir:string,side:HistorySide) {
@@ -176,7 +212,7 @@ export async function compareHistory(dir:string,before:HistorySide,after:History
 	let files:HistoryFile[];
 	if(before.kind==='working')files=after.kind==='working'?[]:(await workingDeltas(dir,after)).map(reverseDelta);
 	else if(after.kind==='working')files=await workingDeltas(dir,before);
-	else files=parseDeltas((await gitResult(dir,['diff-tree','--no-commit-id','-r',...options,treeish(before),treeish(after),'--'])).stdout);
+	else files=parseDeltas((await gitResult(dir,['diff-tree','--no-commit-id','-r',...options,'--numstat',treeish(before),treeish(after),'--'])).stdout,true);
 	return files.sort((a,b)=>Buffer.compare(Buffer.from(a.file),Buffer.from(b.file)));
 }
 
@@ -288,7 +324,7 @@ export async function currentHistoryPath(dir:string,oid:string,file:string) {
 	if(!head || !await treeFile(dir,oid,file))return undefined;
 	const tracked=oid===head?file:await committedSuccessor(dir,oid,file,head);
 	if(!tracked)return undefined;
-	const changes=await workingDeltas(dir,{kind:'commit',oid:head},false);
+	const changes=await workingDeltas(dir,{kind:'commit',oid:head},'successor');
 	const direct=changes.find(change=>change.before?.file===tracked && change.status!=='C');
 	if(direct?.before){
 		// Inspect possible working successors without allowing Git's pairing order to choose between exact matches.

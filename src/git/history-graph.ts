@@ -1,6 +1,6 @@
 import { guardGit } from './guard.ts';
 import { gitResult } from './network-native.ts';
-import { headOid } from './repository.ts';
+import { headOid, readCommit } from './repository.ts';
 
 export interface GraphCommit {
 	oid:string;
@@ -8,6 +8,11 @@ export interface GraphCommit {
 	author:string;
 	timestamp:number;
 	message:string;
+}
+
+export async function readHistoryCommit(dir:string,oid:string) {
+	await guardGit(dir,new Set(),true);
+	return (await readCommit(dir,oid)).commit;
 }
 
 export interface HistorySnapshot {
