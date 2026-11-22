@@ -25,13 +25,13 @@ test('managed template updates render per instance and preserve edits, missing f
 	const host={version:'3.4.0',pluginVersion:()=>undefined};
 	await fs.mkdir(path.join(sourceDir,'Templates'),{recursive:true});
 	const sourceVersion=async(version,files)=>{
-		const spec={protocolVersion:1,id:'reading-example',version,managedFiles:files,text:{[card]:['kb_root']}};
+		const spec={protocolVersion:1,id:'reading-example',version,managedFiles:files,text:{[card]:['kb_root'],[removed]:['kb_root']}};
 		await fs.writeFile(path.join(sourceDir,'kb-template.json'),JSON.stringify(spec));
 	};
 	await sourceVersion('1',[card,legacy,removed,reference]);
 	await fs.writeFile(path.join(sourceDir,card),original);
 	await fs.writeFile(path.join(sourceDir,legacy),'legacy\n');
-	await fs.writeFile(path.join(sourceDir,removed),'keep older copy\n');
+	await fs.writeFile(path.join(sourceDir,removed),'keep older copy in {{kb_root}}\n');
 	await fs.writeFile(path.join(sourceDir,reference),'old reference\n');
 	const git={defaults:await initialIdentityDefaults(),values:{name:'QA',email:'qa@example.invalid'},origin:''};
 	for(const name of ['甲','乙']){
@@ -49,6 +49,7 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(first.templateFiles.digests[card],digest(firstOriginal));
 	assert.equal(second.templateFiles.digests[card],digest(secondOriginal));
 	assert.notEqual(first.templateFiles.digests[card],second.templateFiles.digests[card]);
+	assert.ok(first.identity.managed.some(file=>file.path===removed));
 	await write(first,'自己的笔记.md',draft);
 	await write(second,card,secondOriginal+'我的批注\n');
 	await fs.unlink(await disk.path(second.location+'/'+legacy));
@@ -73,11 +74,13 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(await read(first,card),updated.replace('{{kb_root}}',first.location));
 	assert.equal(await read(first,'自己的笔记.md'),draft);
 	assert.equal(await read(first,added),'new file\n');
-	assert.equal(await read(first,removed),'keep older copy\n');
+	assert.equal(await read(first,removed),'keep older copy in '+first.location+'\n');
 	const after=readManifest(await read(first,'kb.toml'));
 	assert.equal(after.templateFiles.version,'2');
 	assert.equal(after.identity.template.version,'1');
 	assert.equal(after.templateFiles.digests[card],digest(await read(first,card)));
+	assert.equal(after.templateFiles.digests[removed],undefined);
+	assert.equal(after.identity.managed.some(file=>file.path===removed),false);
 	const binding=after.identity.managed.find(file=>file.path===card);
 	assert.deepEqual(binding.offsets,[updated.indexOf('{{kb_root}}')]);
 	assert.equal(binding.fingerprint,after.templateFiles.digests[card]);
@@ -90,4 +93,10 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(await read(second,reference),'new reference\n');
 	assert.equal(readManifest(await read(second,'kb.toml')).templateFiles.version,'1');
 	await assert.rejects(read(second,legacy),{code:'ENOENT'});
+	await sourceVersion('3',[card,legacy,added,reference,removed]);
+	const current=(await discover(disk,config)).find(lib=>lib.location===first.location);
+	const reintroduced=await previewTemplateUpdate(disk,config,current,source,host);
+	assert.equal(reintroduced.files.find(file=>file.path===removed).change,'conflict');
+	assert.equal(reintroduced.canApply,false);
+	assert.equal(await read(first,removed),'keep older copy in '+first.location+'\n');
 });

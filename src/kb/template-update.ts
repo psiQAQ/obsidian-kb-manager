@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { digest, statIfPresent } from '../fs/vault.ts';
 import type { VaultDisk } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
-import { identityFile, readManifest, recheck, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
+import { identityFile, readManifest, recheck, retireTemplateFiles, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
 import type { Config, Identity, Library } from './catalog.ts';
 import { instanceText } from './instance-text.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
@@ -114,7 +114,7 @@ export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expecte
 	}
 	for(const path of Object.keys(templateFiles.digests))if(!names.includes(path))files.push({path,change:'retained'});
 	const pending=files.some(file=>file.change==='conflict' || file.change==='missing' || file.change==='unavailable');
-	const changes=files.some(file=>file.change==='add' || file.change==='replace');
+	const changes=files.some(file=>file.change==='add' || file.change==='replace' || file.change==='retained');
 	const version=spec.version;
 	const blockers=[...compatibility.blockers];
 	if(older(version,templateFiles.version))blockers.push(tr('所选版本早于当前记录的版本。','The selected release is older than the recorded release.'));
@@ -174,7 +174,9 @@ export async function applyTemplateUpdate(disk:VaultDisk,config:Config,approved:
 		throw stale(location);
 	const manifest=await readManifestFile(await disk.path(location+'/'+identityFile));
 	if(manifest.signature!==approved.manifestSignature)throw stale(location);
-	const {identity,templateFiles}=readManifest(manifest.raw);
+	const retired=new Set(approved.files.filter(file=>file.change==='retained').map(file=>file.path));
+	const retainedManifest=retireTemplateFiles(manifest.raw,retired);
+	const {identity,templateFiles}=readManifest(retainedManifest);
 	if(!identity || !templateFiles)throw stale(location);
 	const accepted=approved.files.filter(file=>file.change==='add' || file.change==='replace' || file.change==='current');
 	const filesToWrite=fresh.files.filter(file=>file.change==='add' || file.change==='replace');
@@ -184,7 +186,7 @@ export async function applyTemplateUpdate(disk:VaultDisk,config:Config,approved:
 		recordBinding(identity,file,location);
 	}
 	if(!approved.pending)templateFiles.version=approved.targetVersion;
-	const after=writeTemplateFileRecord(writeIdentity(manifest.raw,identity),templateFiles);
+	const after=writeTemplateFileRecord(writeIdentity(retainedManifest,identity),templateFiles);
 	for(const file of filesToWrite)await publish(disk,location,file,inspectEditor);
 	for(const file of accepted)if((await snapshot(disk,location,file.path)).signature!==file.target)throw stale(file.path);
 	await replaceLibraryManifest(disk,location,manifest.signature,after);

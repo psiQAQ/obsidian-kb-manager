@@ -45,7 +45,7 @@ export async function updateTemplateFiles(plugin:KnowledgeBaseManager,library:Li
 			const detail=preview.contentEl.createEl('details',{cls:'kb-v3-detail'});
 			detail.createEl('summary',{text:labels[file.change]+' · '+file.path});
 			if(file.reason)detail.createEl('p',{text:file.reason});
-			if(file.change==='retained')detail.createEl('p',{text:tr('目标版本取消了对此文件的管理。','The target release no longer manages this file.')});
+			if(file.change==='retained')detail.createEl('p',{text:tr('应用后取消受管文件登记，保留文件。','Applying removes the management record and keeps the file.')});
 			if(file.before!==undefined && file.change!=='current'){
 				detail.createEl('p',{text:tr('目标库内容','Library content')});
 				detail.createEl('pre',{cls:'kb-v3-code',text:file.before});

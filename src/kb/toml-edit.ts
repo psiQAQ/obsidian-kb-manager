@@ -52,6 +52,7 @@ function valueEnd(raw:string, start:number) {
 
 function tableIndex(raw:string) {
 	const values:Assignment[]=[], ends=new Map<string,number>(), arrays=new Map<string,number>();
+	const headers:{address:Address;start:number;end:number}[]=[];
 	let path:Address=[], offset=raw.startsWith('\uFEFF')?1:0;
 	while(offset<raw.length){
 		const lineStart=offset;
@@ -71,6 +72,8 @@ function tableIndex(raw:string) {
 				const index=arrays.get(address);
 				if(index!==undefined)path.push(index);
 			}
+			const newline=raw.indexOf('\n',offset);
+			headers.push({address:path,start:lineStart,end:newline===-1?raw.length:newline+1});
 		} else if(field) {
 			const start=offset+field[0].length, stop=valueEnd(raw,start);
 			const end=start+raw.slice(start,stop).trimEnd().length;
@@ -83,7 +86,7 @@ function tableIndex(raw:string) {
 		offset=newline===-1?raw.length:newline+1;
 	}
 	ends.set(key(path),raw.length);
-	return {values,ends};
+	return {values,ends,headers};
 }
 
 const encode = (field:Value) => stringify({v:field}).slice(4).trimEnd();
@@ -115,6 +118,18 @@ export class TomlEdits {
 		if(value===undefined || end===undefined)
 			throw new Error(tr('请将待更新字段写在常规 TOML 表中：','Put this field in a regular TOML table before editing: ')+path.join('.'));
 		this.insert(end,formatKey(field)+' = '+encode(value)+this.newline);
+	}
+
+	removeArrayItem(address:Address){
+		if(!this.index.headers.some(header=>key(header.address)===key(address)))
+			throw new Error(tr('请将待更新字段写在常规 TOML 表中：','Put this field in a regular TOML table before editing: ')+address.join('.'));
+		const includes=(path:Address)=>address.every((part,index)=>part===path[index]);
+		for(const {address:path,start,end} of this.index.headers){
+			if(includes(path))this.edits.push({start,end,content:''});
+		}
+		for(const item of this.index.values){
+			if(includes(item.address))this.edits.push({start:item.lineStart,end:item.comment===-1?item.lineEnd:item.comment,content:''});
+		}
 	}
 
 	append(section:string) {

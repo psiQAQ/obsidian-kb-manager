@@ -188,6 +188,21 @@ export function writeTemplateFileRecord(raw:string,record:TemplateFileRecord){
 	return output;
 }
 
+export function retireTemplateFiles(raw:string,paths:ReadonlySet<string>){
+	if(!paths.size)return raw;
+	const {identity,templateFiles}=readManifest(raw);
+	const changes=new TomlEdits(raw);
+	for(const path of paths){
+		if(templateFiles?.digests[path])changes.field(['templateFiles','digests'],path,undefined);
+	}
+	for(const [index,file] of (identity?.managed ?? []).entries()){
+		if(file.role==='template-root' && paths.has(file.path))changes.removeArrayItem(['manager','managed',index]);
+	}
+	const output=changes.finish();
+	readManifest(output);
+	return output;
+}
+
 export function writeCheckKit(raw:string, record:CheckKitRecord) {
 	const current=readManifest(raw).checkKit;
 	const next=parseCheckKit({...record,digests:{...current?.digests,...record.digests}});
