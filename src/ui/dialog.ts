@@ -43,6 +43,7 @@ export function dialogContents(contentEl: HTMLElement) {
 }
 
 export class Dialog extends Modal {
+	private cancelOpen?:()=>void;
 	private readonly body = dialogContents(this.contentEl);
 	readonly text = this.body.text;
 	readonly multiline = this.body.multiline;
@@ -50,13 +51,41 @@ export class Dialog extends Modal {
 	readonly action = this.body.action;
 	readonly lines = this.body.lines;
 	readonly facts = this.body.facts;
-	constructor(app: App, title: string) { super(app); this.modalEl.addClass('kb-dialog'); this.setTitle(title); }
+	constructor(app: App, title: string, readonly owner:Window=activeWindow) {
+		super(app); this.modalEl.addClass('kb-dialog'); this.setTitle(title);
+	}
+	override open(){
+		this.cancelOpen?.();
+		if(this.owner.closed)return;
+		if(this.owner===activeWindow){super.open();return;}
+		// Modal.open uses Obsidian's active window. Wait for the source window to receive focus.
+		const owner=this.owner;
+		const show=()=>{
+			if(owner===activeWindow && !owner.closed){
+				this.cancelOpen?.();
+				super.open();
+			}
+		};
+		const timer=owner.setTimeout(()=>{show();this.cancelOpen?.();},500);
+		this.cancelOpen=()=>{
+			owner.clearTimeout(timer);
+			owner.removeEventListener('focus',show);
+			this.cancelOpen=undefined;
+		};
+		owner.addEventListener('focus',show);
+		owner.focus();
+		show();
+	}
+	override close(){
+		this.cancelOpen?.();
+		super.close();
+	}
 	onClose() { this.contentEl.empty(); }
 }
 
 export class V3Dialog extends Dialog {
-	constructor(app: App, title: string) {
-		super(app,title);
+	constructor(app: App, title: string, owner?:Window) {
+		super(app,title,owner);
 		this.modalEl.addClass('kb-v3-dialog');
 		this.containerEl.addClass('kb-v3-modal-container');
 	}

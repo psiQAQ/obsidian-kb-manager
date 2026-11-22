@@ -81,7 +81,7 @@ function fileMenu(anchor:HTMLElement,options:ComparisonOptions,file:HistoryFile)
 			()=>reviewHistoryRestore(plugin,lib,dir,side.oid,version.file),lib.identity?.archived);
 	}
 	const rect=anchor.getBoundingClientRect();
-	menu.showAtPosition({x:rect.left,y:rect.bottom});
+	menu.showAtPosition({x:rect.left,y:rect.bottom},anchor.doc);
 }
 
 export async function renderHistoryComparison(el:HTMLElement,options:ComparisonOptions) {

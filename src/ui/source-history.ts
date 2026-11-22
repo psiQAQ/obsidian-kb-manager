@@ -182,14 +182,16 @@ class SourceHistory extends ItemView {
 				const menu=new Menu();
 				for(const ref of refs)menu.addItem(item=>item.setTitle(refKind(ref.kind,t)+' · '+ref.name)
 					.onClick(()=>showMenu(oid,{anchor:button,ref})));
-				const rect=button.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom});
+				const rect=button.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom},button.doc);
 			};
 			const createRow=(index:number)=>{
 				const row=rowAt(index)!;
 				const {commit}=row,oid=commit.oid,working=oid===worktreeOid;
 				const refs=snapshot.labels.get(oid)??[];
 				const title=working?workLabel:commit.message.split('\n')[0]||t('无提交说明','No commit message');
-				const button=createEl('button',{cls:'kb-history-row',attr:{type:'button','data-oid':oid}});
+				const button=list.doc.createElement('button');
+				button.addClass('kb-history-row');
+				button.type='button';button.dataset.oid=oid;
 				const node=working?'worktree':oid===snapshot.head?'head':refs.some(ref=>ref.kind==='stash')?'stash':
 					commit.parents.length>1?'merge':'commit';
 				const tooltip=working?workLabel:[title,oid,commit.author,date(commit.timestamp),...refs.map(ref=>ref.name)].join('\n');
@@ -214,12 +216,14 @@ class SourceHistory extends ItemView {
 					if(options.sha)button.createEl('code',{cls:'kb-history-sha',text:oid.slice(0,10)});
 				}
 				button.onclick=event=>{
-					if(event.target instanceof Element && event.target.closest('[data-more-refs]')){expandRefs(button,oid,refs);return;}
+					const target=event.target as Node|null;
+					if(target?.instanceOf(Element) && target.closest('[data-more-refs]')){expandRefs(button,oid,refs);return;}
 					pendingJump++;pick(oid,event.ctrlKey||event.metaKey);
 				};
 				button.oncontextmenu=event=>{
 					event.preventDefault();event.stopPropagation();
-					const target=event.target instanceof Element?event.target.closest<HTMLElement>('[data-ref-index]'):null;
+					const node=event.target as Node|null;
+					const target=node?.instanceOf(Element)?node.closest<HTMLElement>('[data-ref-index]'):null;
 					showMenu(oid,{event,ref:target?refs[Number(target.dataset.refIndex)]:undefined});
 				};
 				button.onkeydown=event=>{

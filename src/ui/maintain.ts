@@ -14,11 +14,11 @@ import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
 
-export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library) {
+export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const preview=await previewManifestUpgrade(plugin.disk,lib);
 	if(!preview)return;
 	const {relative,id,ignores,log,checks}=preview;
-	const dialog=new Dialog(plugin.app,tr('升级知识库清单','Upgrade library manifest'));
+	const dialog=new Dialog(plugin.app,tr('升级知识库清单','Upgrade library manifest'),owner);
 	dialog.facts([[tr('文件','File'),relative],[tr('清单格式','Manifest schema'),'1 → 2'],[tr('知识库 ID','Library ID'),id]]);
 	dialog.contentEl.createEl('p',{text:log.exists?tr('使用现有的 .log/ 目录保存检验日志。','Use the existing .log/ directory for check logs.'):tr('创建 .log/ 目录以保存检验日志。','Create .log/ for check logs.')});
 	if(ignores.before!==ignores.after){
@@ -61,15 +61,15 @@ export function visible(plugin:KnowledgeBaseManager):VisibleFiles {
 	};
 }
 
-export function edit(plugin:KnowledgeBaseManager,lib:Library){
+export function edit(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow){
 	if(!lib.identity)return;
 	const previous=lib.identity;
 	let name=previous.displayName,description=previous.description;
-	const dialog=new Dialog(plugin.app,tr('编辑知识库',"Edit knowledge base"));
+	const dialog=new Dialog(plugin.app,tr('编辑知识库',"Edit knowledge base"),owner);
 	dialog.lines([lib.location+'/kb.toml']);
 	dialog.text(tr('显示名',"Display name"),name,v=>{name=v;});dialog.multiline(tr('简介',"Description"),description,v=>{description=v;});
 	const confirm=(archive:boolean)=>{
-		const next=new Dialog(plugin.app,tr('确认清单修改',"Confirm manifest changes"));
+		const next=new Dialog(plugin.app,tr('确认清单修改',"Confirm manifest changes"),owner);
 		next.lines([lib.location+'/kb.toml',previous.displayName+' → '+name,previous.description+' → '+description,
 			tr('归档：',"Archived: ")+String(previous.archived)+' → '+String(archive)]);
 		next.action(tr('应用',"Apply"),async()=>{
@@ -86,17 +86,17 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library){
 	dialog.open();
 }
 
-export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library) {
+export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const library=await recheck(plugin.disk,plugin.config,lib);
 	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library));
-	const dialog=new Dialog(plugin.app,tr('维护受管文件','Maintain managed files'));
+	const dialog=new Dialog(plugin.app,tr('维护受管文件','Maintain managed files'),owner);
 	dialog.facts([[tr('知识库','Library'),library.location]]);
 	if(manual.length)dialog.lines(manual);
 	if(!manual.length && !repairs.length)dialog.contentEl.createEl('p',{text:tr('没有需要维护的受管文件。','No managed files require maintenance.')});
 	for(const item of repairs){
 		new Setting(dialog.contentEl).setName(item.file).setDesc(item.fields.join('\n')).addButton(button=>{
 			button.setButtonText(tr('预览修复','Preview repair')).onClick(()=>{
-				const preview=new Dialog(plugin.app,tr('预览受管文件修复','Preview managed file repair'));
+				const preview=new Dialog(plugin.app,tr('预览受管文件修复','Preview managed file repair'),owner);
 				preview.lines([library.location+'/'+item.file,...item.fields]);
 				preview.contentEl.createEl('pre').createEl('code',{text:item.after});
 				if(!library.identity?.archived)preview.action(tr('应用此修复','Apply this repair'),async()=>{
@@ -104,7 +104,7 @@ export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library) 
 					preview.close();dialog.close();
 					await plugin.refresh();
 					const fresh=await inspect(plugin.disk,library.location);
-					if(fresh)await maintainBindings(plugin,fresh);
+					if(fresh)await maintainBindings(plugin,fresh,owner);
 				}).setCta();
 				preview.open();
 			});
@@ -118,8 +118,8 @@ async function resumeMove(plugin:KnowledgeBaseManager,record:MoveRecord){
 	await plugin.refresh();
 }
 
-function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string){
-	const dialog=new V3Dialog(plugin.app,title);
+function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,owner:Window){
+	const dialog=new V3Dialog(plugin.app,title,owner);
 	dialog.facts([[tr('源目录','Source folder'),record.source],[tr('目标目录','Destination folder'),record.destination]]);
 	dialog.contentEl.createEl('p',{text:tr('移动整个知识库目录，包括目录内的 Git 数据。成功后登记列表指向目标路径。',
 		'Move the entire library folder, including its Git data. After the move, the registry points to the destination.')});
@@ -140,8 +140,8 @@ function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string){
 	return dialog;
 }
 
-export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord){
-	const dialog=moveReview(plugin,record,tr('继续待完成的目录移动','Resume pending library move'));
+export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord,owner:Window=activeWindow){
+	const dialog=moveReview(plugin,record,tr('继续待完成的目录移动','Resume pending library move'),owner);
 	dialog.facts([[tr('恢复记录','Recovery state'),record.phase==='prepared' ?
 		tr('已记录计划，待核对实际位置','Plan saved. Verify the current folder location.') :
 		tr('已移动目录，待核对受管文件和登记','Folder moved. Verify the managed files and registration.')]]);
@@ -152,9 +152,9 @@ export function reviewPendingMove(plugin:KnowledgeBaseManager,record:MoveRecord)
 	dialog.open();
 }
 
-export function move(plugin:KnowledgeBaseManager,lib:Library){
+export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow){
 	let name=lib.location.split('/').at(-1)!;
-	const dialog=new V3Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"));
+	const dialog=new V3Dialog(plugin.app,tr('移动或重命名知识库',"Move or rename knowledge base"),owner);
 	const selectedTarget=dialog.contentEl.createDiv({cls:'kb-move-locations'});
 	let parent:string|null=null;
 	const showPaths=()=>{
@@ -176,7 +176,7 @@ export function move(plugin:KnowledgeBaseManager,lib:Library){
 		for(const [from,targets] of Object.entries(plugin.app.metadataCache.resolvedLinks)){
 			for(const to of Object.keys(targets))if(to.startsWith(lib.location+'/'))links.add(from+' → '+to);
 		}
-		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"));
+		const confirm=moveReview(plugin,plan,tr('预览目录移动',"Review directory move"),owner);
 		const refs=confirm.contentEl.createEl('details',{cls:'kb-v3-detail'});
 		refs.createEl('summary',{text:tr('可能受影响的链接','Links that may be affected')+' ('+links.size+')'});
 		refs.createEl('p',{text:tr('外部剪藏、脚本与动态查询需人工核对。',"Review external clippings, scripts and dynamic queries manually.")});

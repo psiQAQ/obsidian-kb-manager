@@ -378,10 +378,10 @@ export class ManagerSettings extends PluginSettingTab {
 	}
 }
 
-export function librarySettings(plugin: KnowledgeBaseManager, lib: Library) {
+export function librarySettings(plugin: KnowledgeBaseManager, lib: Library, owner:Window=activeWindow) {
 	if (!lib.identity || lib.duplicate || lib.problem) return;
 	const t = plugin.t;
-	const modal = new V3Dialog(plugin.app,t('本库 Git 设置','Library Git settings') + ' · ' + lib.identity.displayName);
+	const modal = new V3Dialog(plugin.app,t('本库 Git 设置','Library Git settings') + ' · ' + lib.identity.displayName,owner);
 	const el = modal.contentEl;
 	el.addClass('kb-settings');
 	modal.facts([[t('知识库路径','Library path'),lib.location]]);

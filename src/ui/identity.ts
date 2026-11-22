@@ -16,12 +16,12 @@ export async function changeIdentity(plugin: KnowledgeBaseManager, lib: Library,
 	await replaceLibraryManifest(plugin.disk,lib.location,signature,writeIdentity(raw,value));
 }
 
-export async function resolveDuplicate(plugin: KnowledgeBaseManager, copy: Library) {
+export async function resolveDuplicate(plugin: KnowledgeBaseManager, copy: Library, owner:Window=activeWindow) {
 	const duplicates=(await discover(plugin.disk,plugin.config)).filter(x=>x.identity?.id===copy.identity?.id);
 	const originals=duplicates.filter(x=>x.location!==copy.location);
 	if (!originals.length) throw new Error(tr('冲突状态已变化，请刷新',"Conflict changed. Refresh"));
 	let original=originals[0]!.location;
-	const dialog=new Dialog(plugin.app,tr('为副本分配新的 ID',"Assign a new ID to the copy"));
+	const dialog=new Dialog(plugin.app,tr('为副本分配新的 ID',"Assign a new ID to the copy"),owner);
 	dialog.lines([tr('仅修改 ',"Change only ")+copy.location+'/'+identityFile,tr('旧 ID：',"Previous ID: ")+copy.identity?.id]);
 	dialog.choice(tr('保留旧 ID 的原库',"Original library retaining the ID"),Object.fromEntries(originals.map(x=>[x.location,x.location])),v=>{original=v;});
 	dialog.action(tr('确认此目录是副本',"Confirm this directory is the copy"),async()=>{

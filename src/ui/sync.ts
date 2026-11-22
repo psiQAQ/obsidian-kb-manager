@@ -13,14 +13,14 @@ import { versions } from './versions.ts';
 import { commitRoles } from './repository-identity.ts';
 
 export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draft?:string,onCommitted?:(message:string)=>void,
-	mode:CommitMode='smart',onComplete?:()=>void,onDraft?:(message:string)=>void){
+	mode:CommitMode='smart',onComplete?:()=>void,onDraft?:(message:string)=>void,owner:Window=activeWindow){
 	const id=lib.identity?.id,t=plugin.t;
 	if(!id || lib.identity?.archived)throw new Error(t('请选择活动知识库','Select an active library'));
 	await recheck(plugin.disk,plugin.config,lib);
 	const dir=await plugin.disk.path(lib.location);
 	const first=await remoteState(dir),prefs=plugin.preferences(id),target=first.target;
 	if(!prefs.pullBeforePush && prefs.disablePush){
-		if(first.preview.changes.length)await versions(plugin,lib,'save',draft,message=>{onCommitted?.(message);onComplete?.();},mode,onDraft);
+		if(first.preview.changes.length)await versions(plugin,lib,'save',draft,message=>{onCommitted?.(message);onComplete?.();},mode,onDraft,owner);
 		else {pluginNotice(plugin,'unchanged',t('没有待同步的更改','No changes to sync'),id);onComplete?.();}
 		return;
 	}
@@ -35,7 +35,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 	async function confirmPush(inspected=false){
 		if(prefs.disablePush){onComplete?.();return;}
 		if(prefs.squashCommitsBeforePush && !inspected){
-			const inspect=new Dialog(plugin.app,t('检查待推送的提交','Inspect outgoing commits'));
+			const inspect=new Dialog(plugin.app,t('检查待推送的提交','Inspect outgoing commits'),owner);
 			inspect.facts([[t('知识库路径','Library path'),lib.location],[t('上游地址','Upstream URL'),upstream.fetchDisplay],
 				[t('上游分支','Upstream branch'),upstream.remoteBranch]]);
 			inspect.action(t('获取上游并预览','Fetch upstream and preview'),async()=>{
@@ -46,7 +46,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 				});
 				inspect.close();
 				if(plan.commits.length<2){await confirmPush(true);return;}
-				const review=new Dialog(plugin.app,t('压缩待推送的提交','Squash outgoing commits'));
+				const review=new Dialog(plugin.app,t('压缩待推送的提交','Squash outgoing commits'),owner);
 				review.facts([[t('知识库路径','Library path'),lib.location],[t('分支','Branch'),plan.branch],
 					[t('原提交引用','Original commit ref'),'refs/kb-manager/before-squash/'+plan.head]]);
 				review.lines(commitRoles(plan.identity,'squash'));
@@ -65,7 +65,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 			inspect.open();return;
 		}
 		const state=await run(()=>remoteState(dir));
-		const dialog=new Dialog(plugin.app,t('确认推送本库','Confirm library push'));
+		const dialog=new Dialog(plugin.app,t('确认推送本库','Confirm library push'),owner);
 		dialog.facts([[t('知识库路径','Library path'),lib.location],[t('本地分支','Local branch'),state.preview.branch],
 			[t('当前提交','Current commit'),state.preview.head||'∅'],[t('推送地址','Push URL'),upstream.pushDisplay],
 			[t('远端分支','Remote branch'),upstream.remoteBranch]]);
@@ -79,7 +79,7 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 	}
 	async function synchronize(){
 		if(!prefs.pullBeforePush){await confirmPush();return;}
-		const fetch=new Dialog(plugin.app,t('获取并预览拉取','Fetch and preview pull'));
+		const fetch=new Dialog(plugin.app,t('获取并预览拉取','Fetch and preview pull'),owner);
 		fetch.facts([[t('知识库路径','Library path'),lib.location],[t('上游地址','Upstream URL'),upstream.fetchDisplay],
 			[t('上游分支','Upstream branch'),upstream.remoteBranch]]);
 		fetch.action(t('获取','Fetch'),async()=>{
@@ -96,6 +96,6 @@ export async function commitAndSync(plugin:KnowledgeBaseManager,lib:Library,draf
 		});fetch.open();
 	}
 	if(first.preview.changes.length){
-		await versions(plugin,lib,'save',draft,async message=>{onCommitted?.(message);await synchronize();},mode,onDraft);
+		await versions(plugin,lib,'save',draft,async message=>{onCommitted?.(message);await synchronize();},mode,onDraft,owner);
 	}else await synchronize();
 }

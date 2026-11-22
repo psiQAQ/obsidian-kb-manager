@@ -8,12 +8,12 @@ import { parseIdentity } from '../kb/identity-core.ts';
 import { V3Dialog, dialogContents } from './dialog.ts';
 import { destinationParentField } from './registry-path-field.ts';
 
-export function cloneWizard(plugin:KnowledgeBaseManager) {
+export function cloneWizard(plugin:KnowledgeBaseManager,owner:Window=activeWindow) {
 	const t=plugin.t;
 	if(gitDisabled(plugin)){new Notice(t('本设备已停用 Git','Git is disabled on this device'));return;}
 	const input={name:'',url:''};
 	let username='',password='';
-	const form=new V3Dialog(plugin.app,t('克隆知识库','Clone library'));
+	const form=new V3Dialog(plugin.app,t('克隆知识库','Clone library'),owner);
 	const getParent=destinationParentField(form,plugin.app,plugin.config,plugin.disk.registry,{
 		compact:true,title:t('选择克隆知识库的父目录','Choose the parent folder for the clone'),
 	});
@@ -33,7 +33,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 		const request={...input,parent:getParent()};
 		const auth=password?{username:username||'git',password}:undefined;
 		const target=await cloneTarget(plugin.disk,plugin.config,request);
-		const confirm=new V3Dialog(plugin.app,t('确认下载知识库','Confirm library download'));
+		const confirm=new V3Dialog(plugin.app,t('确认下载知识库','Confirm library download'),owner);
 		confirm.facts([[t('远端仓库','Remote repository'),target.display],[t('Vault 内位置','Location in vault'),target.relative+'/']]);
 		confirm.contentEl.createEl('p',{text:t('先下载到临时目录，再检查文件、选择身份并导入。',
 			'Download to a temporary folder, then inspect files and select an identity before importing.')});
@@ -84,7 +84,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager) {
 					if(!file)throw new Error(t('请选择原库的 kb.toml','Choose kb.toml from the original library'));
 					const raw=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await file.arrayBuffer());
 					const identity=parseIdentity(raw);
-					const original=new V3Dialog(plugin.app,t('使用原库清单','Use original manifest'));
+					const original=new V3Dialog(plugin.app,t('使用原库清单','Use original manifest'),owner);
 					original.facts([[t('知识库身份','Library identity'),identity.displayName+' · '+identity.id],
 						[t('清单目标','Manifest destination'),target.relative+'/kb.toml']]);
 					if(clone.tracked)original.lines([t('原库清单将替换工作区中的远端清单。','The original manifest will replace the remote manifest in the working tree.')]);

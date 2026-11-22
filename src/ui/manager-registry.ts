@@ -31,11 +31,11 @@ function manifestField(plugin:KnowledgeBaseManager, content:HTMLElement) {
 	return ()=>vaultParent(getPath());
 }
 
-export async function showImportPreview(plugin:KnowledgeBaseManager, location:string, missing?:{location:string;id?:string}, complete?:()=>void) {
+export async function showImportPreview(plugin:KnowledgeBaseManager, location:string, missing?:{location:string;id?:string}, complete?:()=>void,owner:Window=activeWindow) {
 	const {t,disk,config} = plugin;
 	const assets = (lib:Library)=>plugin.templateAssets(lib);
 	const preview = await previewImport(disk,config,location,assets,missing);
-	const dialog = new Dialog(plugin.app,missing ? t('预览重新定位','Preview relocation') : t('预览知识库登记','Preview library registration'));
+	const dialog = new Dialog(plugin.app,missing ? t('预览重新定位','Preview relocation') : t('预览知识库登记','Preview library registration'),owner);
 	const existing = preview.registry.paths.includes(location);
 	dialog.facts([
 		...libraryFacts(plugin,preview.library),
@@ -73,7 +73,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 				dialog.action(t('确认写入本库忽略规则','Write library ignore rule'),async()=>{
 					await plugin.exclusive(location,()=>applyIgnoreRule(disk,rule));
 					dialog.close();
-					await showImportPreview(plugin,location,missing,complete);
+					await showImportPreview(plugin,location,missing,complete,owner);
 				});
 			}
 		} catch (error) { dialog.lines([String(error)]); }
@@ -103,21 +103,21 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 	dialog.open();
 }
 
-export function relocateRegistryEntry(plugin:KnowledgeBaseManager, location:string) {
+export function relocateRegistryEntry(plugin:KnowledgeBaseManager, location:string, owner:Window=activeWindow) {
 	const id = plugin.previousLibraryId(location);
 	const {t,app} = plugin;
-	const dialog = new Dialog(app,t('重新定位已登记知识库','Relocate registered library'));
+	const dialog = new Dialog(app,t('重新定位已登记知识库','Relocate registered library'),owner);
 	dialog.facts([[t('失联路径','Missing path'),location],[t('原知识库 ID','Previous library ID'),id ?? t('暂无记录','Unavailable')]]);
 	const selected = manifestField(plugin,dialog.contentEl);
-	dialog.action(t('预览重新定位','Preview relocation'),()=>showImportPreview(plugin,selected(),{location,id},()=>dialog.close())).setCta();
+	dialog.action(t('预览重新定位','Preview relocation'),()=>showImportPreview(plugin,selected(),{location,id},()=>dialog.close(),owner)).setCta();
 	dialog.open();
 }
 
-export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:string) {
+export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:string,owner:Window=activeWindow) {
 	const {t,disk} = plugin;
 	const {raw,paths} = await readVaultRegistry(disk);
 	if (!paths.includes(location)) throw new Error(t('登记已变化，请刷新','Registration changed. Refresh the manager.'));
-	const dialog = new Dialog(plugin.app,t('移除登记','Remove registration'));
+	const dialog = new Dialog(plugin.app,t('移除登记','Remove registration'),owner);
 	dialog.facts([[t('登记路径','Registered path'),location],[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
 	dialog.lines([t('此操作从列表移除此知识库，保留目录和文件。','This removes the library from the list and preserves the folder and files.')]);
 	dialog.action(t('移除登记','Remove registration'),async()=>{
@@ -128,7 +128,7 @@ export async function removeRegistryEntry(plugin:KnowledgeBaseManager, location:
 	dialog.open();
 }
 
-async function showScanPreview(plugin:KnowledgeBaseManager, location:string, complete:()=>void) {
+async function showScanPreview(plugin:KnowledgeBaseManager, location:string, complete:()=>void,owner:Window) {
 	const {t,disk,config} = plugin;
 	const raw = await readRegistryRaw(disk);
 	let paths:string[] = [];
@@ -139,7 +139,7 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string, com
 	const {libraries,skipped} = await scanVaultFolder(disk,config,location);
 	const existing = await Promise.all(paths.filter(path=>!libraries.some(lib=>lib.location===path)).map(path=>registryCandidate(disk,config,path)));
 	const seen = [...libraries,...existing.filter(lib=>lib!==undefined)];
-	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'));
+	const dialog = new Dialog(plugin.app,problem ? t('预览重建登记列表','Preview registry rebuild') : t('预览扫描结果','Preview scan results'),owner);
 	const protect=await reviewRegistryProtection(plugin,dialog);
 	dialog.facts([[t('扫描目录','Scanned folder'),location || t('Vault 根目录','Vault root')],
 		[t('Vault 登记文件','Vault registry file'),registryDataPath(disk.configDir)]]);
@@ -187,31 +187,31 @@ async function showScanPreview(plugin:KnowledgeBaseManager, location:string, com
 	dialog.open();
 }
 
-export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager) {
+export async function showRegistryIgnorePreview(plugin:KnowledgeBaseManager,owner:Window=activeWindow) {
 	const {t,disk} = plugin;
 	const preview = await previewRegistryIgnore(disk);
-	const dialog = new Dialog(plugin.app,t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'));
+	const dialog = new Dialog(plugin.app,t('预览 Vault Git 忽略规则','Preview Vault Git ignore rule'),owner);
 	dialog.lines([t('Vault 根目录 .gitignore','Vault root .gitignore'),preview.rule]);
 	if (preview.after === preview.before) dialog.lines([t('忽略规则已存在。','The ignore rule is in place.')]);
 	else dialog.action(t('确认写入规则','Write ignore rule'),async()=>{await applyIgnoreRule(disk,preview);dialog.close();});
 	dialog.open();
 }
 
-export function manageRegistry(plugin:KnowledgeBaseManager) {
+export function manageRegistry(plugin:KnowledgeBaseManager,owner:Window=activeWindow) {
 	const {t} = plugin;
-	const dialog = new Dialog(plugin.app,t('登记已有知识库','Register existing libraries'));
+	const dialog = new Dialog(plugin.app,t('登记已有知识库','Register existing libraries'),owner);
 	const {panels}=createPanelTabs(dialog.contentEl,t('登记方式','Registration method'),[
 		{id:'manifest',label:t('选择单个清单','Select one manifest')},
 		{id:'scan',label:t('扫描目录','Scan a folder')},
 	]);
 	const selected=manifestField(plugin,panels.manifest);
-	dialogContents(panels.manifest).action(t('预览登记','Preview registration'),()=>showImportPreview(plugin,selected(),undefined,()=>dialog.close())).setCta();
+	dialogContents(panels.manifest).action(t('预览登记','Preview registration'),()=>showImportPreview(plugin,selected(),undefined,()=>dialog.close(),owner)).setCta();
 	const folder=registryPathField({contentEl:panels.scan},plugin.app,'folder',{favorites:plugin.config.parents});
-	dialogContents(panels.scan).action(t('扫描并查看结果','Scan and review results'),()=>showScanPreview(plugin,folder(),()=>dialog.close())).setCta();
+	dialogContents(panels.scan).action(t('扫描并查看结果','Scan and review results'),()=>showScanPreview(plugin,folder(),()=>dialog.close(),owner)).setCta();
 	const options=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
 	options.createEl('summary',{text:t('Vault Git 忽略规则','Vault Git ignore rule')});
 	options.createEl('p',{text:t('登记列表保存在 '+registryDataPath(plugin.disk.configDir)+'。可将它加入 Vault 的 .gitignore。',
 		'The registry is stored in '+registryDataPath(plugin.disk.configDir)+'. You can add it to the Vault .gitignore.')});
-	dialogContents(options).action(t('预览忽略规则','Preview ignore rule'),()=>showRegistryIgnorePreview(plugin));
+	dialogContents(options).action(t('预览忽略规则','Preview ignore rule'),()=>showRegistryIgnorePreview(plugin,owner));
 	dialog.open();
 }

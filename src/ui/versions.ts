@@ -15,13 +15,13 @@ import { assertGitEnabled } from './device.ts';
 import { editRepositoryIdentity, identitySourceText } from './repository-identity.ts';
 
 export async function versions(plugin: KnowledgeBaseManager, lib: Library, mode:'save'|'history', draft?: string,
-	onCommitted?:(message:string)=>void|Promise<void>, commitMode:CommitMode='smart', onDraft?:(message:string)=>void) {
+	onCommitted?:(message:string)=>void|Promise<void>, commitMode:CommitMode='smart', onDraft?:(message:string)=>void,owner:Window=activeWindow) {
 	assertGitEnabled(plugin);
 	await recheck(plugin.disk,plugin.config,lib);
 	const dir=await plugin.disk.path(lib.location);
 	const prefs=plugin.preferences(lib.identity?.id);
 	if(commitMode==='smart' && !prefs.autoStageOnEmptyIndex)commitMode='staged';
-	const dialog=new V3Dialog(plugin.app,mode==='save'?(lib.git==='missing'?tr('初始化本库 Git','Initialize library Git'):tr('预览提交','Preview commit')):tr('本库历史','Library history'));
+	const dialog=new V3Dialog(plugin.app,mode==='save'?(lib.git==='missing'?tr('初始化本库 Git','Initialize library Git'):tr('预览提交','Preview commit')):tr('本库历史','Library history'),owner);
 	const name=lib.identity?.displayName ?? lib.location;
 	const libraryFacts: [string,string][]=[[tr('知识库','Library'),name]];
 	if(name!==lib.location)libraryFacts.push([tr('路径','Path'),lib.location]);

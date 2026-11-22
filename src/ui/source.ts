@@ -91,8 +91,8 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 			{example:t('更新知识库笔记','Update knowledge base notes')},true).controlEl.querySelector('textarea');
 		const fromPreview=(value:string)=>{remember(value);if(input)input.value=value;};
 		const committed=(submitted:string)=>{if(drafts.get(id)===submitted)drafts.delete(id);};
-		const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message,committed,mode,fromPreview);
-		const sync=(mode:CommitMode)=>commitAndSync(plugin,lib,message,committed,mode,undefined,fromPreview);
+		const commit=(mode:CommitMode)=>versions(plugin,lib,'save',message,committed,mode,fromPreview,el.win);
+		const sync=(mode:CommitMode)=>commitAndSync(plugin,lib,message,committed,mode,undefined,fromPreview,el.win);
 		const smart=pref.autoStageOnEmptyIndex?'smart':'staged';
 		const actions=compose.createDiv({cls:'kb-workspace-actions'});
 		button('check',t('预览提交','Preview commit'),()=>commit(smart),!(pref.autoStageOnEmptyIndex?preview.changes.length:preview.staged),actions,true);
@@ -110,7 +110,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 			menu.addSeparator();
 			item(t('提交已暂存内容并同步','Commit staged and sync'),'arrow-up-circle',preview.staged,()=>sync('staged'));
 			const rect=more.getBoundingClientRect();
-			menu.showAtPosition({x:rect.left,y:rect.bottom});
+			menu.showAtPosition({x:rect.left,y:rect.bottom},el.doc);
 			return Promise.resolve();
 		},false,actions);
 		more.setAttribute('aria-haspopup','menu');
@@ -122,7 +122,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	if(!readonly)button(pref.tree?'list':'folder',pref.tree?t('显示列表','Show list'):t('显示文件树','Show file tree'),refreshLayout);
 	function editIndex(action:IndexAction,files:string[],after?:()=>Promise<void>){
 		const label=action==='stage'?t('暂存完整文件','Stage whole files'):t('取消暂存','Unstage');
-		const modal=new Dialog(plugin.app,label);
+		const modal=new Dialog(plugin.app,label,el.win);
 		modal.lines([lib.location+' · '+preview.branch,...files]);
 		if(after)modal.lines([t('暂存完成后预览提交。取消提交会保留这些暂存项。','After staging, review the commit. Cancelling the commit keeps the staged files.')]);
 		if(files.some(file=>preview.changes.some(c=>c.file===file && c.head!==c.stage && c.stage!==c.work))){
@@ -141,7 +141,7 @@ export async function sourcePanel(plugin:KnowledgeBaseManager,lib:Library,el:HTM
 	function discard(file:string){
 		const relative=lib.location+'/'+file;
 		const label=t('丢弃工作区修改','Discard working tree change');
-		const modal=new Dialog(plugin.app,label);
+		const modal=new Dialog(plugin.app,label,el.win);
 		const change=preview.changes.find(c=>c.file===file)!;
 		modal.lines([relative,change.stage===0?t('将文件移到回收站','Move this file to trash'):t('恢复暂存区内的文件内容','Restore the file contents from the index')]);
 		modal.action(label,async()=>{

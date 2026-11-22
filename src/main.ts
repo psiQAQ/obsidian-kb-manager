@@ -201,11 +201,6 @@ export default class KnowledgeBaseManager extends Plugin {
 		this.register(()=>{this.disposed=true;});
 		watchExternalLibraryState(this);
 		startAutomation(this);
-		this.app.workspace.onLayoutReady(()=>{
-			if(this.app.workspace.getLeavesOfType(managerType).some(leaf=>leaf.getRoot()!==this.app.workspace.rightSplit)){
-				void this.openManager().catch(error=>new Notice(String(error)));
-			}
-		});
 		this.registerEvent(this.app.workspace.on('file-menu',(menu,file)=>{
 			if(!gitDisabled(this) && file instanceof TFile){
 				const entry=Object.entries(this.known).find(([,root])=>file.path.startsWith(root+'/'));
@@ -255,30 +250,30 @@ export default class KnowledgeBaseManager extends Plugin {
 		return true;
 	}
 	async openManager(): Promise<ManagerView> {
-		this.opening ??= this.openRight().finally(()=>{this.opening=undefined;});
+		this.opening ??= this.revealManager().finally(()=>{this.opening=undefined;});
 		return this.opening;
 	}
-	private async openRight(){
+	private async revealManager(){
 		const workspace=this.app.workspace;
-		const old=workspace.getLeavesOfType(managerType);
-		let right=old.find(leaf=>leaf.getRoot()===workspace.rightSplit);
-		if(!right){
-			right=workspace.getRightLeaf(false) ?? undefined;
-			if(!right)throw new Error(tr('右侧栏不可用','Right sidebar is unavailable'));
-			await right.setViewState({type:managerType});
+		const managers=workspace.getLeavesOfType(managerType);
+		let leaf=managers.find(leaf=>leaf.view.containerEl.win===activeWindow) ?? managers[0];
+		if(!leaf){
+			leaf=workspace.getRightLeaf(false) ?? undefined;
+			if(!leaf)throw new Error(tr('右侧栏不可用','Right sidebar is unavailable'));
+			await leaf.setViewState({type:managerType});
 		}
-		await workspace.revealLeaf(right);
-		await right.loadIfDeferred();
-		if(!(right.view instanceof ManagerView) && right.getViewState().type===managerType){
-			// A plugin reload can leave the old constructor attached to this library sidebar.
-			const state=right.getViewState();
-			await right.setViewState({type:'empty'});
-			await right.setViewState(state);
-			await right.loadIfDeferred();
+		await workspace.revealLeaf(leaf);
+		await leaf.loadIfDeferred();
+		if(!(leaf.view instanceof ManagerView) && leaf.getViewState().type===managerType){
+			// A plugin reload can leave the old constructor attached to the existing leaf.
+			const state=leaf.getViewState();
+			await leaf.setViewState({type:'empty'});
+			await leaf.setViewState(state);
+			await leaf.loadIfDeferred();
 		}
-		if(!(right.view instanceof ManagerView))throw new Error('Manager unavailable');
-		for(const item of old)if(item!==right)item.detach();
-		return right.view;
+		if(!(leaf.view instanceof ManagerView))throw new Error('Manager unavailable');
+		workspace.setActiveLeaf(leaf,{focus:true});
+		return leaf.view;
 	}
 	async refresh(){
 		await this.refreshViews(await this.refreshCatalog());

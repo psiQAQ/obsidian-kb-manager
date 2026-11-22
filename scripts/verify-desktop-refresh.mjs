@@ -14,7 +14,7 @@ const root=await mkdtemp(join(scratch,'desktop-refresh-'));
 assert.equal(dirname(root),scratch);
 const original='10000000-0000-4000-8000-000000000001';
 const replacement='10000000-0000-4000-8000-000000000002';
-const notices=[], cleanups=[], device=new Map();
+const notices=[], cleanups=[], device=new Map(), views=new Map();
 let data={language:'en',defaults:{tree:false,refreshSourceControlTimer:500},registeredLibraries:['Books/First'],unknown:{keep:true}};
 let sharedWrites=0;
 
@@ -23,7 +23,7 @@ class FileView { file={path:'Books/First/Note.md'}; }
 class Plugin {
 	loadData(){return structuredClone(data);}
 	saveData(next){sharedWrites++;data=structuredClone(next);}
-	registerView(){}
+	registerView(type,makeView){views.set(type,makeView);}
 	addSettingTab(){}
 	addRibbonIcon(){return {};}
 	addStatusBarItem(){return {hide(){}};}
@@ -35,7 +35,9 @@ class Plugin {
 	register(stop){cleanups.push(stop);}
 }
 const obsidian={
-	Platform:{isMobile:false},Plugin,FileSystemAdapter,FileView,Modal:class {},ItemView:class {},PluginSettingTab:class {update(){}},
+	Platform:{isMobile:false},Plugin,FileSystemAdapter,FileView,Modal:class {},
+	ItemView:class {constructor(leaf){this.containerEl=leaf.containerEl;this.app=leaf.app;} setState(){return Promise.resolve();}},
+	PluginSettingTab:class {update(){}},
 	getLanguage:()=> 'en',setTooltip(){},Notice:class {messageEl={addClass(){}};constructor(message){notices.push(message);}},
 };
 function events(){
@@ -52,7 +54,7 @@ function events(){
 const owner=new EventTarget();
 Object.assign(owner,{setTimeout,clearTimeout,setInterval:()=>0,document:{hasFocus:()=>true}});
 const context=vm.createContext({
-	module:{exports:{}},window:owner,TextEncoder,TextDecoder,URL,URLSearchParams,console,Buffer,process,
+	module:{exports:{}},window:owner,activeWindow:owner,TextEncoder,TextDecoder,URL,URLSearchParams,console,Buffer,process,
 	setTimeout,clearTimeout,AbortController,
 	require(id){return id==='obsidian'?obsidian:require(id);},
 });
@@ -84,6 +86,53 @@ const eventually=async(assertion)=>{
 	}
 	assert.ok(assertion(),'Expected desktop refresh did not arrive · '+JSON.stringify({historyRefreshes,notices}));
 };
+
+async function verifyManagerLayout(){
+	const managerType='knowledge-base-manager-view';
+	const makeView=views.get(managerType);
+	assert.ok(makeView);
+	const managers=[];
+	let revealed,focused,rightRequests=0,saves=0;
+	Object.assign(workspace,{
+		getLeavesOfType:type=>type===managerType?managers:[],
+		revealLeaf(leaf){revealed=leaf;return Promise.resolve();},
+		setActiveLeaf(leaf){focused=leaf;},
+		requestSaveLayout(){saves++;},
+	});
+	const createLeaf=win=>{
+		const leaf={containerEl:{win},app:plugin.app,loadIfDeferred:()=>Promise.resolve(),
+			async setViewState(state){
+				this.view=makeView(this);
+				this.view.render=()=>Promise.resolve();
+				managers.push(this);
+				await this.view.setState(state.state,{history:false});
+			},
+			detach(){assert.fail('The manager detached a restored leaf');},
+		};
+		return leaf;
+	};
+	const right=createLeaf(owner);
+	workspace.getRightLeaf=()=>{rightRequests++;return right;};
+	const pluginView=await plugin.openManager();
+	assert.equal(pluginView,right.view);
+	assert.equal(revealed,right);
+	assert.equal(rightRequests,1);
+	const poppedOwner={};
+	const popped=createLeaf(poppedOwner);
+	await popped.setViewState({state:{selected:replacement,expanded:true,tabs:{[replacement]:'remote'}}});
+	context.activeWindow=poppedOwner;
+	const existing=await plugin.openManager();
+	assert.equal(existing,popped.view);
+	assert.equal(revealed,popped);
+	assert.equal(focused,popped);
+	assert.equal(rightRequests,1);
+	assert.deepEqual(structuredClone(existing.getState()),{selected:replacement,expanded:true,tabs:{[replacement]:'remote'}});
+	await existing.showLibrary(replacement,'changes');
+	assert.equal(saves,1);
+	assert.equal(existing.getState().tabs[replacement],'changes');
+	await existing.setState({selected:replacement,expanded:false,tabs:{[replacement]:'remote',invalid:'unknown'}},{history:false});
+	assert.deepEqual(structuredClone(existing.getState()),{selected:replacement,expanded:false,tabs:{[replacement]:'remote'}});
+}
 
 try {
 	await mkdir(library,{recursive:true});
@@ -127,7 +176,8 @@ try {
 	await delay(650);
 	assert.equal(historyRefreshes,baseline+2);
 	assert.deepEqual(notices,[]);
-	process.stdout.write('Desktop production callback reloaded preferences and the registry, revalidated kb.toml, and detected external Git index and HEAD changes.\n');
+	await verifyManagerLayout();
+	process.stdout.write('Desktop production entry reloaded settings and manifests, detected Git index and HEAD changes, and restored the manager in place.\n');
 } finally {
 	for(const cleanup of cleanups.reverse())cleanup();
 	await rm(root,{recursive:true,force:true});

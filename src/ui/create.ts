@@ -57,7 +57,7 @@ function showInitialPlan(parent:HTMLElement,git:InitialPreview,head=''){
 	pathList(detail,tr('复制到库内并由 Git 忽略','Copied into the library and ignored by Git'),git.ignored);
 }
 
-export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,source?:string){
+export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promise<void>,source?:string,owner:Window=activeWindow){
 	assertGitEnabled(plugin);
 	const {config,disk}=plugin;
 	const [templates,defaults,initial]=await Promise.all([
@@ -70,7 +70,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	let template=initial,parent:string|null=null;
 	let reviewedExclusions:{source:string; location:string; folders:readonly string[]}|undefined;
 	const input={name:'',displayName:'',description:''};
-	const wizard=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
+	const wizard=new V3Dialog(plugin.app,tr('新建知识库','Create knowledge base'),owner);
 	wizard.modalEl.addClass('kb-create-wizard');
 	const frame=wizard.contentEl.createDiv();
 	const progress=frame.createEl('ol',{cls:'kb-wizard-steps',attr:{role:'list','aria-label':tr('创建步骤','Creation steps')}});
@@ -81,7 +81,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		return step;
 	});
 	const pages=frame.createDiv();
-	const newPage=()=>createEl('fieldset');
+	const newPage=()=>wizard.contentEl.doc.createElement('fieldset');
 	const templatePage=newPage(),detailsPage=newPage();
 	detailsPage.addClass('kb-wizard-fields');
 	const details=dialogContents(detailsPage);
