@@ -82,15 +82,21 @@ function markdownDestination(token: string): [number, number] | undefined {
 	return undefined;
 }
 
-export function relocateCanvasReferences(text: string, source: string, destination: string): string {
-	// Validate as JSON first. YAML's syntax tree supplies the exact ranges of
-	// string values, including escaped JSON, without reserializing the canvas.
+export function canvasMoveTargets(text: string, source: string, destination: string): string[] {
 	const canvas: unknown = JSON.parse(text);
 	if (!canvas || typeof canvas !== 'object' || !('nodes' in canvas) || !Array.isArray(canvas.nodes))
 		throw new Error('Invalid Canvas nodes');
 	const entries: unknown[] = canvas.nodes;
-	if (!entries.some(node => node && typeof node === 'object' && 'type' in node && node.type === 'file' &&
-		'file' in node && typeof node.file === 'string' && moveVaultPath(node.file,source,destination) !== node.file)) return text;
+	return [...new Set(entries.flatMap(node => node && typeof node === 'object' && 'type' in node && node.type === 'file' &&
+		'file' in node && typeof node.file === 'string' && moveVaultPath(node.file,source,destination) !== node.file ? [node.file] : []))];
+}
+
+export function relocateCanvasReferences(text: string, source: string, destination: string, targets?: readonly string[]): string {
+	// YAML's syntax tree supplies the exact ranges of JSON string values,
+	// including escaped JSON, without reserializing the canvas.
+	const affected = targets ?? canvasMoveTargets(text,source,destination);
+	if (!affected.length) return text;
+	const selected = new Set(affected);
 	const doc = parseDocument(text, {schema:'json'});
 	if (doc.errors.length) throw new Error('Ambiguous Canvas document');
 	const nodes = doc.get('nodes', true);
@@ -99,7 +105,7 @@ export function relocateCanvasReferences(text: string, source: string, destinati
 	for (const node of [...nodes.items].reverse()) {
 		if (!isMap(node) || node.get('type') !== 'file') continue;
 		const file = node.get('file', true);
-		if (!isScalar(file) || typeof file.value !== 'string' || !file.range) continue;
+		if (!isScalar(file) || typeof file.value !== 'string' || !file.range || !selected.has(file.value)) continue;
 		const next = moveVaultPath(file.value, source, destination);
 		if (next === file.value) continue;
 		const [start, end] = file.range;

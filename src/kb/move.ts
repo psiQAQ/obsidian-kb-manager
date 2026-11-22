@@ -22,10 +22,17 @@ import { assertUnreservedLibraryPath, libraryDestination, validateLibraryPath, v
 
 import { applyExclusionPlan, assertExclusionPlan, assertMoveExclusionScope, planMovedExclusions } from './template-exclusions.ts';
 import type { ExclusionPlan, ExclusionStore } from './template-exclusions.ts';
+import { prepareReferenceWrites } from './move-references.ts';
+import type { ReferenceEdit } from './move-references.ts';
 
 export interface MoveRecord {
 	token:string; id:string; source:string; destination:string; git:string; manifest:string;
 	changes:Repair[]; warnings:string[]; exclusions?:ExclusionPlan; phase:'prepared'|'moved'|'complete';
+	references?:ReferenceEdit[];
+}
+
+export interface MoveFiles extends VisibleFiles {
+	renameFolder?(source:string,destination:string):Promise<void>;
 }
 
 async function gitStamp(dir:string) {
@@ -69,7 +76,7 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 		changes,warnings:[...warnings,...report.manual],phase:'prepared'};
 }
 
-export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:VisibleFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={},store?:ExclusionStore){
+export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:MoveFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={},store?:ExclusionStore){
 	await disk.registry.assertWritable();
 	disk.validate(record.source);
 	validateLibraryPath(record.destination,disk.configDir,config.templates);
@@ -91,7 +98,8 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	const manifestPath=path.join(current,identityFile);
 	const {raw:manifest,signature}=await readManifestFile(manifestPath);
 	const identity=parseIdentity(manifest);
-	if(identity.id!==record.id || (await gitStamp(current))!==record.git)throw new Error(tr('ID、HEAD 或索引变化，请人工复核','Library ID, HEAD or the index changed. Review the library before continuing.'));
+	if(identity.archived || identity.id!==record.id || (await gitStamp(current))!==record.git)
+		throw new Error(tr('知识库已归档，或 ID、HEAD、索引变化，请人工复核','The library was archived, or its ID, HEAD or index changed. Review the library before continuing.'));
 	const assertUnreserved=async()=>{
 		const allowed=current===destination && record.phase==='moved'?[record.source,record.destination]:[record.source];
 		assertUnreservedLibraryPath((await disk.registry.read()).paths,record.destination,allowed);
@@ -104,7 +112,8 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	}
 	const manifestEdit=record.changes.find(c=>c.file===identityFile);
 	if(signature!==record.manifest && !(current===destination && manifestEdit && digest(manifestEdit.after)===signature))throw new Error(tr('清单已变化','The library manifest changed'));
-	const duplicate=(await discover(disk,config)).some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
+	const libraries=await discover(disk,config);
+	const duplicate=libraries.some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
 	if(duplicate)throw new Error(tr('ID 重复','Duplicate library ID'));
 	const bindingAssets=kepanoBindingAssets(kepanoSkeleton,identity.template.version);
 	for(const item of record.changes){
@@ -123,18 +132,25 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
 		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}
+	const references=await prepareReferenceWrites(disk,config,record,libraries,current,current===destination);
 	await disk.registry.assertWritable();
 	if(current!==destination){
 		await assertUnreserved();
 		const collision=(await fs.readdir(targetParent)).find(name=>
 			key(name)===key(path.basename(destination)) && path.join(targetParent,name)!==source);
 		if(collision)throw new Error(tr('目标已被占用','The destination is occupied')+' · '+collision);
-		let at=current;
-		if(at===source && key(record.source)===key(record.destination)){
-			await renameNewDirectory(source,intermediate);at=intermediate;
+		if(files.renameFolder && current===source){
+			await files.renameFolder(record.source,record.destination);
+		}else{
+			let at=current;
+			if(at===source && key(record.source)===key(record.destination)){
+				await renameNewDirectory(source,intermediate);at=intermediate;
+			}
+			if(await statIfPresent(destination))throw new Error(tr('目标已被占用','The destination is occupied'));
+			await renameNewDirectory(at,destination);
 		}
-		if(await statIfPresent(destination))throw new Error(tr('目标已被占用','The destination is occupied'));
-		await renameNewDirectory(at,destination);
+		if(!await exact(destination) || await exact(source) || await exact(intermediate))
+			throw new Error(tr('无法核验移动后的目录位置','Could not verify the folder location after moving'));
 	}
 	record={...record,phase:'moved'};await save(record);
 	for(const item of record.changes){
@@ -146,6 +162,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		if(item.file===identityFile)await replaceLibraryManifest(disk,record.destination,item.before,item.after);
 		else await files.replace(relative,item.before,item.after);
 	}
+	for(const edit of references)await files.replace(edit.file,edit.before,edit.after);
 	if(record.exclusions && store)await applyExclusionPlan(store,record.exclusions);
 	await registerVaultLibrary(disk,config,record.destination,record.source);
 	await save({...record,phase:'complete'});
