@@ -70,10 +70,9 @@ async function move(id,bindingPath) {
 	await observe('library actions '+id,id=>{
 		const row=[...document.querySelectorAll('.kb-manager-sidebar .setting-item')]
 			.find(row=>row.querySelector('.setting-item-name')?.textContent.trim()===id);
-		const button=row?.querySelector('[aria-label="Library actions"]');
+		const button=row?.querySelector('button[aria-label="Move"]');
 		if (button) { button.click(); return true; }
 	},id);
-	await click('Move','.menu .menu-item');
 	await click('Browse…');
 	await parentFolder('After');
 	await click('Preview directory move');

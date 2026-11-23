@@ -1,7 +1,7 @@
 import { gitDisabled } from './device.ts';
 import { watchLibraryChanges } from './refresh.ts';
 import { cloneWizard } from './clone.ts';
-import { ButtonComponent, ItemView, Menu, Notice, Setting, TFile, Vault, WorkspaceLeaf } from 'obsidian';
+import { ButtonComponent, ItemView, Notice, Setting, WorkspaceLeaf } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import type { Library } from '../kb/catalog.ts';
@@ -13,13 +13,14 @@ import { sourcePanel } from './source.ts';
 import { networkPanel } from './network.ts';
 import { librarySettings } from '../settings.ts';
 import { tr } from '../i18n.ts';
-import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
+import { V3Dialog, dialogContents } from './dialog.ts';
 import { panelGroup } from './change-preview.ts';
 import { manageRegistry, relocateRegistryEntry, removeRegistryEntry, showImportPreview } from './manager-registry.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import { checkLibrary } from './v3-health.ts';
 import { createPanelTabs } from './panel-tabs.ts';
 import { captureInputSelection } from './input-selection.ts';
+import {cardAction, libraryCardHeading, openLibrary} from './library-card.ts';
 import { updateTemplateFiles } from './template-update.ts';
 
 export const managerType='knowledge-base-manager-view';
@@ -156,43 +157,30 @@ export class ManagerView extends ItemView {
 		const detail=[lib.location,lib.identity?templateIdentityLabel(lib.identity.template.id):tr('旧库',"Legacy"),({local:tr('独立 Git','Local Git'),missing:tr('未初始化 Git','Git not initialized'),special:tr('特殊 Git 布局','Special Git layout')})[lib.git], lib.identity?.archived ? tr('已归档',"Archived") : '',lib.problem,
 			lib.duplicate ? tr('ID 重复，请核对两个目录',"Duplicate ID. Check both directories") : ''].filter(Boolean).join(' · ');
 		const row=new Setting(host).setName(lib.identity?.displayName ?? lib.location).setDesc(detail);
-		if(lib.identity && !lib.problem && !lib.duplicate)row.addButton(b=>b.setButtonText(tr('打开',"Open")).onClick(async ()=>{
-			const entry=lib.identity?.entry ?? lib.mapping?.index;
-			if(!entry){
-				const choices=new Dialog(this.app,lib.location,host.win);
-				const files:TFile[]=[];
-				const folder=this.app.vault.getFolderByPath(lib.location);
-				if(folder)Vault.recurseChildren(folder,file=>{
-					if(file instanceof TFile && file.extension.toLowerCase()==='md')files.push(file);
-				});
-				if(!files.length)choices.lines([tr('目录中没有 Markdown 文件。',"This directory has no Markdown files.")]);
-				for(const file of files)choices.action(file.path.slice(lib.location.length+1),async()=>{
-					await this.plugin.disk.path(file.path);await this.app.workspace.getLeaf(false).openFile(file);choices.close();
-				});
-				choices.open();return;
-			}
-			try {
-				await this.plugin.disk.path(lib.location+'/'+entry);
-				const file=this.app.vault.getAbstractFileByPath(lib.location+'/'+entry);
-				if(file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
-				else new Notice(tr('入口不存在：',"Entry not found: ")+entry);
-			} catch(error){new Notice(String(error));}
-		}));
+		const currentLibrary=()=>{
+			const current=this.plugin.catalog.find(item=>item.location===lib.location && item.identity?.id===lib.identity?.id);
+			if(!current?.identity || current.missing || current.problem || current.duplicate || current.signature!==lib.signature)
+				throw new Error(tr('知识库已变化，请刷新管理器。','The library changed. Refresh the manager.'));
+			return current;
+		};
+		if(lib.identity && !lib.problem && !lib.duplicate)
+			libraryCardHeading(host,row,lib.identity.displayName,async()=>openLibrary(this.plugin,currentLibrary(),host.win));
 		const key=lib.identity && !lib.problem && !lib.duplicate ? lib.identity.id : 'path:'+lib.location;
 		const expanded=this.expanded===key;
 		const panel=gitDisabled(this.plugin)?undefined:host.createDiv({cls:'kb-library-git',attr:{id:'kb-workspace-panel-'+ ++nextWorkspacePanelId}});
 		if(panel)panel.hidden=!expanded;
-		if(panel)row.addButton(button=>{
-			button.buttonEl.setAttribute('aria-expanded',String(expanded));
-			button.buttonEl.setAttribute('aria-controls',panel.id);
-			button.setButtonText(tr('Git 工作区','Git workspace')).onClick(()=>{
+		if(panel){
+			const button=cardAction(row.controlEl,tr('Git 工作区','Git workspace'),'git-branch',()=>{
+				if(lib.identity && !lib.problem && !lib.duplicate)currentLibrary();
 				this.selection=key;
-				this.expanded=this.expanded===key ? undefined : key;
+				this.expanded=expanded?undefined:key;
 				this.saveLayout();
-				void this.render(key);
+				return this.render(key);
 			});
-			if(focusToggle===key)button.buttonEl.focus();
-		});
+			button.setAttribute('aria-expanded',String(expanded));
+			button.setAttribute('aria-controls',panel.id);
+			if(focusToggle===key)button.focus({preventScroll:true});
+		}
 		if(panel && expanded && (!lib.identity || lib.problem || lib.duplicate)){
 			const reason=lib.problem || (lib.duplicate ? tr('请先解决重复 ID','Resolve the duplicate ID first') : tr('接管此库后即可管理 Git','Adopt this library to manage Git'));
 			panel.setText(reason);
@@ -243,33 +231,20 @@ export class ManagerView extends ItemView {
 			})); return;
 		}
 		const id=lib.identity.id;
-		const location=lib.location;
-
-		row.addExtraButton(button=>button.setIcon('ellipsis').setTooltip(tr('知识库操作','Library actions')).onClick(()=>{
-			// A catalog update can finish while the visible row is still waiting for a history redraw.
-			const lib=this.plugin.catalog.find(current=>current.location===location && current.identity?.id===id);
-			if(!lib || lib.problem || lib.duplicate){
-				new Notice(tr('知识库已变化，请刷新管理器。','The library changed. Refresh the manager.'));
-				return;
-			}
-			const owner=button.extraSettingsEl.win;
-			const menu=new Menu();
-			const action=(title:string,icon:string,run:()=>void|Promise<void>)=>menu.addItem(item=>item.setTitle(title).setIcon(icon).onClick(async()=>{
-				try{await run();}catch(error){new Notice(String(error));}
-			}));
-			if(!gitDisabled(this.plugin))action(tr('Git 工作区','Git workspace'),'git-branch',()=>this.showLibrary(id));
-			action(tr('本库 Git 设置','Library Git settings'),'settings',()=>librarySettings(this.plugin,lib,owner));
-			action(tr('编辑','Edit'),'pencil',()=>edit(this.plugin,lib,owner));
-			if(!lib.identity?.archived)action(tr('移动','Move'),'folder-input',()=>move(this.plugin,lib,owner));
-			action(tr('检验','Check library'),'activity',()=>checkLibrary(this.plugin,lib));
-			action(tr('维护受管文件','Maintain managed files'),'file-cog',()=>maintainBindings(this.plugin,lib,owner));
-			if(lib.templateFiles && !lib.identity?.archived)action(tr('更新受管模板文件','Update template files'),'package-check',()=>updateTemplateFiles(this.plugin,lib,owner));
-			if(lib.identity?.schemaVersion===1 && !lib.identity.archived)action(tr('预览清单升级','Preview manifest upgrade'),'file-up',()=>upgradeManifest(this.plugin,lib,owner));
-			action(tr('预览登记及路径绑定','Preview registration and bindings'),'map-pin',()=>showImportPreview(this.plugin,lib.location,undefined,undefined,owner));
-			action(tr('移除登记','Remove registration'),'list-x',()=>removeRegistryEntry(this.plugin,lib.location,owner));
-			const bounds=button.extraSettingsEl.getBoundingClientRect();
-			menu.showAtPosition({x:bounds.left,y:bounds.bottom},button.extraSettingsEl.doc);
-		}));
+		const owner=host.win;
+		const action=(label:string,icon:string,run:(current:Library)=>void|Promise<void>)=>
+			cardAction(row.controlEl,label,icon,()=>run(currentLibrary()));
+		action(tr('本库 Git 设置','Library Git settings'),'settings',current=>librarySettings(this.plugin,current,owner));
+		action(tr('编辑','Edit'),'pencil',current=>edit(this.plugin,current,owner));
+		if(!lib.identity.archived)action(tr('移动','Move'),'folder-input',current=>move(this.plugin,current,owner));
+		action(tr('检验','Check library'),'activity',current=>checkLibrary(this.plugin,current));
+		action(tr('维护受管文件','Maintain managed files'),'file-cog',current=>maintainBindings(this.plugin,current,owner));
+		if(lib.templateFiles && !lib.identity.archived)
+			action(tr('更新受管模板文件','Update template files'),'package-check',current=>updateTemplateFiles(this.plugin,current,owner));
+		if(lib.identity.schemaVersion===1 && !lib.identity.archived)
+			action(tr('预览清单升级','Preview manifest upgrade'),'file-up',current=>upgradeManifest(this.plugin,current,owner));
+		action(tr('预览登记及路径绑定','Preview registration and bindings'),'map-pin',current=>showImportPreview(this.plugin,current.location,undefined,undefined,owner));
+		action(tr('移除登记','Remove registration'),'list-x',current=>removeRegistryEntry(this.plugin,current.location,owner));
 		if(panel && expanded){
 			panel.dataset.kbLibraryId=id;
 			watchLibraryChanges(this.plugin,lib,panel,signal,async()=>this.drawRow(lib));

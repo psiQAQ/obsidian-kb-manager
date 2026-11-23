@@ -93,6 +93,35 @@
 .kb-panel-group > :is(p, dl):first-child { margin-block-start: 0; }
 .kb-panel-group > :is(p, dl):last-child { margin-block-end: 0; }
 .kb-library-row > .setting-item { padding-block: 0; }
+.kb-library-row { position: relative; isolation: isolate; }
+.kb-library-row > .kb-library-card-summary { display: block; pointer-events: none; }
+.kb-library-card-summary > .setting-item-control {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	margin-block-start: var(--size-4-2);
+	padding: 0;
+}
+/* The open button covers the card. Action icons and the expanded workspace sit above it. */
+.kb-library-row > button.kb-card-open {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: inherit;
+	background: transparent;
+	box-shadow: none;
+	cursor: pointer;
+}
+.kb-library-row:has(> .kb-card-open:hover) > .kb-library-card-summary .setting-item-name { color: var(--text-accent); }
+.kb-library-row > .kb-card-open:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.kb-library-row .kb-card-action,
+.kb-library-row > .kb-library-git { position: relative; z-index: 1; }
+.kb-library-card-summary .kb-card-action { pointer-events: auto; }
+.kb-library-row .kb-card-action[aria-expanded="true"] { color: var(--text-accent); }
 .kb-library-row > .kb-library-git { margin-block-start: var(--size-4-3); }
 
 :is(.setting-group.kb-settings, .kb-settings .setting-group) {

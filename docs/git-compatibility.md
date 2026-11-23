@@ -6,7 +6,7 @@
 
 ## 设置
 
-在 **设置 → Knowledge Base Manager** 配置全局默认值；从知识库行的 **… → 本库 Git 设置** 覆盖或恢复继承。远端、分支及凭据从本库 Git 状态面板管理。以下标识为上游设置名，可与其源码逐项对照。[上游设置页](https://github.com/Vinzent03/obsidian-git/blob/8d1144aef2d41ffca6245a60199656e7a0c5ab17/src/setting/settings.ts)
+在 **设置 → Knowledge Base Manager** 配置全局默认值；从知识库行的 **本库 Git 设置** 覆盖或恢复继承。远端、分支及凭据从本库 Git 状态面板管理。以下标识为上游设置名，可与其源码逐项对照。[上游设置页](https://github.com/Vinzent03/obsidian-git/blob/8d1144aef2d41ffca6245a60199656e7a0c5ab17/src/setting/settings.ts)
 
 | 分类 | 上游设置或操作 | 状态及本插件行为 |
 |---|---|---|

@@ -104,18 +104,17 @@ version = "1"
 			await desktop.evaluate(name => {
 				const row = [...document.querySelectorAll('.kb-manager-sidebar .setting-item')]
 					.find(row => row.querySelector('.setting-item-name')?.textContent.trim() === name);
-				const control = row?.querySelector('.clickable-icon');
-				if (!control) throw new Error('Library action menu unavailable');
+				const control = row?.querySelector('button[aria-label="Check library"]');
+				if (!control) throw new Error('Library check action unavailable');
+				const card = row.closest('.kb-library-row'), bounds = card.getBoundingClientRect();
+				const hit = document.elementFromPoint(bounds.right - 12, bounds.top + 20);
+				if (hit !== card.querySelector('.kb-card-open')) throw new Error('Card background does not open the library');
+				const actions = [...row.querySelectorAll('.kb-card-action')];
+				if (!actions.every((el, i) => el.offsetLeft === actions[0].offsetLeft && (!i || el.offsetTop > actions[i - 1].offsetTop)))
+					throw new Error('Library action icons are not in one left-aligned column');
 				window.kbDesktopMeasurements.begin();
 				control.click();
 			}, registered[0]);
-			await until(() => desktop.evaluate(() => {
-				const item = [...document.querySelectorAll('.menu .menu-item')]
-					.find(item => item.checkVisibility() && item.textContent.trim() === 'Check library');
-				if (!item) return;
-				item.click();
-				return true;
-			}), 'library check menu');
 			result.chooseCheck = await until(() => desktop.evaluate(() => {
 				const modal = document.querySelector('.modal.kb-v3-health');
 				const select = modal?.querySelector('select');
@@ -148,7 +147,7 @@ version = "1"
 			assert.equal(report.status, 'passed');
 			result.report = { status: report.status, runId: report.runId, library: registered[0], log, checkIds: ['manifest'] };
 		} else {
-			result.manifestCheck = { status: 'Not Run', reason: 'The empty registry has no library action menu' };
+			result.manifestCheck = { status: 'Not Run', reason: 'The empty registry has no library to check' };
 		}
 		result.status = 'Passed';
 	} catch (error) {

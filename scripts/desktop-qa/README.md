@@ -12,7 +12,7 @@ The runner writes each fresh synthetic Vault, Obsidian profile, temporary files,
 
 The instrumented plugin copy counts Node filesystem API calls under the fixture root and Obsidian's adapter reads of the plugin registry file. Bytes are the data returned by the observed read calls. Separate calls to detect EOF can return zero bytes. These measurements describe application-level I/O and include browser paint readiness only where the wait checks the panel or report DOM. The desktop host can perform its own startup indexing outside these counters.
 
-Fixtures contain two Markdown notes per registration and no Git objects. The test opens the manager through its registered command, then uses the panel refresh, library action menu, custom check selector and start button. An empty registry has no library from which to run a check. A selected manifest report must contain exactly one passing check in its on-disk log.
+Fixtures contain two Markdown notes per registration and no Git objects. The test opens the manager through its registered command, then uses the panel refresh, library check icon, custom check selector and start button. An empty registry has no library from which to run a check. A selected manifest report must contain exactly one passing check in its on-disk log.
 
 Run the end-to-end workflows from the repository root with the existing local Templater 2.11.1 fixture in `references/templates/obsidian-amatzk-template`.
 

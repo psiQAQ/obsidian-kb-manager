@@ -23,7 +23,7 @@ For a manual installation from GitHub:
 3. Choose the vault root or another parent folder, enter the library folder name, and review the Git identity. You can change the initial branch and commit message. Leave the remote URL blank to work locally.
 4. Review the files and the template’s suggested folders to exclude from Obsidian search. Clear any exclusions you do not want, then confirm. With the defaults, the first commit is `Initial commit` on `main`.
 
-Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use the registration action in the sidebar to preview its registration. Each instance carries its own `kb.toml` identity file.
+Click a library card to open it. Hover over an action icon to see its name. Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use the registration action in the sidebar to preview its registration. Each instance carries its own `kb.toml` identity file.
 
 Registered paths are stored in the plugin’s `data.json` alongside its language and Git defaults. If your vault is in Git, check whether `data.json` is already tracked before sharing it. It now contains your library folder names.
 
@@ -35,7 +35,7 @@ To compare two commits, click the first, then Ctrl-click another (Cmd-click on m
 
 ## Check a library
 
-Open **… → Check library** on the library’s row. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Use **Choose individual checks** and select **Portability** to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
+Select the **Check library** icon on the library card. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Use **Choose individual checks** and select **Portability** to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
 
 Each result includes findings and coverage. A partial result means something could not be checked, even if there are no findings. New libraries carry their own runner and editable rules. From the library root, with Node.js installed, run:
 

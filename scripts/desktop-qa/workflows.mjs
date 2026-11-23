@@ -90,12 +90,11 @@ async function newInstance(name) {
 }
 async function libraryMenu(name,action) {
 	await command('open-manager');
-	await observe('library actions '+name,name=>{
+	await observe('library action '+action,(name,action)=>{
 		const row=[...document.querySelectorAll('.kb-manager-sidebar .setting-item')].find(row=>row.querySelector('.setting-item-name')?.textContent.trim()===name);
-		const button=row?.querySelector('[aria-label="Library actions"]');
+		const button=[...row?.querySelectorAll('.kb-card-action')??[]].find(el=>el.getAttribute('aria-label')===action);
 		if(button){button.click();return true;}
-	},name);
-	await clickText('.menu .menu-item',action);
+	},name,action);
 }
 async function gitFocus() {
 	await desktop.call('Page.bringToFront');
