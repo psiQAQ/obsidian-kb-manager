@@ -57,6 +57,27 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 					scroll && rect.top>=scroll.top && rect.bottom<=scroll.bottom;
 			});
 			await evaluate(()=>document.querySelector('.kb-source-location :is(.modal-close-button,.modal-header-button)').click());
+			await evaluate(()=>{
+				const rows=[...document.querySelectorAll('.kb-check-result[open] li')];
+				const expression=rows.find(row=>row.checkVisibility() && row.querySelector('code')?.textContent.includes('file.ext == "md"'));
+				expression.querySelector('button').click();
+			});
+			await observe('unverified global filter opens its first condition',()=>{
+				const source=document.querySelector('.kb-source-location');
+				return source?.querySelector('.cm-activeLine')?.textContent.trim()==='- file.ext == "md"' &&
+					source.querySelector('.cm-lineNumbers .cm-activeLineGutter')?.textContent==='3';
+			});
+			await evaluate(()=>document.querySelector('.kb-source-location :is(.modal-close-button,.modal-header-button)').click());
+			await evaluate(()=>{
+				const link=[...document.querySelectorAll('.kb-check-result[open] button')].find(button=>button.checkVisibility() && button.textContent==='.git');
+				link.click();
+			});
+			await observe('skipped directory is located without entering it',()=>{
+				const mark=[...document.querySelectorAll('.modal li mark')].find(el=>el.checkVisibility() && el.textContent==='.git');
+				if(!mark)return;
+				mark.closest('.modal').querySelector('.modal-close-button,.modal-header-button').click();
+				return true;
+			});
 			await observe('return to expanded Base result',()=>{
 				const panel=[...document.querySelectorAll('.modal .kb-check-result[open]')].find(row=>row.checkVisibility());
 				if(!panel || !panel.innerText.includes('List.base'))return;

@@ -1,6 +1,9 @@
 import {EditorState} from '@codemirror/state';
 import {EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers} from '@codemirror/view';
 import {TFile, TFolder} from 'obsidian';
+import {readdir} from 'node:fs/promises';
+import {baseExpressionLine} from '../diagnostics/base-expression-location.ts';
+import type {BaseExpression} from '../diagnostics/types.ts';
 import {decode, readRelative} from '../diagnostics/snapshot.ts';
 import {tr} from '../i18n.ts';
 import type KnowledgeBaseManager from '../main.ts';
@@ -9,7 +12,7 @@ import {V3Dialog} from './dialog.ts';
 class SourceLocationDialog extends V3Dialog {
 	private editor?: EditorView;
 
-	constructor(plugin:KnowledgeBaseManager, private file:string, private source:string, private line:number|undefined, origin:HTMLElement) {
+	constructor(plugin:KnowledgeBaseManager, private file:string, private source:string, private line:number|undefined, origin:HTMLElement, private message?:string) {
 		super(plugin.app,file+(line ? ' · '+tr('第 ','Line ')+line+tr(' 行','') : ''),origin.win);
 		this.returnFocusTo(origin);
 	}
@@ -17,6 +20,7 @@ class SourceLocationDialog extends V3Dialog {
 	onOpen() {
 		const doc=EditorState.create({doc:this.source}).doc;
 		const target=this.line && this.line<=doc.lines ? doc.line(this.line) : undefined;
+		if(this.message)this.contentEl.createEl('p',{attr:{role:'status'},text:this.message});
 		if(this.line && !target)this.contentEl.createEl('p',{attr:{role:'status'},text:
 			tr('报告中的行已超出当前文件范围。当前行数','The reported line is outside the current file. Current line count')+' · '+doc.lines});
 		const label=tr('当前文件源码（只读）','Current file source (read-only)');
@@ -39,7 +43,29 @@ class SourceLocationDialog extends V3Dialog {
 }
 
 export async function openDiagnosticLocation(plugin:KnowledgeBaseManager,location:string,file:string,line:number|undefined,
-	origin:HTMLElement,closeReport:()=>void) {
+	origin:HTMLElement,closeReport:()=>void,detail?:BaseExpression|'excluded') {
+	if(detail==='excluded'){
+		// An excluded entry may itself be hidden, a symlink or a separate library.
+		// Locate its name in the validated parent without opening the entry.
+		const parts=file.split('/');
+		const name=parts.pop()!;
+		const parent=[location,...parts].filter(Boolean).join('/');
+		const dir=await plugin.disk.folder(parent);
+		const entries=(await readdir(dir)).sort();
+		const index=entries.indexOf(name);
+		if(index<0)throw new Error(tr('所在目录中找不到此项','Entry no longer present in its folder')+' · '+file);
+		if(!origin.isConnected)return;
+		const dialog=new V3Dialog(plugin.app,tr('跳过项的位置','Skipped entry location'),origin.win).returnFocusTo(origin);
+		dialog.contentEl.createEl('p',{text:tr('所在目录','Containing folder')+' · '+(parent || '/')});
+		const list=dialog.contentEl.createEl('ul');
+		for(const entry of entries.slice(Math.max(0,index-2),index+3)){
+			const row=list.createEl('li');
+			if(entry===name)row.createEl('mark',{text:entry});
+			else row.setText(entry);
+		}
+		dialog.open();
+		return;
+	}
 	const path=[location,file].filter(Boolean).join('/');
 	await plugin.disk.path(path);
 	const entry=plugin.app.vault.getAbstractFileByPath(path);
@@ -54,7 +80,7 @@ export async function openDiagnosticLocation(plugin:KnowledgeBaseManager,locatio
 	// Sources with line coordinates must remain visible above the report. The native Bases
 	// view renders a table and cannot navigate to a YAML line.
 	const sourceFile=/\.(?:toml|m?js|cjs|ya?ml|json|txt|css|ts)$/iu.test(file);
-	if(!line && !sourceFile && entry instanceof TFile){
+	if(!detail && !line && !sourceFile && entry instanceof TFile){
 		const leaf=plugin.app.workspace.getLeaf('tab');
 		await leaf.openFile(entry);
 		closeReport();
@@ -70,5 +96,8 @@ export async function openDiagnosticLocation(plugin:KnowledgeBaseManager,locatio
 		throw new Error(tr('无法读取当前文件的源码，请确认文件仍存在且为可读的 UTF-8 文本（最多 2 MiB）。',
 			'Could not read the source. Check that the file still exists and is readable UTF-8 text (up to 2 MiB).')+' · '+file);
 	}
-	if(origin.isConnected)new SourceLocationDialog(plugin,file,text,line,origin).open();
+	if(!origin.isConnected)return;
+	const target=detail ? baseExpressionLine(text,detail) : line;
+	const message=detail && !target ? tr('当前源码中无法唯一定位报告中的表达式。','The reported expression has no unique match in the current source.') : undefined;
+	new SourceLocationDialog(plugin,file,text,target,origin,message).open();
 }

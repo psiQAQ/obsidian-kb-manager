@@ -17,6 +17,7 @@ import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
 import {showCheckedItems} from './diagnostic-checked-items.ts';
 import {openDiagnosticLocation} from './diagnostic-location.ts';
+import type {BaseExpression} from '../diagnostics/types.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
 
@@ -135,10 +136,14 @@ function coverage(parent:HTMLElement,value:Report['checks'][number]['coverage'])
 }
 
 function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library,closeReport:()=>void,history?:ReportHistory) {
-	function openLocation(file:string,line:number|undefined,button:HTMLButtonElement) {
-		button.disabled=true;
-		void openDiagnosticLocation(plugin,lib.location,file,line,button,closeReport)
-			.catch((error:unknown)=>new Notice(String(error))).finally(()=>{button.disabled=false;});
+	function sourceLink(parent:HTMLElement,file:string,line?:number,detail?:BaseExpression|'excluded',column?:number) {
+		const source=file+(line?' · '+tr('第 ','Line ')+line+tr(' 行',''):'')+(column?' · '+tr('列 ','Column ')+column:'');
+		const button=parent.createEl('button',{cls:'kb-check-source-link',text:source,attr:{type:'button'}});
+		button.addEventListener('click',()=>{
+			button.disabled=true;
+			void openDiagnosticLocation(plugin,lib.location,file,line,button,closeReport,detail)
+				.catch((error:unknown)=>new Notice(String(error))).finally(()=>{button.disabled=false;});
+		});
 	}
 	container.empty();
 	const results=container.createDiv({cls:'kb-v3-results'});
@@ -170,7 +175,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			if(!row.open || row.childElementCount>1)return;
 			const body=row.createDiv({cls:'kb-check-body'});
 			if(check.reason)body.createEl('p',{cls:'kb-v3-status-'+statusInfo(check.status).color,text:check.reason});
-			showCheckedItems(body,check,openLocation);
+			showCheckedItems(body,check,sourceLink);
 			if(check.diagnostics.length){
 				for(const item of check.diagnostics)finding(body,item);
 			} else if(check.status==='passed' && !check.checkedItems?.length){
@@ -181,7 +186,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			if(check.excludedPaths?.length){
 				body.createEl('h5',{text:tr('扫描时排除的路径','Paths excluded from scanning')});
 				const paths=body.createEl('ul');
-				for(const path of check.excludedPaths)paths.createEl('li',{text:path});
+				for(const path of check.excludedPaths)sourceLink(paths.createEl('li'),path,undefined,'excluded');
 				if(check.excludedPaths.length===40)body.createEl('p',{text:tr('最多列出 40 条路径。','Up to 40 paths are listed.')});
 			}
 			if(check.baseExpressions?.length){
@@ -190,7 +195,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 				for(const entry of check.baseExpressions){
 					const li=entries.createEl('li');
 					li.createEl('strong',{text:entry.scope});
-					li.createSpan({text:' · '+entry.file+(entry.line ? ' · '+tr('第 ','Line ')+entry.line+tr(' 行','') : '')});
+					sourceLink(li,entry.file,entry.line,entry);
 					li.createEl('code',{cls:'kb-check-location',text:entry.expression});
 				}
 				if(check.baseExpressionCount && check.baseExpressionCount>check.baseExpressions.length)
@@ -224,16 +229,10 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		const card=parent.createDiv({cls:'kb-v3-finding'});
 		badge(card,item.severity);
 		card.createEl('strong',{cls:'kb-v3-status-'+item.severity,text:item.message});
-		const location=[item.file,item.line,item.column].filter(v=>v!==undefined).join(':');
-		if(item.file)card.createEl('code',{cls:'kb-check-location',text:location});
+		if(item.file)sourceLink(card,item.file,item.line,undefined,item.column);
 		if(item.field)card.createEl('p',{text:tr('字段','Field')+' · '+item.field});
 		if(item.evidence)card.createEl('p',{text:tr('依据','Evidence')+' · '+item.evidence});
 		card.createEl('small',{cls:'kb-v3-muted',text:[name,item.code].filter(Boolean).join(' · ')});
-		const file=item.file;
-		if(file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+file) instanceof TFile){
-			const button=card.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button','aria-label':tr('定位文件','Open file')+' · '+location}});
-			button.addEventListener('click',()=>openLocation(file,item.line,button));
-		}
 	}
 	render();
 }

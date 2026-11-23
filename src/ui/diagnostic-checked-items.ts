@@ -2,7 +2,7 @@ import type {CheckedItem, Diagnostic, DiagnosticCheckResult} from '../diagnostic
 import {tr} from '../i18n.ts';
 
 export function showCheckedItems(parent: HTMLElement, check: DiagnosticCheckResult,
-	openLocation:(file:string,line:number|undefined,button:HTMLButtonElement)=>void) {
+	sourceLink:(parent:HTMLElement,file:string,line?:number)=>void) {
 	const total = check.coverage.checked;
 	if (!total) return;
 	parent.createEl('h5',{text:tr('已检明细','Checked items')+' · '+total});
@@ -43,9 +43,7 @@ export function showCheckedItems(parent: HTMLElement, check: DiagnosticCheckResu
 		for (const row of rows.slice(next,next+50)) {
 			const li = list.createEl('li');
 			li.createEl('strong',{text:row.subject});
-			const source = row.file + (row.line ? ' · '+tr('第 ','Line ')+row.line+tr(' 行','') : '');
-			const link=li.createEl('button',{cls:'kb-check-source-link',text:source,attr:{type:'button'}});
-			link.addEventListener('click',()=>openLocation(row.file,row.line,link));
+			sourceLink(li,row.file,row.line);
 			const amount = row.count && row.count>1 ? ' · '+row.count+tr(' 项',' items') : '';
 			const result=li.createDiv({text:tr('结果','Result')+' · '});
 			const color=outcomeColor(row);
