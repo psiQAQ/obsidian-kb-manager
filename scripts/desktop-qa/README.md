@@ -22,4 +22,12 @@ node scripts/desktop-qa/workflows.mjs . <source-commit> all
 
 The workflow creates two libraries in an isolated Vault, changes shared settings and Git state, and checks cancellation, diagnostic history, Templater expansion, template update conflicts, selected references during a move, and manager layout. Each run saves its observations and the host version in `workflows.json` alongside the process receipts. The external Git scenario sends a focus event to the native app renderer after staging and committing through Git.
 
+Run the native Bases regression with a production build.
+
+```powershell
+node scripts/desktop-qa/bases.mjs . <source-commit>
+```
+
+The runner creates a Kepano library and an LLM Wiki in a separate synthetic Vault and moves both through the manager. It checks the 20 newest episodes in **Last seen**, the excluded records and all four Wiki overview views before and after the move. It also opens the Wiki overview as an embed from within the library and from a different folder to check the host filter. The run writes the expected and actual file paths, native result counts and move receipts to `bases.json` under its `.tmp/plugin-improvement-qa/bases-move-*` directory.
+
 To run a separate desktop scenario, import `workspaceScratch`, `prepareRun`, `launchDesktop` and `trustFixture` from `scripts/desktop-qa-host.mjs`. Seed the fixture under the returned `vault`, then launch and trust it before calling `desktop.evaluate` or `desktop.call`. Supply the local Templater plugin directory in `prepareRun` to enable it alongside the manager. Call `desktop.close()` in a `finally` block to close the owned instance and record its exit.
