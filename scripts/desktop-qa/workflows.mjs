@@ -32,7 +32,7 @@ const templateFiles = {
 	'Policy.md':'Pack policy v1\n',
 	'Templates/Note.md': '# {{title}}\n',
 	'pic.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>\n',
-	'List.base': 'filters: file.ext == "md"\nviews:\n  - type: table\n    name: Notes\n',
+	'List.base': 'filters:\n  and:\n    - file.ext == "md"\n'+'\n'.repeat(75)+'    - file.inFolder("/")\nviews:\n  - type: table\n    name: Notes\n',
 	'Board.canvas': '{"nodes":[{"id":"card","type":"text","x":0,"y":0,"width":160,"height":80,"text":"Card"}],"edges":[]}\n',
 	'checks/slow.mjs': slowRule,
 };

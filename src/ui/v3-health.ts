@@ -16,6 +16,7 @@ import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
 import {showCheckedItems} from './diagnostic-checked-items.ts';
+import {openDiagnosticLocation} from './diagnostic-location.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
 
@@ -133,16 +134,12 @@ function coverage(parent:HTMLElement,value:Report['checks'][number]['coverage'])
 	return row;
 }
 
-async function openDiagnostic(plugin:KnowledgeBaseManager,library:Library,item:Diagnostic) {
-	if(!item.file)return;
-	const relative=library.location+'/'+item.file;
-	await plugin.disk.path(relative);
-	const file=plugin.app.vault.getAbstractFileByPath(relative);
-	if(!(file instanceof TFile))throw new Error(tr('找不到此文件','File not found')+' · '+relative);
-	await plugin.app.workspace.getLeaf(false).openFile(file,item.line?{eState:{line:item.line-1}}:undefined);
-}
-
-function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library,history?:ReportHistory) {
+function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library,closeReport:()=>void,history?:ReportHistory) {
+	function openLocation(file:string,line:number|undefined,button:HTMLButtonElement) {
+		button.disabled=true;
+		void openDiagnosticLocation(plugin,lib.location,file,line,button,closeReport)
+			.catch((error:unknown)=>new Notice(String(error))).finally(()=>{button.disabled=false;});
+	}
 	container.empty();
 	const results=container.createDiv({cls:'kb-v3-results'});
 	const header=results.createDiv({cls:'kb-v3-report-heading'});
@@ -173,7 +170,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			if(!row.open || row.childElementCount>1)return;
 			const body=row.createDiv({cls:'kb-check-body'});
 			if(check.reason)body.createEl('p',{text:check.reason});
-			showCheckedItems(body,check);
+			showCheckedItems(body,check,openLocation);
 			if(check.diagnostics.length){
 				for(const item of check.diagnostics)finding(body,item);
 			} else if(check.status==='passed' && !check.checkedItems?.length){
@@ -232,10 +229,11 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		if(item.field)card.createEl('p',{text:tr('字段','Field')+' · '+item.field});
 		if(item.evidence)card.createEl('p',{text:tr('依据','Evidence')+' · '+item.evidence});
 		card.createEl('small',{cls:'kb-v3-muted',text:[name,item.code].filter(Boolean).join(' · ')});
-		if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile)
-			card.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button','aria-label':tr('定位文件','Open file')+' · '+location}}).addEventListener('click',()=>{
-				void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
-			});
+		const file=item.file;
+		if(file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+file) instanceof TFile){
+			const button=card.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button','aria-label':tr('定位文件','Open file')+' · '+location}});
+			button.addEventListener('click',()=>openLocation(file,item.line,button));
+		}
 	}
 	render();
 }
@@ -371,7 +369,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 					b.setButtonText(tr('查看报告','View report')).onClick(()=>{
 						panel.empty();
 						new ButtonComponent(panel).setButtonText(tr('返回历史列表','Back to history')).onClick(()=>{void loadHistory();});
-						reportView(panel.createDiv(),report,plugin,lib,{
+						reportView(panel.createDiv(),report,plugin,lib,()=>dialog.close(),{
 							previous:reports.slice(index+1),signal:request.signal,
 							freshness:()=>diagnosticFreshness({libraryRoot:root,vaultRoot:plugin.disk.root,configDir:plugin.disk.configDir,signal:request.signal},report),
 						});
@@ -381,7 +379,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 		} catch(e){if(!request.signal.aborted)panel.setText(String(e));}
 	}
 	function display(report:Report){
-		reportView(output,report,plugin,lib);form.hidden=true;back.buttonEl.hidden=false;
+		reportView(output,report,plugin,lib,()=>dialog.close());form.hidden=true;back.buttonEl.hidden=false;
 		output.querySelector('h3')?.setAttribute('tabindex','-1');
 		if(tabs.getActive()==='run')output.querySelector('h3')?.focus();
 	}

@@ -32,8 +32,24 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 				}
 				if(!['Checked items','Base YAML, view and filter structure','Valid structure','checks','Paths excluded from scanning','Global filter','List.base','file.ext == "md"'].every(text=>rows[1].innerText.includes(text)))
 					throw Error('Missing readable coverage details');
-				rows[1].querySelector('summary').click();
-				if(rows.some(r=>r.open))throw Error('Re-selecting the same check should collapse it');
+				const source=rows[1].querySelector('.kb-check-source-link:last-of-type');
+				const line=[...rows[1].querySelectorAll('.kb-check-source-link')].find(button=>button.textContent.includes('Line 79'));
+				if(!source || !line)throw Error('Missing Base line navigation');
+				line.click();
+			});
+			await observe('visible YAML at the reported line',()=>{
+				const modal=document.querySelector('.kb-source-location');
+				const row=modal?.querySelector('.cm-activeLine');
+				const scroll=modal?.querySelector('.cm-scroller')?.getBoundingClientRect();
+				const rect=row?.getBoundingClientRect();
+				return row?.textContent.trim()==='- file.inFolder("/")' && modal.querySelector('.cm-lineNumbers .cm-activeLineGutter')?.textContent==='79' &&
+					scroll && rect.top>=scroll.top && rect.bottom<=scroll.bottom;
+			});
+			await evaluate(()=>document.querySelector('.kb-source-location :is(.modal-close-button,.modal-header-button)').click());
+			await observe('return to expanded Base result',()=>{
+				const panel=[...document.querySelectorAll('.modal .kb-check-result[open]')].find(row=>row.checkVisibility());
+				if(!panel || !panel.innerText.includes('List.base'))return;
+				panel.querySelector('summary').click();return !panel.open;
 			});
 		}
 		for(let count=0;count<2;count++){
