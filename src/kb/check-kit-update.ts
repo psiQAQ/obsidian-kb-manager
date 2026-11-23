@@ -11,6 +11,7 @@ import {courseworkDeclaration, courseworkLinkDeclaration, courseworkScript, cour
 import {identityFile, readManifest, writeCheckKit} from './identity-core.ts';
 import {readManifestFile, replaceLibraryManifest} from './manifest-disk.ts';
 import {previousTemplateCheckDigests} from './template-check-digests.ts';
+import {isKepano, kepanoBindingAssets} from './template-core.ts';
 import {declaration} from './template-declaration.ts';
 import type {Declaration, DiagnosticExclusion} from './template-declaration.ts';
 import {builtinPacks, officialCheckDigests, packText} from './template-pack.ts';
@@ -80,6 +81,7 @@ export interface CheckKitUpdate {
 	courseworkFiles: KitFile[];
 	templateFiles: KitFile[];
 	templateDeclarationDigest?: string;
+	mediaViews: KitFile[];
 }
 
 function changed(name: string) {
@@ -194,7 +196,7 @@ async function previewTemplateFiles(disk: VaultDisk, location: string, bundled: 
 		if (!previous || !source || !officialCheckDigests().includes(digest(source)) ||
 			!localChecks?.some(check => check.id === id && check.path === path)) continue;
 		const file = await inspectKitFile(disk,location,path);
-		templateFiles.push(candidate(file,source,file.installedDigest === previous ? 'replace' : file.change));
+		templateFiles.push(candidate(file,source,file.installedDigest && previous.includes(file.installedDigest) ? 'replace' : file.change));
 	}
 	if (exclusions) templateFiles.push(exclusions);
 	return {templateFiles,templateDeclarationDigest:templateFiles.length ? descriptor.installedDigest : undefined};
@@ -204,7 +206,7 @@ export async function previewCheckKitUpdate(disk: VaultDisk, location: string): 
 	const filename = await disk.path(location + '/' + identityFile);
 	if (!await statIfPresent(filename)) return;
 	const manifest = await readManifestFile(filename);
-	const {checkKit:kit, identity} = readManifest(manifest.raw);
+	const {checkKit:kit, identity, templateFiles} = readManifest(manifest.raw);
 	if (!kit) return;
 	const version = identity?.template.version ?? '';
 	const bundled = builtinPacks().find(pack => pack.id === identity?.template.id);
@@ -219,11 +221,45 @@ export async function previewCheckKitUpdate(disk: VaultDisk, location: string): 
 		bundled && bundled.id !== courseworkTemplate ? previewTemplateFiles(disk,location,bundled,version) : {templateFiles:[]},
 	]);
 	const downgrade = versionIsNewer(kit.version,checkKitVersion);
+	const mediaViews: KitFile[] = [];
+	if (bundled?.id === 'kepano' && identity && isKepano(identity.template) && !identity.archived && !downgrade) {
+		const sources = packText('kepano');
+		const historical = kepanoBindingAssets(sources,version);
+		for (const path of ['Templates/Bases/Attachments.base','Templates/Bases/Everything.base']) {
+			const source = sources[path], previous = historical[path];
+			if (!source || !previous || previous === source) continue;
+			const file = await inspectKitFile(disk,location,path);
+			const rendered = source.replaceAll('__KB_ROOT__',()=>location);
+			const owned = identity.managed.some(binding=>binding.path===path) || !!templateFiles?.digests[path];
+			const original = file.before === previous.replaceAll('__KB_ROOT__',()=>location);
+			const view = candidate(file,rendered,original && owned ? 'blocked' : original ? 'replace' : file.change);
+			if (original && owned && view.change === 'blocked') view.reason = tr(
+				'此视图仍由旧清单跟踪。请同时核对文件和绑定记录，再手动合并。',
+				'The older manifest still tracks this view. Review the file and its binding together before merging manually.');
+			if (view.change !== 'current') mediaViews.push(view);
+		}
+	}
 	const canApply = !downgrade && (files.some(file => file.change === 'add' || file.change === 'replace') ||
 		files.some(file => file.change === 'current' && (kit.version !== checkKitVersion || kit.digests[file.path] !== file.targetDigest)) ||
 		courseworkFiles.some(file => file.change === 'replace') || templateUpdate.templateFiles.some(file => file.change === 'replace'));
 	return {location,manifestDigest:manifest.signature,installedVersion:kit.version,targetVersion:checkKitVersion,
-		canApply,downgrade,files,courseworkFiles,...templateUpdate};
+		canApply,downgrade,files,courseworkFiles,mediaViews,...templateUpdate};
+}
+
+// Dashboard edits are independent of checker updates. The user chooses each view explicitly.
+export async function applyMediaViewUpdate(disk: VaultDisk, location: string, approved: CheckKitUpdate, path: string, checkEditor: () => void) {
+	const reviewed = approved.mediaViews.find(view=>view.path===path);
+	if (approved.location !== location || !reviewed || reviewed.change !== 'replace') throw changed(path);
+	const fresh = await previewCheckKitUpdate(disk,location);
+	const file = fresh?.mediaViews.find(view=>view.path===path);
+	if (!fresh || fresh.manifestDigest !== approved.manifestDigest || !file || !eligible(file) ||
+		file.change !== 'replace' || !matchesApproval([file],[reviewed])) throw changed(path);
+	await publishKitFile(disk,location,file,async()=>{
+		if ((await readManifestFile(await disk.path(location+'/'+identityFile))).signature !== fresh.manifestDigest)
+			throw changed(identityFile);
+		checkEditor();
+	});
+	await assertFileDigest(disk,location,file,file.targetDigest);
 }
 
 async function publishKitFile(disk: VaultDisk, location: string,

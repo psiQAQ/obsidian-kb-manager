@@ -360,7 +360,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const tools=tabs.panels.tools;
 	const info=tools.createEl('p');
 	const updateRow=new Setting(tools).setName(tr('本库检验工具','Installed check kit')).addButton(b=>b
-		.setButtonText(tr('查看版本与差异','Review version and changes')).onClick(()=>{void showCheckKitUpdate(plugin,lib.location,renderChoices).catch((e:unknown)=>new Notice(String(e)));}));
+		.setButtonText(tr('查看版本与差异','Review version and changes')).onClick(()=>{void showCheckKitUpdate(plugin,lib,renderChoices).catch((e:unknown)=>new Notice(String(e)));}));
 	new Setting(tools).setName(tr('导出离线入口','Export offline runner')).addButton(b=>b.setButtonText(tr('选择保存位置','Choose a destination')).onClick(()=>exportDiagnosticRunner(plugin)));
 	async function loadHistory(){
 		history?.abort();

@@ -8,11 +8,12 @@ import {promisify} from 'node:util';
 import {runDiagnostics} from '../src/diagnostics/index.ts';
 import {digest} from '../src/fs/vault.ts';
 import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
-import {applyCheckKitUpdate,previewCheckKitUpdate} from '../src/kb/check-kit-update.ts';
+import {applyCheckKitUpdate,applyMediaViewUpdate,previewCheckKitUpdate} from '../src/kb/check-kit-update.ts';
 import {previousCourseworkDigests} from '../src/kb/coursework-check.ts';
 import {readManifest,writeCheckKit,writeIdentity} from '../src/kb/identity-core.ts';
 import {previousTemplateCheckDigests} from '../src/kb/template-check-digests.ts';
 import {builtinPacks,officialCheckDigests,packText} from '../src/kb/template-pack.ts';
+import {kepanoBindingAssets} from '../src/kb/template-core.ts';
 import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 const runner = 'checks/kb-check.cjs';
@@ -72,6 +73,40 @@ async function courseworkFixture(t) {
 }
 
 const assignmentSource = (courseLink, due) => `---\ntype: assignment\nstatus: scheduled\ncourse: ${JSON.stringify(courseLink)}\ndue: ${due}\n---\n`;
+
+test('Kepano media views update individually after review and retain local edits',async t=>{
+	const {location,put,read,preview,apply,disk,manifest}=await fixture(t);
+	await put('kb.toml',writeIdentity(manifest,{schemaVersion:2,id:'4d29d18b-6d25-4099-9a94-e44d4c652300',
+		displayName:'Kepano',description:'',archived:false,template:{id:'kepano',version:'9'},managed:[]}));
+	await put(declaration,JSON.stringify({id:'kepano',version:'9'}));
+	const paths=['Attachments.base','Everything.base'].map(name=>'Templates/Bases/'+name);
+	const [attachments,everything]=paths;
+	const old={};
+	for(const path of paths){
+		const text=kepanoBindingAssets(packText('kepano'),'9')[path];
+		assert.match(text,/!file\.ext\.containsAny/u);
+		old[path]=text.replaceAll('__KB_ROOT__',()=>location);
+		await put(path,old[path]);
+	}
+	let plan=await preview();
+	assert.deepEqual(plan.mediaViews.map(view=>[view.path,view.change]),paths.map(path=>[path,'replace']));
+	await apply(plan);
+	for(const path of paths)assert.equal(await read(path),old[path]);
+	plan=await preview();
+	const edited=old[everything]+'\n# Personal view\n';
+	await put(everything,edited);
+	const update=(plan,path,checkEditor=()=>{})=>applyMediaViewUpdate(disk,location,plan,path,checkEditor);
+	await assert.rejects(update(plan,everything),/重新预览|Preview again/u);
+	await assert.rejects(update(plan,attachments,()=>{throw Error('unsaved view');}),/unsaved view/u);
+	assert.equal(await read(attachments),old[attachments]);
+	await update(plan,attachments);
+	assert.equal(await read(attachments),packText('kepano')[attachments].replaceAll('__KB_ROOT__',()=>location));
+	assert.equal(await read(everything),edited);
+	const updated=await preview();
+	assert.deepEqual(updated.mediaViews.map(view=>[view.path,view.change]),[[everything,'modified']]);
+	await assert.rejects(update(updated,everything),/重新预览|Preview again/u);
+});
+
 const courseworkChanges = plan => Object.fromEntries(plan.courseworkFiles.map(file => [file.path,file.change]));
 
 test('kit update previews the real changes and preserves locally edited or removed files',async t=>{
@@ -306,7 +341,7 @@ async function templateFixture(t) {
 
 test('an approved original built-in template check and its exclusions can update independently of the common kit',async t=>{
 	const {apply,preview,read,put,manifest,raw} = await templateFixture(t);
-	assert.equal(digest(originalSpecial),previousTemplateCheckDigests[templateId][special]);
+	assert.ok(previousTemplateCheckDigests[templateId][special].includes(digest(originalSpecial)));
 	const plan = await preview();
 	const after = packText(templateId)[special];
 	assert.ok(officialCheckDigests().includes(digest(after)));

@@ -21,7 +21,7 @@ export async function buildCheckKit({packs,digests:specialDigests}) {
 		id:descriptor.id,version:descriptor.version,checks:descriptor.checks.map(({id,name,path})=>{
 			const current=createHash('sha256').update(text[path]).digest('hex');
 			const known=descriptor.id===courseworkTemplate && path===courseworkScript ? previousCourseworkDigests :
-				[].concat(previousTemplateCheckDigests[descriptor.id]?.[path] ?? []);
+				previousTemplateCheckDigests[descriptor.id]?.[path] ?? [];
 			return {id,name,path,digests:[current,...known]};
 		}),
 	}));

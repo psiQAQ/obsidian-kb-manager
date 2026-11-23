@@ -1,9 +1,12 @@
 import {createTwoFilesPatch} from 'diff';
+import {TextFileView} from 'obsidian';
 import {readDiagnosticScript} from '../diagnostics/common.ts';
 import type {SpecialCheck} from '../diagnostics/types.ts';
 import {digest} from '../fs/vault.ts';
 import {tr} from '../i18n.ts';
-import {applyCheckKitUpdate, previewCheckKitUpdate} from '../kb/check-kit-update.ts';
+import {applyCheckKitUpdate, applyMediaViewUpdate, previewCheckKitUpdate} from '../kb/check-kit-update.ts';
+import {recheck} from '../kb/catalog.ts';
+import type {Library} from '../kb/catalog.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import {V3Dialog} from './dialog.ts';
 import {changeActions, changeComparison} from './change-preview.ts';
@@ -69,18 +72,21 @@ const updateLabels = {
 	blocked:['等待复核配套文件','Companion file needs review'],
 } as const;
 
-export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location: string, refresh: () => Promise<void>) {
+export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, library: Library, refresh: () => Promise<void>) {
+	const {location} = library;
 	const plan = await previewCheckKitUpdate(plugin.disk,location);
 	if (!plan) throw new Error(tr('此知识库没有已安装的检验工具包。','This library has no installed check kit.'));
 	const dialog = new V3Dialog(plugin.app,tr('预览检验工具更新','Preview check kit update'));
 	dialog.facts([[tr('知识库','Library'),location]]);
 	changeComparison(dialog.contentEl,[{label:tr('检验工具版本','Check kit version'),before:plan.installedVersion,
 		after:plan.targetVersion,afterLabel:plan.canApply?undefined:tr('插件提供版本','Bundled version')}]);
-	const files = [...plan.files,...plan.courseworkFiles,...plan.templateFiles];
+	const files = [...plan.files,...plan.courseworkFiles,...plan.templateFiles,...plan.mediaViews];
 	if (plan.downgrade) dialog.contentEl.createEl('p',{text:tr('此知识库已安装更新的检验工具包。','This library has a newer check kit installed.')});
 	else if (files.some(file => file.change === 'modified' || file.change === 'missing' || file.change === 'unavailable'))
 		dialog.contentEl.createEl('p',{text:tr('已修改、缺失或无法读取的文件需要人工处理。','Review edited, missing, or unavailable files manually.')});
 	for (const file of files) {
+		const mediaView = plan.mediaViews.includes(file);
+		if (file === plan.mediaViews[0]) dialog.contentEl.createEl('h3',{text:tr('Kepano 媒体视图（逐个更新）','Kepano media views (update individually)')});
 		if (file === plan.courseworkFiles[0]) dialog.contentEl.createEl('h3',{text:tr('课程与截止日检查','Course and due date check')});
 		if (file === plan.templateFiles[0]) dialog.contentEl.createEl('h3',{text:tr('模板专项检查','Template checks')});
 		const entry = dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
@@ -110,16 +116,37 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 					tr('自定义诊断排除规则','Custom diagnostic exclusions'),tr('官方诊断排除规则','Official diagnostic exclusions'));
 			}
 			if (!fileDiff) return;
-			const applies=plan.canApply && (file.change==='add' || file.change==='replace');
+			const applies=(plan.canApply || mediaView) && (file.change==='add' || file.change==='replace');
 			const before=file.before ?? (file.change==='unavailable'?tr('无法读取文件','File unavailable'):
 				file.installedDigest?tr('无法显示为 UTF-8 文本','Unavailable as UTF-8 text'):tr('文件缺失','File missing'));
 			changeComparison(entry,[{label:tr('文件内容','File content'),before,after,code:true,
 				afterLabel:applies?undefined:tr('候选内容','Proposed content')}]);
+			if (mediaView && file.change==='replace') changeActions(entry,[{
+				label:tr('应用此视图的变更','Update this view'),
+				run:async()=>{
+					await plugin.exclusive(location,async()=>{
+						const current=await recheck(plugin.disk,plugin.config,{...library,signature:plan.manifestDigest});
+						if (!library.identity || current.identity?.id!==library.identity.id)
+							throw new Error(tr('知识库身份已变化，请重新打开检验。','The library identity changed. Reopen the check dialog.'));
+						await applyMediaViewUpdate(plugin.disk,location,plan,file.path,()=>{
+							plugin.app.workspace.iterateAllLeaves(leaf=>{
+								const view=leaf.view as typeof leaf.view & {file?:{path:string};dirty?:boolean};
+								if (view.file?.path!==location+'/'+file.path) return;
+								if (view.dirty || (view instanceof TextFileView && view.getViewData()!==file.before))
+									throw new Error(tr('请先保存视图，再重新预览。','Save the view and preview again.'));
+							});
+						});
+					});
+					await refresh();
+					dialog.close();
+				},
+			}]);
 		};
 		entry.addEventListener('toggle',reviewContents);
 	}
 	if (plan.canApply) {
-		changeActions(dialog.contentEl,[{label:tr('更新符合条件的文件','Update eligible files'),primary:true,run:async()=>{
+		const label=plan.mediaViews.length?tr('更新检验工具与规则','Update check tools and rules'):tr('更新符合条件的文件','Update eligible files');
+		changeActions(dialog.contentEl,[{label,primary:true,run:async()=>{
 			await plugin.exclusive(location,()=>applyCheckKitUpdate(plugin.disk,location,plan));
 			await refresh();
 			dialog.close();
