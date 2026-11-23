@@ -112,8 +112,8 @@ version = "1"
 				const hit = document.elementFromPoint(bounds.right - 12, bounds.top + 20);
 				if (hit !== card.querySelector('.kb-card-open')) return;
 				const actions = [...row.querySelectorAll('.kb-card-action')];
-				if (!actions.every((el, i) => el.offsetLeft === actions[0].offsetLeft && (!i || el.offsetTop > actions[i - 1].offsetTop)))
-					throw new Error('Library action icons are not in one left-aligned column');
+				if (!actions.every((el, i) => el.offsetTop === actions[0].offsetTop && (!i || el.offsetLeft > actions[i - 1].offsetLeft)))
+					throw new Error('Library action icons are not in one horizontal row');
 				window.kbDesktopMeasurements.begin();
 				control.click();
 				return true;

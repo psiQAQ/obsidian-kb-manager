@@ -97,8 +97,15 @@
 .kb-library-row > .kb-library-card-summary { display: block; pointer-events: none; }
 .kb-library-card-summary > .setting-item-control {
 	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
+	flex-flow: row nowrap;
+	align-items: center;
+	justify-content: flex-start;
+	inline-size: fit-content;
+	max-inline-size: 100%;
+	overflow-x: auto;
+	position: relative;
+	z-index: 1;
+	pointer-events: auto;
 	margin-block-start: var(--size-4-2);
 	padding: 0;
 }
@@ -118,11 +125,9 @@
 }
 .kb-library-row:has(> .kb-card-open:hover) > .kb-library-card-summary .setting-item-name { color: var(--text-accent); }
 .kb-library-row > .kb-card-open:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
-.kb-library-row .kb-card-action,
-.kb-library-row > .kb-library-git { position: relative; z-index: 1; }
-.kb-library-card-summary .kb-card-action { pointer-events: auto; }
+.kb-library-card-summary .kb-card-action { flex: none; }
 .kb-library-row .kb-card-action[aria-expanded="true"] { color: var(--text-accent); }
-.kb-library-row > .kb-library-git { margin-block-start: var(--size-4-3); }
+.kb-library-row > .kb-library-git { position: relative; z-index: 1; margin-block-start: var(--size-4-3); }
 
 :is(.setting-group.kb-settings, .kb-settings .setting-group) {
 	--setting-items-padding-x: var(--size-4-3);
