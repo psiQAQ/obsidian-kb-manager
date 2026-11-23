@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {declaration,verifyDeclaration} from '../src/kb/template-declaration.ts';
 import {applyExclusionPlan,assertExclusionPlan,assertMoveExclusionScope,legacyTemplateRule,planMovedExclusions,planNewExclusions,templateFolderRule} from '../src/kb/template-exclusions.ts';
 import {PluginDataRegistry} from '../src/registry/plugin-data.ts';
+import {creationDisplayName,unmatchedDiagnosticExclusionWarnings} from '../src/ui/creation-preview.ts';
 
 const id='10000000-0000-4000-8000-000000000001';
 const plan=(rules,destination,folders)=>({...planNewExclusions(rules,destination,folders),id});
@@ -35,6 +36,27 @@ test('suggestions name existing library-relative folders with their exact spelli
 	assert.throws(()=>verifyDeclaration(spec,folders,[]),/suggestedExcludedFolders/u);
 	for(const input of [['../Outside'],['A','a'],['é','e\u0301'],['A/'],['/Templates'],['A\\B'],['.private'],['CON'],[true],'Templates'])
 		assert.throws(()=>declaration(JSON.stringify({suggestedExcludedFolders:input})));
+});
+
+test('creation asks for the folder name and uses it when the optional display name is blank',()=>{
+	assert.throws(()=>creationDisplayName('',''),/请输入目录名|Enter a folder name/u);
+	assert.throws(()=>creationDisplayName(' \t','Explicit name'),/请输入目录名|Enter a folder name/u);
+	assert.equal(creationDisplayName('Research notes',''),'Research notes');
+	assert.equal(creationDisplayName('Research notes',' \t'),'Research notes');
+	assert.equal(creationDisplayName('Research notes','Optics'),'Optics');
+});
+
+test('creation preview warns about absent diagnostic paths with exact spelling and kind',()=>{
+	const template={files:['Templates/Note.md','Templates/Nested/Subpage.md','Templates2/Example.md'].map(name=>({name,bytes:new Uint8Array()})),folders:['Empty']};
+	assert.deepEqual(unmatchedDiagnosticExclusionWarnings(template),[]);
+	const diagnosticExclusions=[
+		{checks:['links'],files:['Templates/Note.md','Templates/note.md','Templates/Nested'],
+			folders:['Templates','Templates/Nested','Empty','Templtaes','Template','Templates/Note.md']},
+		{checks:['anchors'],folders:['Templtaes']},
+	];
+	template.files.push({name:'kb-template.json',bytes:new TextEncoder().encode(JSON.stringify({diagnosticExclusions}))});
+	assert.deepEqual(unmatchedDiagnosticExclusionWarnings(template).map(message=>message.split(' · ')[1]),
+		['Templates/note.md','Templates/Nested','Templtaes/','Template/','Templates/Note.md/']);
 });
 
 test('the generated Obsidian regexp anchors each escaped path at the vault root and a folder boundary',()=>{

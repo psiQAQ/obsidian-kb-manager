@@ -280,8 +280,8 @@ class HealthDialog extends V3Dialog {
 	private opened=false;
 	private readonly peers:Set<HealthDialog>;
 
-	constructor(plugin:KnowledgeBaseManager){
-		super(plugin.app,tr('检验知识库','Check library'));
+	constructor(plugin:KnowledgeBaseManager,owner?:Window){
+		super(plugin.app,tr('检验知识库','Check library'),owner);
 		let peers=activeDialogs.get(plugin);
 		if(!peers){
 			const dialogs=new Set<HealthDialog>();
@@ -305,8 +305,9 @@ class HealthDialog extends V3Dialog {
 	}
 }
 
-export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
-	const dialog=new HealthDialog(plugin);
+export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library,
+	{owner,runImmediately=false}:{owner?:Window;runImmediately?:boolean}={}) {
+	const dialog=new HealthDialog(plugin,owner);
 	const lifetime=dialog.lifetime.signal;
 	let root:string;
 	try {root=await plugin.disk.path(lib.location);}
@@ -344,11 +345,12 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	const runActions=form.createDiv({cls:'kb-v3-check-actions'});
 	const errorEl=form.createEl('p',{cls:'kb-git-error',attr:{role:'alert'}});
 	errorEl.hidden=true;
-	const runButton=new ButtonComponent(runActions).setButtonText(tr('开始检验','Start check')).setCta().onClick(()=>{
+	const runButton=new ButtonComponent(runActions).setButtonText(tr('开始检验','Start check')).setCta().onClick(startChecks);
+	function startChecks(){
 		void run(custom?[...selected]:'all').catch((e:unknown)=>{
 			if(!lifetime.aborted){errorEl.hidden=false;errorEl.setText(String(e));}
 		});
-	});
+	}
 	const cancel=new ButtonComponent(runActions).setButtonText(tr('取消检验','Cancel check')).onClick(()=>{
 		running?.abort();update();
 	});
@@ -500,7 +502,10 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 	}
 	try {
 		await renderChoices();
-		if(!lifetime.aborted)dialog.open();
+		if(!lifetime.aborted){
+			dialog.open();
+			if(runImmediately)startChecks();
+		}
 	} catch(error) {
 		if(!lifetime.aborted){dialog.dispose();throw error;}
 	}

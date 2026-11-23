@@ -8,6 +8,7 @@ import {reviewCreationExclusions} from '../ui/template-filter.ts';
 import type {ApprovedExclusions} from '../ui/template-filter.ts';
 import {Dialog,dialogContents} from '../ui/dialog.ts';
 import {changeActions,changeComparison,panelGroup} from '../ui/change-preview.ts';
+import {creationDisplayName,unmatchedDiagnosticExclusionWarnings} from '../ui/creation-preview.ts';
 import {destinationParentField} from '../ui/registry-path-field.ts';
 import {builtinTemplateLabels,templateIdentityLabel} from '../ui/template-labels.ts';
 import {libraryDestination} from '../registry/paths.ts';
@@ -33,8 +34,9 @@ export function createForm(plugin:MobilePlugin) {
 	const {ctx}=plugin,dlg=new Dialog(plugin.app,tr('新建知识库','Create knowledge base'));
 	const input={name:'',displayName:'',description:'',source:'',author:plugin.deviceAuthor(),origin:'',
 		branch:defaultInitialBranch,message:defaultInitialMessage};
+	let reviewedExclusions:{source:string;location:string;folders:readonly string[]}|undefined;
 	const getParent=destinationParentField(dlg,plugin.app,ctx,ctx.registry,true);
-	dlg.text(tr('文件夹名称','Folder name'),'',v=>{input.name=v;},{example:'research-notes'});
+	dlg.text(tr('目录名（必填）','Folder name (required)'),'',v=>{input.name=v;},{example:'research-notes'});
 	dlg.text(tr('显示名（默认使用目录名）','Display name (defaults to folder name)'),'',v=>{input.displayName=v;},{placeholder:tr('研究笔记','Research notes')});
 	dlg.multiline(tr('简介（可选）','Description (optional)'),'',v=>{input.description=v;},{placeholder:tr('整理研究笔记和参考资料。','Collect research notes and references.')});
 	const builtin=new Map(builtinPacks().map(pack=>[builtinSource(pack.id),builtinTemplateLabels(pack)]));
@@ -60,15 +62,19 @@ export function createForm(plugin:MobilePlugin) {
 	dlg.text(tr('origin HTTPS 地址（可选）','origin HTTPS URL (optional)'),'',v=>{input.origin=v;});
 	dlg.action(tr('预览','Preview'),async()=>{
 		plugin.assertEnabled();
-		const requested={...input,parent:getParent(),displayName:input.displayName||input.name};
+		const displayName=creationDisplayName(input.name,input.displayName);
+		const requested={...input,parent:getParent(),displayName};
 		const p=await createPreview(ctx,requested,plugin.templates);
 		const host=templateHost(plugin.app,plugin.manifest.version);
 		const optional=checkCreationRequirements(p.template,host);
 		const review=new Dialog(plugin.app,tr('确认创建知识库','Confirm library creation'));
+		const warnings=unmatchedDiagnosticExclusionWarnings(p.template);
+		if(warnings.length)review.lines(warnings);
 		if(optional.length)review.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
 		const {author,origin,files,branch,message}=p.initial,tracked=files.map(file=>file.name),trackedSet=new Set(tracked);
 		const signature=author.name+' <'+author.email+'>';
-		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),templates[requested.source] ?? templateIdentityLabel(p.template.id)],[tr('通用检验套件','Common check kit'),p.checkKit.version],
+		review.facts([[tr('知识库路径','Library path'),p.location],[tr('模板','Template'),templates[requested.source] ?? templateIdentityLabel(p.template.id)],
+			[tr('显示名','Display name'),p.input.displayName],[tr('通用检验套件','Common check kit'),p.checkKit.version],
 			[tr('分支','Branch'),branch],[tr('提交说明','Commit message'),message],
 			[tr('作者','Author'),signature],[tr('提交者','Committer'),signature],['origin',origin||tr('未设置','Unset')]]);
 		review.lines([tr('姓名和邮箱将写入本库 Git 配置和提交历史。','The name and email will be saved in this library’s Git config and commit history.'),
@@ -77,7 +83,11 @@ export function createForm(plugin:MobilePlugin) {
 		review.lines(tracked.length?tracked:[tr('所有文件均被忽略，将创建空的初始提交。','All files are ignored. The initial commit will be empty.')]);
 		review.contentEl.createEl('h3',{text:tr('仅保存在本库的文件','Files kept in the library working tree')});
 		review.lines([...new Set(['kb.toml',...p.template.files.map(file=>file.name)])].filter(file=>!trackedSet.has(file)));
-		const selection=await reviewCreationExclusions(plugin.app,ctx.registry,review,p.location,p.template.suggestedExcludedFolders??[]);
+		const {suggestedExcludedFolders=[],defaultExcludedFolders}=p.template;
+		const previous=reviewedExclusions?.source===requested.source && reviewedExclusions.location===p.location?reviewedExclusions.folders:undefined;
+		const selection=await reviewCreationExclusions(plugin.app,ctx.registry,review,p.location,suggestedExcludedFolders,
+			previous??defaultExcludedFolders??suggestedExcludedFolders);
+		review.setCloseCallback(()=>{reviewedExclusions={source:requested.source,location:p.location,folders:selection.read().plan.folders};});
 		let pending:ApprovedExclusions|undefined;
 		review.action(tr('创建并提交','Create and commit'),async()=>{
 			plugin.assertEnabled();

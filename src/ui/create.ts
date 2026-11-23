@@ -13,10 +13,12 @@ import { tr } from '../i18n.ts';
 import { assertGitEnabled } from './device.ts';
 import { V3Dialog, dialogContents } from './dialog.ts';
 import { changeActions, panelGroup } from './change-preview.ts';
+import { creationDisplayName, unmatchedDiagnosticExclusionWarnings } from './creation-preview.ts';
 import { reviewCreationExclusions, showExclusionPlan } from './template-filter.ts';
 import type {ApprovedExclusions} from './template-filter.ts';
 import { reviewRegistryProtection } from './registry-ignore.ts';
 import { destinationParentField } from './registry-path-field.ts';
+import { checkLibrary } from './v3-health.ts';
 import { choiceForSource, renderTemplatePicker, showTemplateDetails, templateChoices } from './v3-template-catalog.ts';
 import type { TemplateChoice } from './v3-template-catalog.ts';
 
@@ -94,7 +96,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 	const locationLabel=location.createSpan({text:tr('仓库内位置','Location in vault')});
 	const destination=location.createEl('output',{attr:{'aria-label':locationLabel.textContent??''}});
 	const updateDestination=()=>{
-		if(parent===null || !input.name){
+		if(parent===null || !input.name.trim()){
 			destination.setText(tr('选择父目录并填写目录名','Choose a parent and enter a folder name'));
 			return;
 		}
@@ -197,9 +199,15 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		const completed=newPage(), success=dialogContents(completed);
 		success.facts([[tr('知识库路径','Library path'),result.path],[tr('分支与提交','Branch and commit'),result.branch+' · '+result.head.slice(0,7)],
 			[tr('提交说明','Commit message'),result.message],...signatureFacts(result.identity),['origin',result.origin||tr('未设置','Unset')]]);
-		const completionActions: Parameters<typeof changeActions>[1][number][]=[];
+		const completionActions: Parameters<typeof changeActions>[1][number][]=[{
+			label:tr('运行首次检验','Run first check'),primary:true,run:async()=>{
+				const library=plugin.catalog.find(lib=>lib.location===result.location);
+				await checkLibrary(plugin,library??{location:result.location,identity:result.manifest,git:'local'},{owner,runImmediately:true});
+				wizard.close();
+			},
+		}];
 		const entry=chosen.entry;
-		if(entry)completionActions.push({label:tr('打开首页','Open home note'),primary:true,run:async()=>{
+		if(entry)completionActions.push({label:tr('打开首页','Open home note'),run:async()=>{
 			const relative=result.location+'/'+entry;
 			await disk.path(relative);
 			const file=plugin.app.vault.getAbstractFileByPath(relative);
@@ -220,7 +228,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		if(!template)return;
 		assertGitEnabled(plugin);
 		const chosen=template;
-		const requested={...input,source:chosen.source,parent:getParent(),displayName:input.displayName||input.name,
+		const displayName=creationDisplayName(input.name,input.displayName);
+		const requested={...input,source:chosen.source,parent:getParent(),displayName,
 			git:{defaults,values:{...values},origin,...gitOptions}};
 		try { requireIdentity(effectiveIdentity()); }
 		catch(error) { if(!identityRequired)advanced.open=true; throw error; }
@@ -239,7 +248,8 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 				[tr('显示名','Display name'),preview.input.displayName]]);
 			summary.createEl('p',{text:tr('创建目录，为模板文件建立本地 Git 首提交，并登记知识库。',
 				'Create the folder, commit the template files to local Git, and register the library.')});
-			if(preview.warnings.length)confirm.lines(preview.warnings);
+			const warnings=[...preview.warnings,...unmatchedDiagnosticExclusionWarnings(preview.template)];
+			if(warnings.length)confirm.lines(warnings);
 			if(optional.length)confirm.lines(optional.map(item=>tr('可选工作流 · ','Optional workflow · ')+item));
 			showInitialPlan(confirmPage,preview.git);
 			const details=confirmPage.createEl('details',{cls:'kb-v3-detail'});
@@ -254,8 +264,9 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 			const exclusionGroup=panelGroup(confirmPage);
 			exclusionGroup.addClass('kb-wizard-exclusions');
 			const exclusionControls=dialogContents(exclusionGroup);
+			const {suggestedExcludedFolders=[],defaultExcludedFolders}=preview.template;
 			const selection=await reviewCreationExclusions(plugin.app,disk.registry,exclusionControls,
-				preview.location,preview.template.suggestedExcludedFolders??[],previous);
+				preview.location,suggestedExcludedFolders,previous??defaultExcludedFolders??suggestedExcludedFolders);
 			changeActions(confirmPage,[{label:tr('返回详情','Back to details'),run:()=>{
 				reviewedExclusions={source:chosen.source,location:preview.location,folders:selection.read().plan.folders};
 				showStep(1,detailsPage);

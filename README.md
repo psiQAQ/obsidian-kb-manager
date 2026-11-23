@@ -21,7 +21,7 @@ For a manual installation from GitHub:
 1. Run **Open knowledge base manager** from the command palette. In the sidebar, select **Create**.
 2. Choose a use case and a template. The 18 built-in templates cover research, reading, project management, writing, and other workflows. [Template catalog and upstream credits](docs/template-catalog.md)
 3. Choose the vault root or another parent folder, enter the library folder name, and review the Git identity. You can change the initial branch and commit message. Leave the remote URL blank to work locally.
-4. Review the files and the template’s suggested folders to exclude from Obsidian search. Clear any exclusions you do not want, then confirm. With the defaults, the first commit is `Initial commit` on `main`.
+4. Review the files and suggested search exclusions. Excluding a folder may hide its page templates from Bases views. Adjust the options and confirm, then select **Run first check** on the desktop success screen when you are ready to check the new library. With the default Git options, the first commit is `Initial commit` on `main`.
 
 Click a library card to open it. Hover over an action icon to see its name. Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use the registration action in the sidebar to preview its registration. Each instance carries its own `kb.toml` identity file.
 

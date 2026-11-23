@@ -61,6 +61,9 @@ export async function reviewCreationExclusions(app:App,registry:PluginDataRegist
 	const controls=new Map<string,ToggleComponent>();
 	if(suggestions.length){
 		dialog.contentEl.createEl('h3',{text:tr('从 Obsidian 搜索和关系图谱中排除','Exclude from Obsidian search and graph')});
+		dialog.contentEl.createEl('p',{cls:'kb-v3-muted',text:tr(
+			'排除目录后，依赖该目录的 Bases 视图可能看不到页面模板。希望在这些视图里浏览模板时，请取消勾选对应目录。',
+			'Excluding a folder may hide its page templates from Bases views. Clear the corresponding option to browse the templates in those views.')});
 		for(const folder of suggestions){
 			const rule=templateFolderRule(location,folder);
 			const folderPath=location+'/'+folder;
