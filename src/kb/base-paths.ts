@@ -20,6 +20,8 @@ export interface BasePathReference {
 	line: number;
 	column: number;
 	argument?: BasePathArgument;
+	wholeFilter?: true;
+	exclusion?: true;
 }
 
 export interface BasePathFilter {
@@ -36,6 +38,8 @@ interface Token {
 	end: number;
 	value?: string;
 }
+
+type FilterRole = 'conjunct' | 'negated' | 'compound';
 
 const folderCall = /\b(?:inFolder|startsWith)\b/u;
 const identifier = /[\p{ID_Continue}$]+/uy;
@@ -112,7 +116,7 @@ function encodeLiteral(value: string, quote: string, style: string | undefined) 
 }
 
 function inspectExpression(source: string, expression: string, field: string, offset: number, lineCounter: LineCounter,
-	start: number, end: number, style: string | undefined, aliased: boolean, readOnly: boolean): BasePathFilter {
+	start: number, end: number, style: string | undefined, aliased: boolean, readOnly: boolean, role: FilterRole): BasePathFilter {
 	const position = (at: number) => {
 		const {line, col:column} = lineCounter.linePos(offset + at);
 		return {line,column};
@@ -148,6 +152,12 @@ function inspectExpression(source: string, expression: string, field: string, of
 		const reference: BasePathReference = {kind,receiver,expression,field,...position(at === undefined ? start : literal!.offsets[at]!)};
 		if (first?.value !== undefined && lexemes[opening + 2]?.text === ')') {
 			reference.argument = {value:first.value,expressionStart:first.start,expressionEnd:first.end};
+			const negated = i === 1 && lexemes[0]?.text === '!';
+			if (lexemes.length === opening + 3 && (i === 0 || negated)) {
+				reference.wholeFilter = true;
+				// A disjunction or multi-operand negation can change the scope of an exclusion.
+				if (role === 'conjunct' && negated || role === 'negated' && !negated) reference.exclusion = true;
+			}
 			const raw = mapped?.[opening + 1];
 			if (raw && literal && !readOnly) {
 				reference.argument.start = offset + literal.offsets[raw.start]!;
@@ -165,7 +175,7 @@ function scanYaml(source: string, offset: number, lineCounter: LineCounter) {
 	const filters: BasePathFilter[] = [];
 	if (document.errors.length || !isMap(document.contents)) return filters;
 	const anchored = (node: unknown) => (isScalar(node) || isCollection(node)) && !!node.anchor;
-	function visit(node: unknown, field: string, shared: boolean, depth = 0) {
+	function visit(node: unknown, field: string, shared: boolean, role: FilterRole = 'conjunct', depth = 0) {
 		if (depth >= 32) return;
 		const alias = isAlias(node) ? node : undefined;
 		const actual = alias ? alias.resolve(document) : node;
@@ -173,11 +183,13 @@ function scanYaml(source: string, offset: number, lineCounter: LineCounter) {
 		if (isScalar(actual) && typeof actual.value === 'string') {
 			const range = (alias ?? actual).range;
 			if (!range || !actual.value.trim()) return;
-			filters.push(inspectExpression(source,actual.value,field,offset,lineCounter,range[0],range[1],actual.type,!!alias,readOnly));
+			filters.push(inspectExpression(source,actual.value,field,offset,lineCounter,range[0],range[1],actual.type,!!alias,readOnly,role));
 		} else if (!alias && isMap<unknown, ParsedNode>(actual) && actual.items.length === 1) {
 			const {key,value} = actual.items[0]!;
 			if (!isScalar(key) || !['and','or','not'].includes(String(key.value)) || !isSeq(value)) return;
-			value.items.forEach((item,index) => visit(item,`${field}.${String(key.value)}[${index}]`,readOnly || anchored(value),depth + 1));
+			const childRole = role !== 'conjunct' ? 'compound' : key.value === 'and' ? 'conjunct' :
+				key.value === 'not' && value.items.length === 1 ? 'negated' : 'compound';
+			value.items.forEach((item,index) => visit(item,`${field}.${String(key.value)}[${index}]`,readOnly || anchored(value),childRole,depth + 1));
 		}
 	}
 	const shared = anchored(document.contents);

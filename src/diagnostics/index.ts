@@ -184,7 +184,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				case 'bindings': checkBindings({result:check,...await bindingEvidence(linkOptions,located,manifest)},{tr,recordChecked}); break;
 				case 'bases':
 					reportInventoryCoverage(check,found);
-					checkBases(await readBaseEvidence(linkOptions,located,found,check),{tr,addReason,recordChecked});
+					checkBases(await readBaseEvidence(linkOptions,located,found,check,templateDirs),{tr,addReason,recordChecked});
 					break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;

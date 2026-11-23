@@ -119,7 +119,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
 		case 'bindings': return {result:check,...await bindingEvidence(options,location,manifest,bundled)};
-		case 'bases': return readBaseEvidence(options,location,inventory,check);
+		case 'bases': return readBaseEvidence(options,location,inventory,check,templateDirs);
 		case 'links': case 'anchors':
 			return {result:check, notes:await getLinks(), linksSelected:selected.has('links'), anchorsSelected:selected.has('anchors'), desktop:!!options.resolveLink};
 		case 'canvas': return {result:check, canvases:await getCanvases(), portabilitySelected:selected.has('portability')};

@@ -6,7 +6,7 @@ import test from 'node:test';
 import {bundledCommonDigest} from '../src/diagnostics/bundled-common.ts';
 import {listDiagnosticHistory,runDiagnostics} from '../src/diagnostics/index.ts';
 import {scanBasePathFilters,scanBasePaths} from '../src/kb/base-paths.ts';
-import {checkKitFiles} from '../src/kb/check-kit.ts';
+import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
 
 test('scan Base global and view filters with source spans across YAML scalar styles', () => {
 	const quoted = 'this.file.path.startsWith("Old/Notes/") && !file.inFolder("Old/Example")';
@@ -124,6 +124,7 @@ test('Bases path findings match across legacy, installed common rule, and standa
 	const installed = await runDiagnostics(options);
 	assert.equal(installed.checks[0].rule.engine,'bundled');
 	assert.equal(bundledCommonDigest({id:'bases',name:'Bases',path:filename,digest:'9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104'}),installed.checks[0].rule.digest);
+	assert.equal(bundledCommonDigest({id:'bases',name:'Bases',path:filename,digest:'bba90c5702efcd5c4fab4c99d62eebb1d7080c1b16faf5cb5affc9467b961a69'}),installed.checks[0].rule.digest);
 	assert.deepEqual(findings(installed),expected);
 	const offline = JSON.parse(execFileSync(process.execPath,[path.join(root,'checks/kb-check.cjs'),'--library',root,'--config-dir',configDir,'--checks','bases'],{encoding:'utf8'}));
 	assert.equal(offline.environment,'offline');
@@ -145,4 +146,76 @@ test('Bases path findings match across legacy, installed common rule, and standa
 	assert.ok(saved.checks[0].baseExpressions.some(e=>e.scope.includes('Recent') && e.expression.includes('Shared/Missing/')));
 	assert.equal(await readFile(path.join(root,'index.base'),'utf8'),baseBefore);
 	assert.equal(await readFile(note,'utf8'),noteBefore);
+});
+
+test('missing exclusions and template placeholders keep their own coverage and source locations',async t=>{
+	const workspace=path.resolve('.tmp');
+	await mkdir(workspace,{recursive:true});
+	const vault=await mkdtemp(path.join(workspace,'base-coverage-'));
+	t.after(async()=>{
+		assert.equal(path.dirname(path.resolve(vault)),workspace);
+		await rm(vault,{recursive:true,force:true});
+	});
+	const root=path.join(vault,'Library');
+	const configDir='Vault Configuration';
+	await Promise.all([configDir,'Library/.log','Library/Notes','Library/Templates/Bases','Library/Templates-copy','Library/checks/common']
+		.map(dir=>mkdir(path.join(vault,dir),{recursive:true})));
+	const source=[
+		'filters:', '  and:',
+		'    - (!file.inFolder("Library/Parentheses") || tag == "marked")',
+		`    - '!file.inFolder("Library/Missing")'`,
+		'    - file.inFolder("Library/Positive")',
+		`    - not: ['file.path.startsWith("Library/Absent/")']`,
+		`    - or: ['!file.inFolder("Library/Disjunction")', 'file.inFolder("Library/Notes")']`,
+		`    - not: ['file.inFolder("Library/A")', 'file.inFolder("Library/B")']`,
+	].join('\n');
+	const templateBase=[
+		'filters:', '  and:',
+		'    - file.inFolder("__KB_ROOT__/Notes")',
+		'    - file.inFolder("Library/Notes")',
+		'    - file.ext == "md"',
+		'views:', '  - name: Local', '    type: table',
+		'    filters: file.inFolder(this.file.folder)',
+	].join('\n');
+	const inline='---\r\ntag: demo\r\n---\r\n\r\n```base\r\nfilters: file.inFolder("{{kb_root}}/Notes")\r\n```\r\n';
+	const files={
+		'kb-template.json':JSON.stringify({id:'base-coverage',version:'1',pageTemplates:['Templates']}),
+		'exclusions.base':source,
+		'Templates/Bases/example.base':templateBase,
+		'Templates/example.md':inline,
+		'Templates-copy/instance.base':templateBase,
+	};
+	await Promise.all(Object.entries(files).map(([file,text])=>writeFile(path.join(root,file),text)));
+	const options={libraryRoot:root,vaultRoot:vault,configDir,selected:['bases']};
+	const {checks:[bases]}=await runDiagnostics(options);
+	const exclusions=bases.checkedItems.filter(item=>item.file==='exclusions.base' && item.outcome.includes('排除条件未命中任何路径'));
+	assert.deepEqual(exclusions.map(item=>item.line),[4,6]);
+	assert.deepEqual(bases.diagnostics.filter(item=>item.code==='base-path-missing-folder').map(item=>item.line),[3,5,7,8,8]);
+	assert.deepEqual(bases.diagnostics.filter(item=>item.code==='base-path-template-deferred')
+		.map(({file,line,field})=>[file,line,field]),[
+		['Templates/Bases/example.base',3,'filters.and[0]'],
+		['Templates/example.md',6,'filters'],
+	]);
+	assert.ok(bases.diagnostics.some(item=>item.file==='Templates-copy/instance.base' && item.line===3 &&
+		item.code==='base-path-unverified' && item.message==='实例路径尚未填写。'));
+	assert.ok(bases.diagnostics.some(item=>item.file==='Templates/Bases/example.base' && item.line===9 &&
+		item.code==='base-path-unverified' && item.evidence==='file.inFolder(this.file.folder)'));
+	assert.ok(bases.checkedItems.some(item=>item.file==='Templates/Bases/example.base' && item.line===4 && item.outcome.includes('Vault 中的目录存在')));
+	assert.ok(bases.baseExpressions.some(item=>item.file==='Templates-copy/instance.base' && item.scope==='全局筛选'));
+	assert.ok(bases.baseExpressions.some(item=>item.file==='Templates/Bases/example.base' &&
+		item.scope==='全局筛选' && item.expression.includes('file.ext == "md"')));
+	assert.ok(bases.baseExpressions.some(item=>item.file==='Templates/Bases/example.base' && item.scope==='视图筛选 · Local'));
+	assert.ok(!bases.baseExpressions.some(item=>item.file==='Templates/example.md'));
+	assert.equal(bases.coverage.unknown,bases.baseExpressionCount + 3);
+	const kit=checkKitFiles();
+	const runner='checks/kb-check.cjs', filename='checks/common/bases.mjs';
+	await Promise.all([runner,filename].map(file=>writeFile(path.join(root,file),kit[file])));
+	const installed=(await runDiagnostics(options)).checks[0];
+	const offline=JSON.parse(execFileSync(process.execPath,[path.join(root,runner),'--library',root,'--config-dir',configDir,'--checks','bases'],{encoding:'utf8'}));
+	const data=value=>JSON.parse(JSON.stringify(value));
+	assert.equal(offline.engineVersion,checkKitVersion);
+	assert.deepEqual(offline.checks,[data(installed)]);
+	assert.deepEqual({...data(installed),rule:bases.rule},data(bases));
+	const saved=(await listDiagnosticHistory(root)).find(report=>report.runId===offline.runId);
+	assert.deepEqual(saved.checks,offline.checks);
 });

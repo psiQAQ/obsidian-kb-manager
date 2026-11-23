@@ -28,7 +28,12 @@ const helpers = {tr, addReason, validText:printable, recordChecked};
 
 const previousBundledDigests = new Map([
 	['checks/common/anchors.mjs',['0c9a5753ecf988f5c9209eda8f350ac58eb07aa68968986cc16a2c3a244374e3']],
-	['checks/common/bases.mjs',['9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104', '66045471f46dcaef2782b6d73ba7632120618552b65abf735737327639392290', '1dd512af43ebfb549ea3d01d605e1a5d871699409ab063ac980a1f6bd5f4d933']],
+	['checks/common/bases.mjs',[
+		'bba90c5702efcd5c4fab4c99d62eebb1d7080c1b16faf5cb5affc9467b961a69',
+		'9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104',
+		'66045471f46dcaef2782b6d73ba7632120618552b65abf735737327639392290',
+		'1dd512af43ebfb549ea3d01d605e1a5d871699409ab063ac980a1f6bd5f4d933',
+	]],
 	['checks/common/bindings.mjs',['6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49', '7600c8340602186f9434de740be2812218e20bc3b633e80f14f6876281460169']],
 	['checks/common/canvas.mjs',['211e4cacfae13a667f37ffeb69732f0922404af316e4b3d553fc2eb8dbc335cb']],
 	['checks/common/links.mjs',['9d6f8140618cea057357fd657c195b120ef59951be6188c1c24b71e8e815f1e3']],

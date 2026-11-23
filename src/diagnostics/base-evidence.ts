@@ -51,31 +51,35 @@ function baseData(text: string) {
 	} catch {return undefined;}
 }
 
-export async function readBaseEvidence(options: EvidenceOptions, location: Location, inventory: Inventory, check: DiagnosticCheckResult) {
+export async function readBaseEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
+	check: DiagnosticCheckResult, templateDirs: readonly string[]) {
 	const {root} = location;
 	const {signal,trace} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
 	const lookup = folderLookup(location,options);
-	async function inspectPath({argument,kind,expression,field,line,column}: BasePathReference, lineOffset: number) {
+	async function inspectPath({argument,kind,expression,field,line,column,wholeFilter,exclusion}: BasePathReference, lineOffset: number, inTemplate: boolean) {
 		const value = argument?.value;
 		const evidence = {kind,expression:expression.slice(0,512),field,line:line + lineOffset,column,value:value?.slice(0,2048)};
-		if (value === undefined || /\{\{[^{}]+\}\}|<%[\s\S]*?%>|__[A-Z][A-Z0-9_]*__/u.test(value))
-			return {...evidence,status:'unverified'};
+		if (value === undefined) return {...evidence,status:'unverified'};
+		if (/\{\{[^{}]+\}\}|<%[\s\S]*?%>|__[A-Z][A-Z0-9_]*__/u.test(value))
+			return {...evidence,status:'unverified',placeholder:inTemplate ? 'deferred' : 'unsubstituted',wholeFilter};
 		if (/^\.\.?\//u.test(value)) return {...evidence,status:'relative'};
 		// An arbitrary startsWith prefix may be a partial file name. Only a
 		// slash-terminated prefix unambiguously names a folder to check.
 		if (kind === 'startsWith' && !value.endsWith('/')) return undefined;
 		if (kind === 'inFolder' && value === '/') return {...evidence,status:'resolved'};
 		const folder = value.replace(/\/$/u,'');
-		return {...evidence,status:await lookup(folder)};
+		const status = await lookup(folder);
+		return {...evidence,status,...(status === 'missing' && exclusion && {exclusion})};
 	}
-	async function inspect(text: string, lineOffset: number) {
+	async function inspect(file: string, text: string, lineOffset: number) {
 		const paths = [];
 		const data = baseData(text);
+		const inTemplate = templateDirs.some(dir => file.startsWith(dir + '/'));
 		if (data !== undefined) for (const reference of scanBasePaths(text,'base')) {
 			const pause = checkpoint?.();
 			if (pause) await pause;
-			const path = await inspectPath(reference,lineOffset);
+			const path = await inspectPath(reference,lineOffset,inTemplate);
 			if (path) paths.push(path);
 		}
 		return {data,paths};
@@ -92,7 +96,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 			remaining -= bytes.length;
 			text = decode(bytes);
 		} catch {signal?.throwIfAborted(); files.push({file,unreadable:true}); continue;}
-		files.push({file,...await inspect(text,0)});
+		files.push({file,...await inspect(file,text,0)});
 	}
 	const notes = [];
 	for (const {path:file,problem,body,lineOffset} of inventory.notes) {
@@ -101,7 +105,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 		const blocks = [];
 		for (const {language,line,sourceStart,sourceEnd} of fencedBlocks(body,true)) {
 			if (language !== 'base') continue;
-			blocks.push({line:line + lineOffset,...await inspect(body.slice(sourceStart,sourceEnd),line + lineOffset)});
+			blocks.push({line:line + lineOffset,...await inspect(file,body.slice(sourceStart,sourceEnd),line + lineOffset)});
 		}
 		notes.push({file,problem,blocks});
 	}
