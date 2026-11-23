@@ -8,7 +8,7 @@ export default async function check({ notes }) {
 			const missing = finished == null || (typeof finished === 'string' && !finished.trim());
 			const message = '已完成的媒体条目缺少 finished 日期，无法纳入年度完成记录。';
 			checkedItems.push({file:path, subject:'已完成媒体的 finished 日期', outcome:missing ? message : '已填写完成日期字段。'});
-			if (missing) findings.push({severity:'warning', code:'media-finished-missing', file:path, message});
+			if (missing) findings.push({severity:'warning', code:'media-finished-missing', file:path, field:'finished', message});
 		}
 		if (typeof progress === 'number' && typeof total === 'number') {
 			const invalid = progress < 0 || progress > total || (status === 'completed' && progress !== total);

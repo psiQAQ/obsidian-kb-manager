@@ -32,7 +32,7 @@ export default async function check(context) {
 			if (valid === undefined) continue;
 			const message = `${field} 填写为 ${value}，该日期在公历中不存在。`;
 			checkedItems.push({file:path, subject:`事件的 ${field} 公历日期`, outcome:valid ? '日期有效：' + value : message});
-			if (!valid) findings.push({severity:'warning', code:'event-date-invalid', file:path, message});
+			if (!valid) findings.push({severity:'warning', code:'event-date-invalid', file:path, field, message});
 		}
 		if (startValid && endValid) {
 			const message = '事件结束日期早于开始日期。';

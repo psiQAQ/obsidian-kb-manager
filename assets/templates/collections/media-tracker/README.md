@@ -1,6 +1,6 @@
 # 媒体体验记录
 
-打开 [远岸电台](./Media/远岸电台.md)，修改进度和评分。作品页的 `collections` 采用链接列表；填入 [短篇声音故事](./Collections/短篇声音故事.md) 后，合集会自动列出作品。完成后将状态设为 `completed`，并填写 `finished` 日期，年度完成记录按该日期归档。录入时用 `medium` 区分电影、剧集、图书、游戏、播客等，`unit` 记录以页、集、分钟等哪种单位计数。
+打开 [远岸电台](./Media/远岸电台.md)，修改进度和评分。作品页的 `collections` 采用链接列表；填入 [短篇声音故事](./Collections/短篇声音故事.md) 后，合集会自动列出作品。完成后将状态设为 `completed`，并填写 `finished` 日期，年度完成记录按完成年份汇总。录入时用 `medium` 区分电影、剧集、图书、游戏、播客等，`unit` 记录以页、集、分钟等哪种单位计数。
 
 启用 [Dataview](https://obsidian.md/plugins?id=dataview)、[Meta Bind](https://obsidian.md/plugins?id=obsidian-meta-bind-plugin) 和 [QuickAdd](https://obsidian.md/plugins?id=quickadd)。Dataview 的普通查询展示合集和年度汇总，Meta Bind 在作品页更新状态和进度。
 
