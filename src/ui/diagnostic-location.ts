@@ -11,6 +11,7 @@ import {V3Dialog} from './dialog.ts';
 
 class SourceLocationDialog extends V3Dialog {
 	private editor?: EditorView;
+	private initialLayout?: ResizeObserver;
 
 	constructor(plugin:KnowledgeBaseManager, private file:string, private source:string, private line:number|undefined, origin:HTMLElement, private message?:string) {
 		super(plugin.app,file+(line ? ' · '+tr('第 ','Line ')+line+tr(' 行','') : ''),origin.win);
@@ -32,11 +33,28 @@ class SourceLocationDialog extends V3Dialog {
 				EditorView.contentAttributes.of({'aria-label':label+' · '+this.file,'tabindex':'0'}),
 				...(target ? [highlightActiveLine(),highlightActiveLineGutter()] : [])],
 		})});
-		if(target)this.editor.dispatch({effects:EditorView.scrollIntoView(target.from,{y:'center'})});
 		this.editor.focus();
+		if(target){
+			const editor=this.editor;
+			// The modal can still be acquiring its theme-dependent height in onOpen.
+			// Center once the scroller has a real viewport, including for virtualized lines.
+			this.initialLayout=new ResizeObserver(entries=>{
+				if(!entries.some(entry=>entry.contentRect.height>0))return;
+				this.initialLayout?.disconnect();
+				editor.requestMeasure({
+					read:view=>{
+						const line=view.lineBlockAt(target.from),pane=view.scrollDOM.getBoundingClientRect();
+						return view.scrollDOM.scrollTop+view.documentTop+line.top+line.height/2-pane.top-pane.height/2;
+					},
+					write:(top,view)=>{view.scrollDOM.scrollTop=top;},
+				});
+			});
+			this.initialLayout.observe(editor.scrollDOM);
+		}
 	}
 
 	override onClose(){
+		this.initialLayout?.disconnect();
 		this.editor?.destroy();
 		super.onClose();
 	}
