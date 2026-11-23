@@ -52,11 +52,13 @@ export function diagnosticReportDetails(parent:HTMLElement,report:DiagnosticRepo
 	async function refreshFreshness(){
 		if(signal.aborted)return;
 		refresh.setDisabled(true);
+		value.className='kb-v3-muted';
 		value.setText(tr('正在核对报告版本…','Verifying report version…'));
 		let freshness:DiagnosticFreshness='unknown';
 		try {freshness=await getFreshness();}
 		catch {if(signal.aborted)return;}
 		if(signal.aborted)return;
+		value.className=freshness==='fresh'?'kb-v3-status-passed':freshness==='stale'?'kb-v3-status-warning':'kb-v3-status-partial';
 		value.setText(labels[freshness]);
 		refresh.setDisabled(false);
 	}
@@ -86,7 +88,8 @@ function comparison(parent:HTMLElement,current:DiagnosticReport,previous:readonl
 			const list=group.createEl('ul');
 			for(const {checkId,diagnostic} of items){
 				const location=diagnostic.file ? [diagnostic.file,diagnostic.line,diagnostic.column].filter(value=>value!==undefined).join(':') : undefined;
-				list.createEl('li',{text:[names.get(checkId)??checkId,location,diagnostic.field,diagnostic.message].filter(Boolean).join(' · ')});
+				const row=list.createEl('li',{text:[names.get(checkId)??checkId,location,diagnostic.field].filter(Boolean).join(' · ')+' · '});
+				row.createSpan({cls:'kb-v3-status-'+(items===resolved?'passed':diagnostic.severity),text:diagnostic.message});
 			}
 		}
 	}

@@ -98,7 +98,7 @@ function statusInfo(status:string):{label:string;color:string;icon:string} {
 		case 'error': return {label:tr('错误','Error'),color:'error',icon:'circle-x'};
 		case 'failed': return {label:tr('运行失败','Failed'),color:'error',icon:'circle-x'};
 		case 'warning': return {label:tr('警告','Warning'),color:'warning',icon:'triangle-alert'};
-		case 'findings': return {label:tr('有发现','Findings'),color:'warning',icon:'triangle-alert'};
+		case 'findings': return {label:tr('有发现','Findings'),color:'info',icon:'info'};
 		case 'partial': return {label:tr('部分完成','Partial'),color:'partial',icon:'circle-dashed'};
 		case 'info': return {label:tr('提示','Info'),color:'info',icon:'info'};
 		case 'skipped': return {label:tr('已跳过','Skipped'),color:'neutral',icon:'circle-minus'};
@@ -169,12 +169,12 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		row.addEventListener('toggle',()=>{
 			if(!row.open || row.childElementCount>1)return;
 			const body=row.createDiv({cls:'kb-check-body'});
-			if(check.reason)body.createEl('p',{text:check.reason});
+			if(check.reason)body.createEl('p',{cls:'kb-v3-status-'+statusInfo(check.status).color,text:check.reason});
 			showCheckedItems(body,check,openLocation);
 			if(check.diagnostics.length){
 				for(const item of check.diagnostics)finding(body,item);
 			} else if(check.status==='passed' && !check.checkedItems?.length){
-				body.createEl('p',{text:tr('已检查的项目均通过。','All checked items passed.')});
+				body.createEl('p',{cls:'kb-v3-status-passed',text:tr('已检查的项目均通过。','All checked items passed.')});
 			} else if(!check.checkedItems?.length && (!check.reason || check.coverage.checked)){
 				body.createEl('p',{text:tr('本项没有记录诊断消息。','This check recorded no diagnostic messages.')});
 			}
@@ -223,7 +223,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 	function finding(parent:HTMLElement,item:Diagnostic,name?:string){
 		const card=parent.createDiv({cls:'kb-v3-finding'});
 		badge(card,item.severity);
-		card.createEl('strong',{text:item.message});
+		card.createEl('strong',{cls:'kb-v3-status-'+item.severity,text:item.message});
 		const location=[item.file,item.line,item.column].filter(v=>v!==undefined).join(':');
 		if(item.file)card.createEl('code',{cls:'kb-check-location',text:location});
 		if(item.field)card.createEl('p',{text:tr('字段','Field')+' · '+item.field});
@@ -363,7 +363,7 @@ export async function checkLibrary(plugin:KnowledgeBaseManager,lib:Library) {
 			for(const [index,report] of reports.entries()){
 				const date=reportDate(report.startedAt),reference=report.logPath??report.runId;
 				const row=new Setting(panel).setName(date).setDesc(reference);
-				badge(row.nameEl,report.status);
+				summaryStatus(row.nameEl,report.status,report.checks.flatMap(check=>check.diagnostics));
 				row.addButton(b=>{
 					b.buttonEl.setAttribute('aria-label',tr('查看报告','View report')+' · '+date+' · '+reference);
 					b.setButtonText(tr('查看报告','View report')).onClick(()=>{

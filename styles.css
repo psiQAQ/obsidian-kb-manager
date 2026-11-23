@@ -406,9 +406,9 @@
 	line-height: 1.4;
 }
 .kb-v3-status svg { width: 14px; height: 14px; display: block; }
-.kb-v3-status-passed { color: var(--text-success); }
-.kb-v3-status-error { color: var(--text-error); }
-.kb-v3-status-warning { color: var(--text-warning); }
+.kb-v3-status-passed { color: var(--text-success, var(--color-green)); }
+.kb-v3-status-error { color: var(--text-error, var(--color-red)); }
+.kb-v3-status-warning { color: color-mix(in srgb, var(--color-yellow) 55%, var(--text-normal)); }
 .kb-v3-status-info { color: var(--color-blue); }
 .kb-v3-status-partial { color: var(--color-purple); }
 .kb-v3-coverage {

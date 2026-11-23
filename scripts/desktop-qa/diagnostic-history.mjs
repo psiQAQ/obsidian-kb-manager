@@ -6,6 +6,8 @@ import {pluginId} from '../desktop-qa-host.mjs';
 
 export async function verifyDiagnosticHistory({fixture,scenario,observe,modalButton,libraryMenu,evaluate}){
 	await scenario('diagnosticHistory',async()=>{
+		await evaluate(async()=>{await window.app.vault.create('Alpha/Check-colors.base',
+			'filters: file.inFolder("./local")\nviews:\n  - type: table\n');});
 		await libraryMenu('Alpha','Check library');
 		await observe('select manifest check',()=>{
 			const modal=document.querySelector('.modal.kb-v3-health'),select=modal?.querySelector('select');
@@ -32,9 +34,18 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 				}
 				if(!['Checked items','Base YAML, view and filter structure','Valid structure','checks','Paths excluded from scanning','Global filter','List.base','file.ext == "md"'].every(text=>rows[1].innerText.includes(text)))
 					throw Error('Missing readable coverage details');
-				const source=rows[1].querySelector('.kb-check-source-link:last-of-type');
+				const colors=['passed','error','warning'].map(level=>{
+					const result=rows[1].querySelector('.kb-checked-items .kb-v3-status-'+level);
+					if(!result)throw Error('Missing '+level+' outcome');
+					const color=getComputedStyle(result).color;
+					if(color===getComputedStyle(result.parentElement).color)throw Error('Uncolored '+level+' outcome');
+					const message=rows[1].querySelector('.kb-v3-finding strong.kb-v3-status-'+level);
+					if(level!=='passed' && (!message || getComputedStyle(message).color!==color))throw Error('Mismatched finding color');
+					return color;
+				});
+				if(new Set(colors).size!==3)throw Error('Expected distinct pass, error and warning text colors');
 				const line=[...rows[1].querySelectorAll('.kb-check-source-link')].find(button=>button.textContent.includes('Line 79'));
-				if(!source || !line)throw Error('Missing Base line navigation');
+				if(!line)throw Error('Missing Base line navigation');
 				line.click();
 			});
 			await observe('visible YAML at the reported line',()=>{
@@ -75,7 +86,7 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 			const details=[...document.querySelectorAll('.modal details')].find(el=>el.firstElementChild?.textContent==='Compare with an earlier report');
 			if(!details)return;
 			details.open=true;
-			return ['New · 0','Resolved · 0','Still present · 0'].every(text=>details.innerText.includes(text));
+			return ['Checks without comparable complete results · Bases','New · 0','Resolved · 0','Still present · 0'].every(text=>details.innerText.includes(text));
 		});
 		await evaluate(async()=>{const file=window.app.vault.getFileByPath('Alpha/kb.toml');await window.app.vault.process(file,text=>text+'\n# QA edit\n');});
 		await modalButton('Verify current files');
