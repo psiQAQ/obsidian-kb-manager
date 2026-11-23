@@ -9,9 +9,12 @@ import {checkKitFiles, checkKitVersion} from './check-kit.ts';
 import {courseworkDeclaration, courseworkLinkDeclaration, courseworkScript, courseworkTemplate, previousCourseworkDigests} from './coursework-check.ts';
 import {identityFile, readManifest, writeCheckKit} from './identity-core.ts';
 import {readManifestFile, replaceLibraryManifest} from './manifest-disk.ts';
-import {officialCheckDigests, packText} from './template-pack.ts';
+import {previousTemplateCheckDigests} from './template-check-digests.ts';
+import {declaration} from './template-declaration.ts';
+import {builtinPacks, officialCheckDigests, packText} from './template-pack.ts';
 
 const byteLimit = 1024 * 1024;
+const templateDeclarationFile = 'kb-template.json';
 
 interface PresentFile {path: string; digest: string; bytes: Buffer; mode: number}
 interface MissingFile {path: string; digest?: undefined}
@@ -71,6 +74,8 @@ export interface CheckKitUpdate {
 	downgrade: boolean;
 	files: KitFile[];
 	courseworkFiles: KitFile[];
+	templateFiles: KitFile[];
+	templateDeclarationDigest?: string;
 }
 
 function changed(name: string) {
@@ -130,13 +135,40 @@ async function previewCourseworkFiles(disk: VaultDisk, location: string, version
 	});
 }
 
+async function previewTemplateFiles(disk: VaultDisk, location: string, template: string | undefined):
+	Promise<Pick<CheckKitUpdate,'templateFiles'|'templateDeclarationDigest'>> {
+	const none = {templateFiles: []};
+	if (!template || template === courseworkTemplate) return none;
+	const before = previousTemplateCheckDigests[template];
+	const bundled = builtinPacks().find(pack => pack.id === template);
+	if (!before || !bundled?.checks?.length) return none;
+
+	const descriptor = await inspectKitFile(disk,location,templateDeclarationFile);
+	if (descriptor.before === undefined) return none;
+	let spec: ReturnType<typeof declaration>;
+	try {spec = declaration(descriptor.before.replace(/^\uFEFF/u,''));}
+	catch {return none;}
+	if (spec.id !== template) return none;
+
+	const sources = packText(template);
+	const templateFiles: KitFile[] = [];
+	for (const {id,path} of bundled.checks) {
+		const previous = before[path], source = sources[path];
+		if (!previous || !source || !officialCheckDigests().includes(digest(source)) ||
+			!spec.checks?.some(check => check.id === id && check.path === path)) continue;
+		const file = await inspectKitFile(disk,location,path);
+		templateFiles.push(candidate(file,source,file.installedDigest === previous ? 'replace' : file.change));
+	}
+	return {templateFiles,templateDeclarationDigest:templateFiles.length ? descriptor.installedDigest : undefined};
+}
+
 export async function previewCheckKitUpdate(disk: VaultDisk, location: string): Promise<CheckKitUpdate | undefined> {
 	const filename = await disk.path(location + '/' + identityFile);
 	if (!await statIfPresent(filename)) return;
 	const manifest = await readManifestFile(filename);
 	const {checkKit:kit, identity} = readManifest(manifest.raw);
 	if (!kit) return;
-	const [files, courseworkFiles] = await Promise.all([
+	const [files, courseworkFiles, templateUpdate] = await Promise.all([
 		Promise.all(Object.entries(checkKitFiles()).map(async ([path, after]) => {
 			const file = await inspectKitFile(disk, location, path);
 			const recorded = kit.digests[path];
@@ -144,16 +176,18 @@ export async function previewCheckKitUpdate(disk: VaultDisk, location: string): 
 				file.change === 'missing' && !recorded ? 'add' : file.change);
 		})),
 		identity?.template.id === courseworkTemplate ? previewCourseworkFiles(disk,location,identity.template.version) : [],
+		previewTemplateFiles(disk,location,identity?.template.id),
 	]);
 	const downgrade = versionIsNewer(kit.version,checkKitVersion);
 	const canApply = !downgrade && (files.some(file => file.change === 'add' || file.change === 'replace') ||
 		files.some(file => file.change === 'current' && (kit.version !== checkKitVersion || kit.digests[file.path] !== file.targetDigest)) ||
-		courseworkFiles.some(file => file.change === 'replace'));
-	return {location,manifestDigest:manifest.signature,installedVersion:kit.version,targetVersion:checkKitVersion,canApply,downgrade,files,courseworkFiles};
+		courseworkFiles.some(file => file.change === 'replace') || templateUpdate.templateFiles.some(file => file.change === 'replace'));
+	return {location,manifestDigest:manifest.signature,installedVersion:kit.version,targetVersion:checkKitVersion,
+		canApply,downgrade,files,courseworkFiles,...templateUpdate};
 }
 
 async function publishKitFile(disk: VaultDisk, location: string,
-	file: Pick<EligibleFile,'path'|'change'|'after'|'installedDigest'>) {
+	file: Pick<EligibleFile,'path'|'change'|'after'|'installedDigest'>, checkDeclaration?: () => Promise<void>) {
 	const relative = location + '/' + file.path;
 	const output = await disk.path(relative);
 	if (file.change === 'add') {
@@ -167,6 +201,7 @@ async function publishKitFile(disk: VaultDisk, location: string,
 	try {
 		try { await handle.writeFile(file.after,'utf8'); await handle.sync(); }
 		finally { await handle.close(); }
+		if (checkDeclaration) await checkDeclaration();
 		const current = await readKitFile(disk, location, file.path);
 		if (current.path !== output || current.digest !== initial.digest) throw changed(file.path);
 		if (file.change === 'add') await copyFile(temporary, output, constants.COPYFILE_EXCL);
@@ -219,8 +254,10 @@ export async function applyCheckKitUpdate(disk: VaultDisk, location: string, app
 	if (approved.location !== location || !approved.canApply) throw changed(location);
 	const plan = await previewCheckKitUpdate(disk, location);
 	if (!plan || plan.downgrade || plan.manifestDigest !== approved.manifestDigest || plan.targetVersion !== approved.targetVersion ||
+		plan.templateDeclarationDigest !== approved.templateDeclarationDigest || !matchesApproval(plan.templateFiles,approved.templateFiles) ||
 		!matchesApproval(plan.files,approved.files) || !matchesApproval(plan.courseworkFiles,approved.courseworkFiles)) throw changed(location);
-	const manifest = await readManifestFile(await disk.path(location + '/' + identityFile));
+	const readManifestNow = async () => readManifestFile(await disk.path(location + '/' + identityFile));
+	const manifest = await readManifestNow();
 	const kit = readManifest(manifest.raw).checkKit;
 	if (!kit || plan.manifestDigest !== manifest.signature) throw changed(location);
 	const digests = {...kit.digests};
@@ -231,8 +268,17 @@ export async function applyCheckKitUpdate(disk: VaultDisk, location: string, app
 		if (file.change === 'replace' || file.change === 'add') await publishKitFile(disk, location, file);
 	}
 	if (plan.courseworkFiles.some(file => file.change === 'replace')) {
-		if ((await readManifestFile(await disk.path(location+'/'+identityFile))).signature !== plan.manifestDigest) throw changed(identityFile);
+		if ((await readManifestNow()).signature !== plan.manifestDigest) throw changed(identityFile);
 		await applyCourseworkFiles(disk,location,plan.courseworkFiles);
+	}
+	for (const file of plan.templateFiles.filter(eligible)) {
+		if (file.change !== 'replace') continue;
+		await publishKitFile(disk,location,file,async () => {
+			if ((await readManifestNow()).signature !== plan.manifestDigest) throw changed(identityFile);
+			if ((await readKitFile(disk,location,templateDeclarationFile)).digest !== plan.templateDeclarationDigest)
+				throw changed(templateDeclarationFile);
+		});
+		await assertFileDigest(disk,location,file,file.targetDigest);
 	}
 	for (const file of managed) await assertFileDigest(disk,location,file,file.targetDigest);
 	await replaceLibraryManifest(disk, location, plan.manifestDigest, next);

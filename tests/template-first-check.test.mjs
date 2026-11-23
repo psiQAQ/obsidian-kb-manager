@@ -103,7 +103,11 @@ test('first general and specialized checks find no errors in newly created libra
 				assert.ok(offline.logPath,offline.logError);
 				const workflow = offline.checks.find(check=>check.id==='workflow');
 				assert.deepEqual(workflow?.diagnostics,[],data);
-				assert.equal(workflow.coverage.checked,1,data);
+				assert.equal(workflow.coverage.checked,2,data);
+				assert.deepEqual(workflow.checkedItems.map(({file,subject}) => [file,subject]),[
+					['Courses/实验入门/Assignments/图表作业.md','已排期作业的 course 链接'],
+					['Courses/实验入门/Assignments/图表作业.md','已排期作业的 due 日期'],
+				]);
 				assert.equal(offline.checks.find(check=>check.id==='links')?.status,'passed',data);
 				assert.ok(offline.checks.every(check=>check.status!=='failed'),data);
 			}
@@ -135,6 +139,8 @@ test('first general and specialized checks find no errors in newly created libra
 				registered:true,registeredPaths,resolveLink:await fixtureResolver(vaultRoot)});
 			assert.deepEqual(special.checks.map(check => [check.id,check.status,check.diagnostics]),
 				selected.map(id => [id,'passed',[]]));
+			assert.ok(special.checks.every(check => check.checkedItems.length && check.coverage.checked ===
+				check.checkedItems.reduce((total,item) => total + (item.count ?? 1),0)));
 			if (id !== 'llm-wiki') return;
 
 			assert.ok(links.diagnostics.some(row => row.file === categoryTemplate &&

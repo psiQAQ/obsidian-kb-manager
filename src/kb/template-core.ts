@@ -29,9 +29,9 @@ export function checkCreationRequirements(template:Template, host:TemplateHost) 
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
-const wikiVersion = '8';
-const kepanoVersion = '7';
-const builtinVersions = { 'llm-wiki': ['1','2','3','4','5','6','7',wikiVersion], kepano: ['1','2','3','4','5','6',kepanoVersion] };
+const wikiVersion = '9';
+const kepanoVersion = '8';
+const builtinVersions = { 'llm-wiki': ['1','2','3','4','5','6','7','8',wikiVersion], kepano: ['1','2','3','4','5','6','7',kepanoVersion] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
 	return template?.id === id && builtinVersions[id].includes(template.version);
 }

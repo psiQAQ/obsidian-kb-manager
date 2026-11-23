@@ -16,9 +16,14 @@ function hasOpenTask(body) {
 }
 
 export default async function check({ notes }) {
-	return notes.flatMap(({ path, body, properties }) => {
-		if (!path.startsWith('Archives/') || properties.type !== 'review-project') return [];
-		if (!hasOpenTask(body)) return [];
-		return [{ severity:'warning', code:'archived-project-open-task', file:path, message:'归档项目仍有未完成的行动。' }];
-	});
+	const findings = [];
+	const checkedItems = [];
+	for (const {path, body, properties} of notes) {
+		if (!path.startsWith('Archives/') || properties.type !== 'review-project') continue;
+		const open = hasOpenTask(body);
+		const message = '归档项目仍有未完成的行动。';
+		checkedItems.push({file:path, subject:'归档项目正文里的待办复选框', outcome:open ? message : '未发现未完成的行动。'});
+		if (open) findings.push({severity:'warning', code:'archived-project-open-task', file:path, message});
+	}
+	return {findings, checkedItems};
 }

@@ -17,15 +17,20 @@ export default async function check(context) {
 		.map(note => note.path.replace(/\.md$/u, '')));
 	const assigned = new Map();
 	const findings = [];
+	const checkedItems = [];
 	let unverified = 0;
 	for (const { path, properties } of notes) {
 		const { type, manuscript, chapter } = properties;
 		if (!path.startsWith('Manuscript/Chapters/') || type !== 'chapter') continue;
 		const numbered = chapter !== '' && chapter != null;
-		if (numbered && (!Number.isInteger(chapter) || chapter < 1)) {
-			findings.push({ severity:'warning', code:'chapter-order-invalid', file:path, message:'章节序号 chapter 应为正整数。' });
+		const orderValid = Number.isInteger(chapter) && chapter >= 1;
+		if (numbered) {
+			const message = '章节序号 chapter 应为正整数。';
+			checkedItems.push({file:path, subject:'章节的 chapter 序号', outcome:orderValid ? '正整数序号：' + chapter : message});
+			if (!orderValid) findings.push({severity:'warning', code:'chapter-order-invalid', file:path, message});
 		}
 		if (!numbered && !manuscript) continue;
+		const subject = '章节的 manuscript 书稿链接';
 		const target = localTarget(manuscript, path, context);
 		if (target === null) {
 			unverified++;
@@ -33,14 +38,23 @@ export default async function check(context) {
 			continue;
 		}
 		if (!manuscripts.has(target)) {
-			findings.push({ severity:'warning', code:'chapter-manuscript-invalid', file:path, message:'manuscript 应指向本库的书稿页。' });
+			const message = 'manuscript 应指向本库的书稿页。';
+			checkedItems.push({file:path, subject, outcome:message});
+			findings.push({severity:'warning', code:'chapter-manuscript-invalid', file:path, message});
 			continue;
 		}
-		if (!Number.isInteger(chapter) || chapter < 1) continue;
+		checkedItems.push({file:path, subject, outcome:'链接指向本库书稿页。'});
+		if (!orderValid) continue;
 		const key = JSON.stringify([target, chapter]);
-		const previous = assigned.get(key);
-		if (previous) findings.push({ severity:'warning', code:'chapter-order-duplicate', file:path, message:'该书稿中另有同序号章节：' + previous });
-		else assigned.set(key, path);
+		const siblings = assigned.get(key);
+		if (siblings) {
+			findings.push({severity:'warning', code:'chapter-order-duplicate', file:path, message:'该书稿中另有同序号章节：' + siblings[0]});
+			siblings.push(path);
+		} else assigned.set(key, [path]);
 	}
-	return { findings, unverified };
+	for (const siblings of assigned.values()) {
+		const outcome = siblings.length === 1 ? '在已解析到同一书稿的章节中，序号唯一。' : `在已解析到同一书稿的章节中，有 ${siblings.length} 章使用该序号。`;
+		for (const file of siblings) checkedItems.push({file, subject:'同一书稿内的章节序号重复情况', outcome});
+	}
+	return {findings, unverified, checkedItems};
 }

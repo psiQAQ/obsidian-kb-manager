@@ -7,6 +7,7 @@ export const courseworkDeclaration = 'kb-template.json';
 export const previousCourseworkDigests = [
 	'0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601', // v1
 	'9dafdf6d9f9c35aee095e8671fb6abd123fc8d2275781e25c3b363e828492e13', // v2 and v3
+	'f3171fca91b4a58833a4b4246ce25ce8f34999ce4ca90e43c89456470e6cd4e9', // v4 before checked items
 ];
 
 export function courseworkLinkDeclaration(raw: string, version: string): string | undefined {

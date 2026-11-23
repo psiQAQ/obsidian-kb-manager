@@ -5,6 +5,7 @@ import type {Readable, Writable} from 'node:stream';
 import {clearTimeout, setTimeout} from 'node:timers';
 import {findLocalExecutable} from '../fs/local-executable.ts';
 import {tr} from '../i18n.ts';
+import {readCheckedItems, recordChecked} from './checked-items.ts';
 import {commonToolsSource} from './common-tools.ts';
 import {addReason, reportUnreadableDirectories, reportUnreadableNotes} from './coverage.ts';
 import {relativePath} from './snapshot.ts';
@@ -12,6 +13,7 @@ import type {DeclaredCheck, Inventory} from './snapshot.ts';
 import {isRecord, printable, result, settle} from './types.ts';
 import type {CheckContext, Diagnostic, DiagnosticOptions} from './types.ts';
 
+const outputLimit = 512 * 1024;
 const childSource = String.raw`
 import {readFileSync, writeSync} from 'node:fs';
 ${commonToolsSource}
@@ -19,15 +21,32 @@ function reply(value) {
 	const bytes = Buffer.from(JSON.stringify(value));
 	for (let offset = 0; offset < bytes.length;) offset += writeSync(3, bytes, offset, bytes.length - offset);
 }
+function limitTemplateDetails(result) {
+	if (!Array.isArray(result?.checkedItems)) return result;
+	const rows = result.checkedItems;
+	const checkedItemCount = rows.reduce((total, row) => {
+		const count = row?.count === undefined ? 1 : row.count;
+		return Number.isSafeInteger(count) && count > 0 ? total + count : NaN;
+	}, 0);
+	const summary = {...result, checkedItemCount, checkedItems:[]};
+	// Preserve diagnostics and the total under the separate check-process output limit.
+	let remaining = Math.min(256 * 1024, ${outputLimit} - Buffer.byteLength(JSON.stringify({result:summary})));
+	for (const row of rows) {
+		if (summary.checkedItems.length >= 4000) break;
+		remaining -= Buffer.byteLength(JSON.stringify(row) ?? 'null') + 1;
+		if (remaining < 0) break;
+		summary.checkedItems.push(row);
+	}
+	return summary;
+}
 try {
 	const {source, context, chinese} = JSON.parse(readFileSync(0, 'utf8'));
 	const moduleUrl = 'data:text/javascript;base64,' + source;
 	const {default: check} = await import(moduleUrl);
 	if (typeof check !== 'function') reply({error:'checker-export'});
-	else reply({result:chinese === undefined ? await check(context) : await check(context, commonTools(chinese))});
+	else reply({result:chinese === undefined ? limitTemplateDetails(await check(context)) : await check(context, commonTools(chinese))});
 } catch {reply({error:'checker-execution'});}
 `;
-const outputLimit = 512 * 1024;
 const inputLimit = 32 * 1024 * 1024;
 const windows = process.platform === 'win32';
 
@@ -180,7 +199,25 @@ export async function runSpecial(check: DeclaredCheck, options: DiagnosticOption
 	const findings = readFindings(output.findings);
 	if (!findings || typeof unverified !== 'number' || !Number.isSafeInteger(unverified) || unverified < 0 || unverified > 5000)
 		return fail('checker-output');
-	report.coverage.checked = 1;
+	if (output.checkedItems !== undefined) {
+		const items = readCheckedItems(output.checkedItems);
+		const total = output.checkedItemCount;
+		if (!items || typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0) return fail('checker-output');
+		const visible = items.reduce((count,item) => count + (item.count ?? 1),0);
+		if (total < visible) return fail('checker-output');
+		report.checkedItems = items;
+		report.coverage.checked = total;
+		if (total > visible) addReason(report, tr(
+			`明细达到输出上限，已显示 ${visible} 项，共检查 ${total} 项。`,
+			`The detail limit was reached. Showing ${visible} of ${total} checked items.`));
+		if (!total && !unverified && !findings.length)
+			recordChecked(report,check.path,tr('专项的适用范围','Template check scope'),
+				tr('脚本执行完毕，返回空的已检明细。','The script completed and returned no checked items.'));
+	} else {
+		recordChecked(report,check.path,tr('专项脚本运行','Template check execution'),tr(
+			`脚本返回 ${findings.length} 条发现和 ${unverified} 项待核实，没有提供逐项检验明细。`,
+			`The script returned ${findings.length} findings and ${unverified} unverified items without item-level details.`));
+	}
 	report.coverage.unknown = (identifiedVault ? 0 : 1) + unverified;
 	report.diagnostics = findings;
 	reportUnreadableDirectories(report, inventory);

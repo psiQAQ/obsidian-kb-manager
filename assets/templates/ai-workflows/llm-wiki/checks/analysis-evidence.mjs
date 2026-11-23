@@ -74,14 +74,23 @@ export default async function check({ manifest, libraryRoot, notes }) {
 	const index = notes.find(note => note.path === indexPath);
 	const indexed = index && indexedPaths(index, libraryRoot);
 	const findings = [];
+	const checkedItems = [];
 	for (const { path, properties } of notes) {
 		const { managed_by: managedBy, type, status, sources } = properties;
 		if (!path.startsWith(wiki + '/') || path === indexPath || managedBy !== 'agent' || !knowledgeTypes.has(type)) continue;
 		if (type === 'overview' && status === 'empty') continue;
-		if (indexed && !indexed.has(path)) findings.push({ severity:'warning', code:'knowledge-index-uncovered', file:path, message:'本库索引没有指向这篇 Agent 管理知识页的链接：' + indexPath });
-		if (type === 'analysis' && ![sources].flat().some(source => typeof source === 'string' && source.trim())) {
-			findings.push({ severity:'warning', code:'analysis-evidence-missing', file:path, message:'分析页未声明 sources，请人工核对分析依据及来源。' });
+		if (indexed) {
+			const covered = indexed.has(path);
+			checkedItems.push({file:path, subject:'本库索引中指向此 Agent 管理知识页的链接',
+				outcome:covered ? '索引中有指向此页的链接。' : '索引中缺少指向此页的链接。'});
+			if (!covered) findings.push({severity:'warning', code:'knowledge-index-uncovered', file:path, message:'本库索引没有指向这篇 Agent 管理知识页的链接：' + indexPath});
+		}
+		if (type === 'analysis') {
+			const declared = [sources].flat().some(source => typeof source === 'string' && source.trim());
+			const message = '分析页未声明 sources，请人工核对分析依据及来源。';
+			checkedItems.push({file:path, subject:'分析页的 sources 属性', outcome:declared ? '已填写来源文本。' : message});
+			if (!declared) findings.push({severity:'warning', code:'analysis-evidence-missing', file:path, message});
 		}
 	}
-	return findings;
+	return {findings, checkedItems};
 }

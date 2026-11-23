@@ -1,6 +1,6 @@
 {
   "id": "coursework",
-  "version": "4",
+  "version": "5",
   "name": "课程学习",
   "description": "用课程结构管理课堂、讲义、作业和截止日期。",
   "purpose": "learning",

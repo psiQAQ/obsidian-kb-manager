@@ -63,8 +63,8 @@ test('Fusion and Kepano bundle current resources and recognize previous template
 	const fusion = builtinTemplate(wiki, { displayName: 'QA', description: '', destination: root });
 	const personal = kepanoTemplate(kepano, root);
 	const names = template => template.files.map(file => file.name);
-	assert.equal(fusion.version, '8');
-	assert.equal(personal.version, '7');
+	assert.equal(fusion.version, JSON.parse(wiki['kb-template.json']).version);
+	assert.equal(personal.version, JSON.parse(kepano['kb-template.json']).version);
 	assert.match(new TextDecoder().decode(personal.files.find(file => file.name === 'README.md').bytes), /\(\.\/LICENSE\.md\)/u);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 7);
 	assert.equal(names(fusion).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 1);
@@ -77,9 +77,9 @@ test('Fusion and Kepano bundle current resources and recognize previous template
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.md$/u.test(name)).length, 52);
 	assert.equal(names(personal).filter(name => /^Templates\/.+\.base$/u.test(name)).length, 30);
 	assert.ok(!names(personal).some(name => name.startsWith('README.v') || name.startsWith('Bindings.v')));
-	for (const version of ['1', '2', '3', '4', '5', '6', '7', '8']) {
+	for (const version of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) {
 		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
-		assert.equal(isKepano({ id: personal.id, version }), version !== '8');
+		assert.equal(isKepano({ id: personal.id, version }), version !== '9');
 	}
 	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = instanceManifestSeed(JSON.parse(wiki['kb-template.json']),1).replace(/^templates = .*\r?\n/mu, '');

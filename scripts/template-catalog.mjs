@@ -3,6 +3,7 @@ import {readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {declaration,verifyDeclaration} from '../src/kb/template-declaration.ts';
 import {previousCourseworkDigests} from '../src/kb/coursework-check.ts';
+import {previousTemplateCheckDigests} from '../src/kb/template-check-digests.ts';
 import {segments} from '../src/fs/segments.ts';
 
 export function templateCatalog(root){
@@ -21,6 +22,7 @@ export function templateCatalog(root){
 		'f4a8df186ffbc486e91967cfd5f0048299e805e5618fe4dd84e45850f8e48dfe', // worldbuilding v1
 		'6bc3cc10b5e931db171727b903ad6ce0d54ca0fb65f0373e995b6e3400ab22cf', // kepano v5
 		'7e9e90342c9091192d5a61d0c464a610a1046910c113f1e963b5ef185e4ab296', // project-review v1
+		...Object.values(previousTemplateCheckDigests).flatMap(entry => Object.values(entry)),
 	]);
 	for(const purpose of readdirSync(root,{withFileTypes:true})){
 		if(!purpose.isDirectory())throw new Error('Unexpected catalogue item: '+purpose.name);

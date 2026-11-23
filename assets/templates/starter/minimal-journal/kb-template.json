@@ -1,6 +1,6 @@
 {
   "id": "minimal-journal",
-  "version": "3",
+  "version": "4",
   "name": "日记与知识札记",
   "description": "日记保留当天经过，札记按年归档并关联想法。",
   "purpose": "starter",

@@ -15,23 +15,30 @@ export default async function check(context) {
 	const { notes } = context;
 	const places = new Set(notes.filter(note => note.path.startsWith('Places/') && note.properties.type === 'world-place').map(note => note.path.replace(/\.md$/u, '')));
 	let unverified = 0;
-	const findings = notes.flatMap(({ path, properties }) => {
-		if (!path.startsWith('Events/') || properties.type !== 'world-event') return [];
+	const findings = [];
+	const checkedItems = [];
+	for (const {path, properties} of notes) {
+		if (!path.startsWith('Events/') || properties.type !== 'world-event') continue;
 		const { start, end, location } = properties;
-		const findings = [];
-		if (typeof start === 'string' && typeof end === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(start) && /^\d{4}-\d{2}-\d{2}$/u.test(end) && end < start) {
-			findings.push({ severity:'warning', code:'event-date-order', file:path, message:'事件结束日期早于开始日期。' });
+		if (typeof start === 'string' && typeof end === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(start) && /^\d{4}-\d{2}-\d{2}$/u.test(end)) {
+			const message = '事件结束日期早于开始日期。';
+			checkedItems.push({file:path, subject:'事件的 start 与 end 先后顺序', outcome:end < start ? message : `${start} 至 ${end}，顺序符合规则。`});
+			if (end < start) findings.push({severity:'warning', code:'event-date-order', file:path, message});
 		}
 		if (location) {
+			const subject = '事件的 location 地点链接';
 			const place = localTarget(location, path, context);
 			if (place === null) {
 				unverified++;
-				findings.push({ severity:'info', code:'event-location-unverified', file:path, message:'请在 Obsidian 中核实 location 指向的地点。' });
+				findings.push({severity:'info', code:'event-location-unverified', file:path, message:'请在 Obsidian 中核实 location 指向的地点。'});
 			} else if (!places.has(place)) {
-				findings.push({ severity:'warning', code:'event-location-invalid', file:path, message:'事件的 location 应指向本库 Places 下的地点页。' });
+				const message = '事件的 location 应指向本库 Places 下的地点页。';
+				checkedItems.push({file:path, subject, outcome:message});
+				findings.push({severity:'warning', code:'event-location-invalid', file:path, message});
+			} else {
+				checkedItems.push({file:path, subject, outcome:'链接指向本库 Places 中的地点页。'});
 			}
 		}
-		return findings;
-	});
-	return { findings, unverified };
+	}
+	return {findings, unverified, checkedItems};
 }

@@ -11,6 +11,7 @@ import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
 import {applyCheckKitUpdate,previewCheckKitUpdate} from '../src/kb/check-kit-update.ts';
 import {previousCourseworkDigests} from '../src/kb/coursework-check.ts';
 import {readManifest,writeCheckKit,writeIdentity} from '../src/kb/identity-core.ts';
+import {previousTemplateCheckDigests} from '../src/kb/template-check-digests.ts';
 import {officialCheckDigests,packText} from '../src/kb/template-pack.ts';
 import {vaultDisk} from './fixtures/vault-disk.mjs';
 
@@ -201,7 +202,13 @@ test('reviewed coursework update preserves declaration bytes, trusts the fixed b
 		assert.equal(report.environment,'desktop');
 		return report.checks[0];
 	};
-	assert.equal((await offline()).status,'passed');
+	const passing = await offline();
+	assert.equal(passing.status,'passed');
+	assert.equal(passing.coverage.checked,2);
+	assert.deepEqual(passing.checkedItems.map(({file,subject,outcome}) => [file,subject,outcome]),[
+		[assignment,'已排期作业的 course 链接','链接指向本库课程：' + location + '/' + course],
+		[assignment,'已排期作业的 due 日期','日期有效：2026-09-15'],
+	]);
 	assert.equal((await desktop({status:'resolved',path:location+'/'+course})).status,'passed');
 	assert.deepEqual((await desktop({status:'resolved',path:'Other/'+course})).diagnostics.map(item => item.code),['assignment-course-invalid']);
 
@@ -210,6 +217,9 @@ test('reviewed coursework update preserves declaration bytes, trusts the fixed b
 	await put(assignment,assignmentSource('[[课程索引]]','2026-02-30'));
 	const unknown = await offline();
 	assert.equal(unknown.status,'partial');
+	assert.equal(unknown.coverage.checked,1);
+	assert.equal(unknown.coverage.unknown,1);
+	assert.deepEqual(unknown.checkedItems.map(({file,subject}) => [file,subject]),[[assignment,'已排期作业的 due 日期']]);
 	assert.deepEqual(unknown.diagnostics.map(({code,severity}) => [code,severity]),[
 		['assignment-course-unverified','info'],['assignment-due-invalid','warning'],
 	]);
@@ -268,4 +278,74 @@ test('coursework pair rolls back its script on declaration failure, and a stale 
 	assert.deepEqual(courseworkChanges(await preview()),{[coursework]:'current',[declaration]:'replace'});
 	await apply(plan);
 	assert.equal((await preview()).canApply,false);
+});
+
+const templateId = 'minimal-first-week';
+const special = 'checks/workflow.mjs';
+const originalSpecial = (await fs.readFile(new URL('./fixtures/minimal-first-week-v3.mjs',import.meta.url),'utf8')).replace(/\r\n/gu,'\n');
+
+async function templateFixture(t) {
+	const item = await fixture(t);
+	await item.apply(await item.preview());
+	const identity = {schemaVersion:2,id:'4d29d18b-6d25-4099-9a94-e44d4c652300',displayName:'Template test',
+		description:'',archived:false,template:{id:templateId,version:'3'},managed:[]};
+	const manifest = writeIdentity(await item.read('kb.toml'),identity);
+	const raw = JSON.stringify({id:templateId,version:'3',name:'本库的模板说明',
+		checks:[{id:'workflow',name:'日记检查',path:special}]},null,2) + '\n';
+	await item.put('kb.toml',manifest);
+	await item.put(declaration,raw);
+	await item.put(special,originalSpecial);
+	return {...item,identity,manifest,raw};
+}
+
+test('an approved original built-in template check can update independently of the common kit',async t=>{
+	const {apply,preview,read,put,manifest,raw} = await templateFixture(t);
+	assert.equal(digest(originalSpecial),previousTemplateCheckDigests[templateId][special]);
+	const plan = await preview();
+	const after = packText(templateId)[special];
+	assert.ok(officialCheckDigests().includes(digest(after)));
+	assert.notEqual(after,originalSpecial);
+	assert.equal(plan.canApply,true);
+	assert.ok(plan.files.every(file=>file.change==='current'));
+	assert.deepEqual(plan.courseworkFiles,[]);
+	assert.deepEqual(plan.templateFiles.map(({path,change,before,after})=>({path,change,before,after})),[
+		{path:special,change:'replace',before:originalSpecial,after},
+	]);
+	assert.equal(await read(special),originalSpecial);
+
+	await put(declaration,raw.replace('本库的模板说明','新模板说明'));
+	await assert.rejects(apply(plan),/重新预览|Preview again/u);
+	assert.equal(await read(special),originalSpecial);
+	await put(declaration,raw);
+	await apply(await preview());
+	assert.equal(await read(special),after);
+	assert.equal(await read(declaration),raw);
+	assert.equal(await read('kb.toml'),manifest);
+	assert.equal((await preview()).canApply,false);
+});
+
+test('template check update preserves edits, missing files, and the same bytes outside the approved template and path',async t=>{
+	const {apply,preview,put,read,root,identity,manifest,raw} = await templateFixture(t);
+	const plan = await preview();
+	const edited = originalSpecial + '// local edit\n';
+	await put(special,edited);
+	await assert.rejects(apply(plan),/重新预览|Preview again/u);
+	assert.equal((await preview()).templateFiles[0].change,'modified');
+	assert.equal(await read(special),edited);
+	await fs.unlink(join(root,special));
+	assert.equal((await preview()).templateFiles[0].change,'missing');
+	assert.equal((await preview()).canApply,false);
+	await assert.rejects(read(special),{code:'ENOENT'});
+	await put(special,originalSpecial);
+	await put(declaration,raw.replace(special,'checks/local.mjs'));
+	assert.deepEqual((await preview()).templateFiles,[]);
+	await put(declaration,raw.replace('"workflow"','"local"'));
+	assert.deepEqual((await preview()).templateFiles,[]);
+	await put(declaration,raw.replace(templateId,'minimal-journal'));
+	assert.deepEqual((await preview()).templateFiles,[]);
+	await put('kb.toml',writeIdentity(manifest,{...identity,template:{id:'minimal-journal',version:'3'}}));
+	const anotherTemplate = await preview();
+	assert.equal(anotherTemplate.templateFiles[0].change,'modified');
+	assert.equal(anotherTemplate.canApply,false);
+	assert.equal(await read(special),originalSpecial);
 });

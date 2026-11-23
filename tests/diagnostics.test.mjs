@@ -818,10 +818,30 @@ test('selecting only an approved special check identifies files and directories 
 	assert.match(check.reason,/属性无法解析/u);
 });
 
+test('template checks retain findings and checked totals when detail exceeds the child output budget', async t => {
+	const {root,options,put} = await fixture(t);
+	const source = `export default () => ({
+		findings: Array.from({length:440}, () => ({severity:"warning", code:"test-check", file:"name.md", message:"x".repeat(1000)})),
+		checkedItems: Array.from({length:5000}, () => ({file:"name.md", subject:"Property", outcome:"Fits " + "字".repeat(180), count:2}))
+	});`;
+	await put('checks/checker.mjs',source);
+	const report = await runDiagnostics({...options,selected:['fixture.check'],trustedDigests:[digest(source)]});
+	const check = result(report,'fixture.check');
+	assert.equal(check.status,'findings');
+	assert.equal(check.coverage.checked,10000);
+	assert.equal(check.diagnostics.length,440);
+	assert.ok(check.checkedItems.length > 0 && check.checkedItems.length < 4000);
+	assert.match(check.reason,/10000/u);
+	assert.ok(report.logPath,report.logError);
+	const [saved] = await listDiagnosticHistory(root);
+	assert.deepEqual(result(saved,'fixture.check').checkedItems,check.checkedItems);
+});
+
 test('reports checker failures, excessive output, timeouts, and log failure without exposing exceptions', async t => {
 	const {root,vault,options,put} = await fixture(t);
 	for (const [source,expected] of [
 		['export default () => [{severity:"error", code:"bad", file:"../escape.md", message:"Invalid"}];','checker-output'],
+		['export default () => ({findings:[],checkedItems:[{file:"../escape.md",subject:"Invalid path",outcome:"Not in scope"}]});','checker-output'],
 		['export default () => { throw new Error("private exception body"); };','checker-execution'],
 		['export default () => { console.log("X".repeat(600000)); return []; };','checker-output-limit'],
 		['export default () => { for (;;) {} };','checker-timeout'],

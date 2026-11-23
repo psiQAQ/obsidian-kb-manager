@@ -8,6 +8,7 @@ export function showCheckedItems(parent: HTMLElement, check: DiagnosticCheckResu
 	const rows = check.checkedItems ?? [];
 	if (!rows.length) {
 		parent.createEl('p',{cls:'kb-v3-muted',text:tr('此报告只记录了已检数量，没有保存逐项明细。','This report recorded the checked count without individual results.')});
+		if (check.rule?.path) parent.createEl('code',{cls:'kb-check-location',text:tr('本次规则','Rule used')+' · '+check.rule.path});
 		return;
 	}
 	const list = parent.createEl('ol',{cls:'kb-checked-items'});

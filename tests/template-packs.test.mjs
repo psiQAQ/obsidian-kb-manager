@@ -92,10 +92,11 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 31);
+	assert.equal(digests.length, 49);
 	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
 	assert.ok(digests.includes('0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601'), 'coursework v1 stays trusted');
 	assert.ok(digests.includes('9dafdf6d9f9c35aee095e8671fb6abd123fc8d2275781e25c3b363e828492e13'), 'coursework v2/v3 stay trusted');
+	assert.ok(digests.includes('f3171fca91b4a58833a4b4246ce25ce8f34999ce4ca90e43c89456470e6cd4e9'), 'coursework v4 before checked items stays trusted');
 	assert.ok(digests.includes('811fe153c69dd71d692f3f3b2ba0d285cc8f56984138832b385109b471a95f20'), 'LLM Wiki v6 stays trusted');
 	assert.ok(digests.includes('6bc3cc10b5e931db171727b903ad6ce0d54ca0fb65f0373e995b6e3400ab22cf'), 'Kepano v5 stays trusted');
 	const purposes = new Map();
@@ -159,23 +160,25 @@ for (const [id, pack] of Object.entries(packs)) {
 		const validator = checkers[id];
 		const initial = notes(text);
 		const context = { template:descriptor, manifest:{ paths:{ wiki:'wiki' } }, libraryRoot:root, notes:initial };
-		async function findings(ctx) {
+		async function check(ctx) {
 			if (descriptor.checks.some(check => check.linkEvidence)) {
 				const inventory = linkInventory(text, ctx.notes);
 				const resolveLink = link => fixtureTarget(text, link);
 				ctx = {...ctx, links:await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root)};
 			}
 			const result = await validator(ctx);
-			if (Array.isArray(result)) return result;
-			assert.equal(result.unverified, 0);
-			return result.findings;
+			assert.equal(result.unverified ?? 0, 0);
+			assert.ok(Array.isArray(result.checkedItems), id);
+			return result;
 		}
-		assert.deepEqual(await findings(context), []);
+		const clean = await check(context);
+		assert.deepEqual(clean.findings, []);
 		const [path, properties, code, body] = negative[id];
 		const existing = initial.find(note => note.path === path);
 		const replacement = { path, properties:{ ...existing?.properties, ...properties }, body:body ?? existing?.body ?? '' };
-		const violations = await findings({ ...context, notes:[...initial.filter(note => note.path !== path), replacement].sort((a,b)=>a.path.localeCompare(b.path)) });
-		assert.ok(violations.some(finding => finding.code === code && finding.severity === 'warning'), JSON.stringify(violations));
+		const result = await check({ ...context, notes:[...initial.filter(note => note.path !== path), replacement].sort((a,b)=>a.path.localeCompare(b.path)) });
+		assert.ok(result.findings.some(finding => finding.code === code && finding.severity === 'warning'), JSON.stringify(result.findings));
+		assert.ok(result.checkedItems.some(item => item.file === path && item.subject && item.outcome), JSON.stringify(result.checkedItems));
 	});
 }
 
@@ -197,19 +200,23 @@ test('LLM Wiki checks the mapped index by exact path and excludes fenced, inline
 			{path:mapped + '/空白综述.md',properties:{type:'overview',status:'empty',managed_by:'agent'},body:''},
 		],
 	};
-	assert.deepEqual((await llmWiki(state)).map(({file,code})=>[file,code]), [
+	assert.deepEqual((await llmWiki(state)).findings.map(({file,code})=>[file,code]), [
 		[mapped + '/主题二/重复标题.md','knowledge-index-uncovered'],
 		[mapped + '/行内引用.md','knowledge-index-uncovered'],
 	]);
 	state.notes[0].body += `\n- [[${root}/${mapped}/主题二/重复标题]]\n- [行内引用](./行内引用.md)`;
-	assert.deepEqual(await llmWiki(state), []);
+	const clean = await llmWiki(state);
+	assert.deepEqual(clean.findings, []);
+	assert.deepEqual(clean.checkedItems.map(({file}) => file),[
+		mapped + '/主题一/重复标题.md',mapped + '/主题二/重复标题.md',mapped + '/行内引用.md',
+	]);
 	state.notes[0].body += '\n- 同一主题的进一步资料\n    - [子项](./列表子项.md)\n\n' +
 		'          [缩进代码](./缩进示例.md)\n\n' +
 		'  ~~~md\n  - [围栏代码](./列表代码块.md)\n  ~~~';
 	for (const name of ['列表子项','缩进示例','列表代码块']) {
 		state.notes.push({path:mapped + '/' + name + '.md', properties:{type:'concept',managed_by:'agent'}, body:''});
 	}
-	assert.deepEqual((await llmWiki(state)).map(({file})=>file), [mapped + '/缩进示例.md',mapped + '/列表代码块.md']);
+	assert.deepEqual((await llmWiki(state)).findings.map(({file})=>file), [mapped + '/缩进示例.md',mapped + '/列表代码块.md']);
 	state.notes[0].body += [
 		'',
 		'- [引用][编号 A]',
@@ -218,7 +225,7 @@ test('LLM Wiki checks the mapped index by exact path and excludes fenced, inline
 		'[编号 A]: ./列表代码块.md',
 		'[折叠引用]: ./列表代码块.md',
 	].join('\n');
-	assert.deepEqual(await llmWiki(state), []);
+	assert.deepEqual((await llmWiki(state)).findings, []);
 });
 
 test('first-week entry rejects missing, other-library, and non-diary targets', async () => {
@@ -226,7 +233,7 @@ test('first-week entry rejects missing, other-library, and non-diary targets', a
 	const diary = initial.find(note => note.path === 'Journal/2026-09-07.md');
 	for (const target of ['', '[日记入口](../他库/Journal/2026-09-07.md)', '[日记入口](./Journal/其他记录.md)']) {
 		const context = {notes:[diary,{path:'Journal/其他记录.md',properties:{type:'other-note'},body:''},{path:'README.md',properties:{},body:target}]};
-		assert.deepEqual((await firstWeek(context)).map(finding => finding.code), ['journal-entry-invalid']);
+		assert.deepEqual((await firstWeek(context)).findings.map(finding => finding.code), ['journal-entry-invalid']);
 	}
 });
 
@@ -264,7 +271,10 @@ test('YAML short links use actual resolution and keep unknown links unverified',
 			const links = await collectCheckLinkEvidence({vaultRoot:'.', resolveLink}, inventory, '.', root);
 			return checkers[id]({libraryRoot:root, notes:initial, links});
 		}
-		assert.deepEqual(await run('resolved', root + '/' + target), {findings:[], unverified:0}, id);
+		const resolved = await run('resolved', root + '/' + target);
+		assert.deepEqual(resolved.findings, [], id);
+		assert.equal(resolved.unverified, 0, id);
+		assert.ok(resolved.checkedItems.some(row => row.file === path && row.subject.includes(property)), id);
 		for (const result of [await run('resolved', other + '/' + target), await run('missing')]) {
 			assert.equal(result.unverified, 0, id);
 			assert.ok(result.findings.some(row => row.file === path && row.severity === 'warning'), id);
@@ -296,31 +306,33 @@ test('new reading libraries have no shared flashcard deck and each question need
 		const template = files.find(note => note.path === 'Templates/术语.md');
 		assert.deepEqual(term.properties.tags, []);
 		assert.deepEqual(template.properties.tags, []);
-		assert.deepEqual(await domainReading({notes:files}), []);
+		assert.deepEqual(await domainReading({notes:files}), {findings:[],checkedItems:[]});
 		term.properties.review = true;
 		term.properties.tags = [`flashcards/local-reading-${index}`];
 		term.body += '\n\n第二问\n?\n第二个答案。\n';
-		assert.deepEqual(await domainReading({notes:files}), []);
+		const completeResult = await domainReading({notes:files});
+		assert.deepEqual(completeResult.findings, []);
+		assert.deepEqual(completeResult.checkedItems.map(row => row.file), [term.path,term.path]);
 		const complete = term.body;
 		for(const bad of ['# 术语\n问题\n?\n答案\n','问题\n\n?\n\n答案\n']){
 			term.body = bad;
-			assert.deepEqual((await domainReading({notes:files})).map(row=>row.code),['review-card-incomplete']);
+			assert.deepEqual((await domainReading({notes:files})).findings.map(row=>row.code),['review-card-incomplete']);
 		}
 		term.body=complete;
 		term.body += '\n没有答案的第三问\n?\n';
 		term.properties.tags = ['flashcards/reading-example'];
-		assert.deepEqual((await domainReading({notes:files})).map(row => row.code), ['review-deck-missing','review-card-incomplete']);
+		assert.deepEqual((await domainReading({notes:files})).findings.map(row => row.code), ['review-deck-missing','review-card-incomplete']);
 	}
 });
 
 test('the archive task rule keeps tasks between mixed fences and ignores examples', async () => {
 	const note = {path:'Archives/围栏示例.md', properties:{type:'review-project'}};
 	const clean = ['````markdown','- [ ] 示例','~~~','```','- [ ] 仍在示例内','````  '].join('\n');
-	assert.deepEqual(await projectReview({notes:[{...note,body:clean}]}),[]);
+	assert.deepEqual((await projectReview({notes:[{...note,body:clean}]})).findings,[]);
 	const unclosed = '   ~~~ example\n- [ ] 未闭合的代码示例';
-	assert.deepEqual(await projectReview({notes:[{...note,body:clean+'\n'+unclosed}]}),[]);
+	assert.deepEqual((await projectReview({notes:[{...note,body:clean+'\n'+unclosed}]})).findings,[]);
 	const open = await projectReview({notes:[{...note,body:clean+'\n- [ ] 真实行动\n'+unclosed}]});
-	assert.deepEqual(open.map(row=>row.code),['archived-project-open-task']);
+	assert.deepEqual(open.findings.map(row=>row.code),['archived-project-open-task']);
 });
 
 test('work log orders recent handoffs first and Radar derives a stage order', () => {

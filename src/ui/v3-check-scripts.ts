@@ -76,12 +76,13 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 	dialog.facts([[tr('知识库','Library'),location]]);
 	changeComparison(dialog.contentEl,[{label:tr('检验工具版本','Check kit version'),before:plan.installedVersion,
 		after:plan.targetVersion,afterLabel:plan.canApply?undefined:tr('插件提供版本','Bundled version')}]);
-	const files = [...plan.files,...plan.courseworkFiles];
+	const files = [...plan.files,...plan.courseworkFiles,...plan.templateFiles];
 	if (plan.downgrade) dialog.contentEl.createEl('p',{text:tr('此知识库已安装更新的检验工具包。','This library has a newer check kit installed.')});
 	else if (files.some(file => file.change === 'modified' || file.change === 'missing' || file.change === 'unavailable'))
 		dialog.contentEl.createEl('p',{text:tr('已修改、缺失或无法读取的文件需要人工处理。','Review edited, missing, or unavailable files manually.')});
 	for (const file of files) {
 		if (file === plan.courseworkFiles[0]) dialog.contentEl.createEl('h3',{text:tr('课程与截止日检查','Course and due date check')});
+		if (file === plan.templateFiles[0]) dialog.contentEl.createEl('h3',{text:tr('模板专项检查','Template checks')});
 		const entry = dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
 		const heading = entry.createEl('summary');
 		heading.createSpan({text:file.path});

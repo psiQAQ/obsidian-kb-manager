@@ -1,6 +1,6 @@
 {
   "id": "domain-reading",
-  "version": "3",
+  "version": "4",
   "name": "领域阅读与间隔复习",
   "description": "从领域入口安排阅读，将术语写成可间隔复习的问答。",
   "purpose": "reading",

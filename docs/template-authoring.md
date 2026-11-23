@@ -102,21 +102,30 @@ result: ""
 ---
 ```
 
-`checks/project-result.mjs` 导出一个函数。可同步返回数组，也可异步返回。示例脚本只检查明确声明为实验并已结题的笔记。
+`checks/project-result.mjs` 导出一个函数。示例脚本只检查明确声明为实验并已结题的笔记，为每篇实际检查的笔记记录结果。
 
 ```javascript
 export default function check({ notes }) {
-  return notes
-    .filter(({ properties: p }) =>
-      p.type === "experiment" && p.status === "completed" &&
-      (typeof p.result !== "string" || !p.result.trim()))
-    .map(({ path }) => ({
+  const findings = [];
+  const checkedItems = [];
+  const missingMessage = "已结题的实验缺少成果。请根据实验记录填写 result。";
+  for (const { path, properties: p } of notes) {
+    if (p.type !== "experiment" || p.status !== "completed") continue;
+    const hasResult = typeof p.result === "string" && !!p.result.trim();
+    checkedItems.push({
+      file: path,
+      subject: "已结题实验的 result 属性",
+      outcome: hasResult ? "已填写成果文本。" : missingMessage
+    });
+    if (!hasResult) findings.push({
       severity: "error",
       code: "experiment.result-missing",
       file: path,
-      message: "已结题的实验缺少成果。请根据实验记录填写 result。",
+      message: missingMessage,
       evidence: "type=experiment, status=completed"
-    }));
+    });
+  }
+  return { findings, checkedItems };
 }
 ```
 
@@ -132,7 +141,9 @@ export default function check({ notes }) {
 - `checks` 可省略。每一项有库内唯一 ID、显示名、可选说明和位于 `checks/` 下的独立 `.mjs` 文件。使用输入中的 `template`、`manifest`、`libraryRoot`、`notes` 获取模板声明、实例信息、Vault 相对目录和本次可分析的笔记。每篇笔记有库内相对路径 `path`、正文 `body`、已解析属性 `properties`。专项自有的属性和取值约定由模板作者在首页说明。
 - 检查项可设置 `"linkEvidence": true` 请求本次解析的内部链接。获准运行的脚本可读取 `links[note.path]`，其中 `complete` 表示当前解析器的链接清单可用，`references` 中的每项都有 `status`（`resolved`、`missing` 或 `unknown`），并可包含原链接目标 `target`、1 起计的 `line`、已解析的 Vault 相对 `path` 和 Markdown 目标声明的 `visibility`（`public` 或 `private`）。桌面使用 Obsidian 的实际解析，离线只确认有路径依据的目标。跨库目标只提供其解析路径及可确认的可见性标记。若链接或可见性证据不足，应在结果中标明待核实。
 - 函数返回的每条诊断都要有稳定的 `code`、`severity`（`error`、`warning`、`info`）和给用户看的 `message`。能定位时提供相对文件 `file`、从 1 开始的行号 `line`，可在短字符串 `evidence` 中记录依据。消息以普通文字渲染，颜色、图标和定位由插件提供。检查不得修改知识库。专项由本机 Node 进程执行，具备当前用户权限；声明不能给自身授信。
-- 可以直接返回诊断数组，也可以返回 `{ findings, unverified }`，其中 `findings` 是诊断数组，`unverified` 是 0 到 5000 的整数。大于 0 时检验状态为 `partial`，适合用 `info` 诊断给出待核实的位置与原因。
+- 可以返回 `{ findings, checkedItems, unverified }`，其中 `findings` 是诊断数组，`checkedItems` 和 `unverified` 可省略。不提供 `checkedItems` 的脚本（包括直接返回诊断数组的旧脚本）只显示脚本运行结果。
+- 每条 `checkedItems` 必须包含库内相对路径 `file`（最多 2048 字符）、检查内容 `subject` 与结果 `outcome`（分别最多 512 字符）。可添加从 1 开始的行号 `line`。同文件同一规则的多项结果可归为一条，再用正整数 `count` 标明检查项数。只记录已得出确定结果的检查，包括通过与发现问题。明细最多传输 4000 行，并受专项总输出限制，超限时报告已检总数及本次显示的数量。
+- `unverified` 是 0 到 5000 的整数，表示未能确定的检查项数。大于 0 时检验状态为 `partial`，可用 `info` 诊断给出待核实的位置与原因。
 - `dependencies` 填可选工作流所需的 Obsidian 社区插件 ID。在首页写清每项依赖的用途、用户触发方式和输出位置。保持 DataviewJS 关闭。模板不复制宿主 `.obsidian`，不设置开库宏或全局新建文件触发器。旧式 `managed` 的 `knowledge.base:overview-bindings` 保留给已有融合总览格式。
 
 ## 离线检验和日志
@@ -147,7 +158,7 @@ node ./checks/kb-check.cjs --library . --checks all
 
 每次运行输出一个 UTF-8 JSON。agent 先读 `status`、`checks[].status` 和 `checks[].coverage`，再用 `checks[].diagnostics` 的位置与证据定位问题。离线缺少 Obsidian 实际链接解析结果时，会报告无法确定。本库 `.log/` 中保存以 UTC 时间和运行 UUID 命名的 JSON 历史，默认由 Git 忽略。修复后重新检查同一组规则，比较两次报告。运行失败、日志失败或部分覆盖时应保留相应原因。
 
-实例中的通用规则和模板专项接收不同的输入。编辑通用规则时，可从对应的 `checks/common/*.mjs` 查看该项可用的证据。例如 `properties.mjs` 接收 `notes` 和宿主初始化的 `result`，累加 `result.coverage`、填入 `result.diagnostics` 后返回 `result`。模板专项则直接返回诊断数组。两种脚本均可使用 `file` 和从 1 开始的 `line` 定位问题。桌面运行修改后的规则需要重新审查源码并授权，CLI 可重复传入 `--trust-digest` 分别认可多个文件。
+实例中的通用规则和模板专项接收不同的输入。编辑通用规则时，可从对应的 `checks/common/*.mjs` 查看该项可用的证据。例如 `properties.mjs` 接收 `notes` 和宿主初始化的 `result`，填入 `result.diagnostics` 后返回 `result`，并可调用第二个参数提供的 `recordChecked(result, file, subject, outcome, line?, count?)` 同时记录检查明细和覆盖计数。两种脚本均可使用 `file` 和从 1 开始的 `line` 定位问题。桌面运行修改后的规则需要重新审查源码并授权，CLI 可重复传入 `--trust-digest` 分别认可多个文件。
 
 ## 把模板纳入内置目录
 
