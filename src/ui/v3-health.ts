@@ -17,6 +17,7 @@ import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
 import {showCheckedItems} from './diagnostic-checked-items.ts';
 import {openDiagnosticLocation} from './diagnostic-location.ts';
+import {overviewFindings} from './diagnostic-overview.ts';
 import type {BaseExpression} from '../diagnostics/types.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
@@ -206,7 +207,8 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		});
 	}
 	let severity:Severity|'' = '';
-	const findings=report.checks.flatMap(check=>check.diagnostics.map(item=>({item,name:checkName(check.id,check.name)})));
+	const findings=overviewFindings(report.checks);
+	const names=new Map(report.checks.map(check=>[check.id,checkName(check.id,check.name)]));
 	const list=results.createDiv({cls:'kb-v3-report-list'});
 	new Setting(results).setName(tr('严重程度','Severity')).addDropdown(input=>{
 		input.selectEl.setAttribute('aria-label',tr('严重程度','Severity'));
@@ -221,7 +223,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			const group=findings.filter(({item})=>item.severity===level);
 			if(!group.length)continue;
 			const heading=list.createEl('h4');badge(heading,level);heading.createSpan({text:String(group.length)});
-			for(const {item,name} of group)finding(list,item,name);
+			for(const {item,checks} of group)finding(list,item,checks.map(id=>names.get(id) ?? id).join(tr('、',', ')));
 		}
 		if(!list.childElementCount)list.createEl('p',{cls:'kb-v3-muted',text:tr('没有符合筛选条件的诊断。','No diagnostics match the filter.')});
 	}
