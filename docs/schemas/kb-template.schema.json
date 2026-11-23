@@ -48,6 +48,31 @@
     "suggestedExcludedFolders": {
       "$ref": "#/definitions/paths"
     },
+    "diagnosticExclusions": {
+      "description": "Skip selected diagnostic checks on the named files or folder descendants in the instance.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["checks"],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": ["links", "anchors", "portability", "bases"]
+            }
+          },
+          "files": {"$ref": "#/definitions/diagnosticPaths"},
+          "folders": {"$ref": "#/definitions/diagnosticPaths"}
+        },
+        "anyOf": [
+          {"required": ["files"], "properties": {"files": {"minItems": 1}}},
+          {"required": ["folders"], "properties": {"folders": {"minItems": 1}}}
+        ]
+      }
+    },
     "dependencies": {
       "type": "array",
       "uniqueItems": true,
@@ -297,6 +322,16 @@
       "uniqueItems": true,
       "items": {
         "$ref": "#/definitions/path"
+      }
+    },
+    "diagnosticPaths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "allOf": [
+          {"$ref": "#/definitions/path"},
+          {"not": {"pattern": "(^|/)([.]|\\s)|([.]|\\s)(/|$)|/$|[\\[\\]{}]"}}
+        ]
       }
     }
   }

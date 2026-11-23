@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 import { parse } from 'yaml';
 import { templateCatalog } from '../scripts/template-catalog.mjs';
+import { declaration } from '../src/kb/template-declaration.ts';
 import llmWiki from '../assets/templates/ai-workflows/llm-wiki/checks/analysis-evidence.mjs';
 import aiWorklog from '../assets/templates/ai-workflows/ai-worklog/checks/workflow.mjs';
 import kepano from '../assets/templates/collections/kepano/checks/category-links.mjs';
@@ -29,7 +30,7 @@ const directory = new URL('../assets/templates/', import.meta.url);
 const { packs, digests } = templateCatalog(fileURLToPath(directory));
 globalThis.KB_TEMPLATE_PACKS = packs;
 const { renderPack } = await import('../src/kb/template-pack.ts');
-const { kepanoTemplate } = await import('../src/kb/template-core.ts');
+const { builtinTemplate, kepanoTemplate } = await import('../src/kb/template-core.ts');
 const root = 'Libraries/测试库 + 样例';
 const other = 'Libraries/他库';
 const decoder = new TextDecoder();
@@ -112,6 +113,30 @@ test('built-in catalogue has two independent packs per primary purpose and fixed
 	assert.equal(purposes.size, 9);
 	for (const count of purposes.values()) assert.equal(count, 2);
 	assert.deepEqual(Array.from(dependencies).sort(), ['dataview','obsidian-meta-bind-plugin','obsidian-spaced-repetition','obsidian-tasks-plugin','quickadd','templater-obsidian']);
+});
+
+test('the installed declarations exclude only uninstantiated template sources', () => {
+	const checks=['links','anchors','portability'];
+	for(const [id,{descriptor,text,binary,folders}] of Object.entries(packs)){
+		const files=Object.keys(text);
+		const markdown=files.filter(path=>path.startsWith('Templates/') && path.endsWith('.md')).sort();
+		const rules=descriptor.diagnosticExclusions;
+		const mixed=id==='llm-wiki' || id==='kepano';
+		const expected=[mixed?{checks,files:markdown}:{checks,folders:['Templates']}];
+		if(id==='llm-wiki')expected.push({checks:['bases'],files:['Templates/Bases/分类专用模板.base']});
+		assert.deepEqual(rules,expected,id);
+		for(const rule of rules){
+			for(const file of rule.files??[])assert.ok(file in text,`${id}: ${file}`);
+			for(const folder of rule.folders??[]){
+				assert.ok(folders.includes(folder),`${id}: ${folder}`);
+				assert.ok([...files,...Object.keys(binary)].filter(path=>path.startsWith(folder+'/')).every(path=>markdown.includes(path)),id);
+			}
+		}
+		const variables={destination:root,displayName:'测试库',description:'实例验证'};
+		const installed=id==='llm-wiki'?builtinTemplate(text,variables):id==='kepano'?kepanoTemplate(text,root):renderPack(id,variables);
+		const local=installed.files.find(file=>file.name==='kb-template.json');
+		assert.deepEqual(declaration(decoder.decode(local.bytes)).diagnosticExclusions,rules,id);
+	}
 });
 
 for (const [id, pack] of Object.entries(packs)) {

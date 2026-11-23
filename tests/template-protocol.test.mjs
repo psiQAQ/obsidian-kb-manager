@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import {templateCatalog} from '../scripts/template-catalog.mjs';
 import {declaration, folderTemplate, checkCreationRequirements} from '../src/kb/template.ts';
+import {InvalidDiagnosticExclusionsError} from '../src/kb/template-declaration.ts';
 import {templateCompatibility} from '../src/kb/template-requirements.ts';
 
 test('legacy descriptors and all bundled packs remain valid; new declarations give precise compatibility errors', () => {
@@ -19,6 +20,34 @@ test('legacy descriptors and all bundled packs remain valid; new declarations gi
 		[{id:'test',version:'1',managedFiles:['kb.toml']},/managedFiles/u],
 		[{managedFiles:['Templates/New.md']},/id and version/u],
 	])assert.throws(()=>declaration(JSON.stringify(data)),reason);
+});
+
+test('diagnostic exclusions require named checks and safe instance-relative paths', () => {
+	const diagnosticExclusions=[
+		{checks:['links','anchors','portability'],files:['页面模板/分类入口.md'],folders:[]},
+		{checks:['bases'],folders:['Templates/Bases']},
+		{checks:['links'],files:['Pending.md'],folders:['Templates']},
+	];
+	assert.deepEqual(declaration(JSON.stringify({diagnosticExclusions})).diagnosticExclusions,diagnosticExclusions);
+	assert.deepEqual(declaration('{"diagnosticExclusions":[]}').diagnosticExclusions,[]);
+	const invalid=[
+		[null,''],
+		[[null],'.0'],
+		[[{checks:[],files:['Pending.md']}],'.0.checks'],
+		[[{checks:['canvas'],files:['Pending.md']}],'.0.checks'],
+		[[{checks:['links','links'],files:['Pending.md']}],'.0.checks'],
+		[[{checks:['links'],files:[],folders:[]}],'.0'],
+		[[{checks:['bases'],folder:'Templates'}],'.0.folder'],
+		[[{checks:['bases'],folders:'Templates'}],'.0.folders'],
+		...['..','../Note.md','Notes/../Note.md','/Note.md','C:/Note.md','Notes\\Note.md','Notes/',
+			'Notes//Note.md','Notes/*.md','Notes/?.md','Notes/[ab].md','Notes/{a,b}.md'].map(path=>[
+			[{checks:['links'],files:['Pending.md',path]}],'.0.files.1',
+		]),
+	];
+	for(const [value,field] of invalid){
+		assert.throws(()=>declaration(JSON.stringify({diagnosticExclusions:value})),error=>
+			error instanceof InvalidDiagnosticExclusionsError && error.message.endsWith('diagnosticExclusions'+field));
+	}
 });
 
 test('the installed manager and enabled plugin versions meet or block the declared minimum', () => {

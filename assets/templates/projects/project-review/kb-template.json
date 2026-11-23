@@ -9,6 +9,18 @@
     "Templates",
     "Integrations"
   ],
+  "diagnosticExclusions": [
+    {
+      "checks": [
+        "links",
+        "anchors",
+        "portability"
+      ],
+      "folders": [
+        "Templates"
+      ]
+    }
+  ],
   "pageTemplates": [
     "Templates"
   ],

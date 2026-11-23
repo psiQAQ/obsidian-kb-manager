@@ -8,11 +8,15 @@ import {validateManagedPath} from './template-file-record.ts';
 
 export interface CheckDeclaration {id:string; name:string; path:string; description?:string; linkEvidence?:boolean}
 export interface TemplateSource {url:string; author:string; commit:string; license:string; path?:string}
+const diagnosticChecks = ['links','anchors','portability','bases'] as const;
+export type DiagnosticExclusionCheck = typeof diagnosticChecks[number];
+export interface DiagnosticExclusion {checks:DiagnosticExclusionCheck[]; files?:string[]; folders?:string[]}
 export interface Declaration extends TemplateRequirements {
 	$schema?:string; protocolVersion?:1; managedFiles?:string[];
 	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
 	entry?:string; pageTemplates?:string[]; sources?:TemplateSource[];
 	suggestedExcludedFolders?:string[];
+	diagnosticExclusions?:DiagnosticExclusion[];
 	paths?:Record<string,string>; variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
 }
 
@@ -26,12 +30,45 @@ const reservedChecks=new Set(['manifest','properties','links','anchors','canvas'
 const slug=/^[a-z0-9][a-z0-9-]*$/u;
 function bad(field:string):never {throw new Error(tr('模板声明字段无效：','Invalid template declaration field: ')+field);}
 
+export class InvalidDiagnosticExclusionsError extends Error {
+	constructor(field:string) {
+		super(tr('模板声明字段无效：','Invalid template declaration field: ')+field);
+	}
+}
+
+function validateDiagnosticPaths(value:unknown,field:string) {
+	if(!strings(value))throw new InvalidDiagnosticExclusionsError(field);
+	for(const [index,path] of value.entries()){
+		const pathField=field+'.'+index;
+		if(/[[\]{}]/u.test(path))throw new InvalidDiagnosticExclusionsError(pathField);
+		try {segments(path);}
+		catch {throw new InvalidDiagnosticExclusionsError(pathField);}
+	}
+	return value.length;
+}
+
+function validateDiagnosticExclusions(value:unknown) {
+	const field='diagnosticExclusions';
+	if(!Array.isArray(value))throw new InvalidDiagnosticExclusionsError(field);
+	for(const [index,rule] of (value as unknown[]).entries()){
+		const itemField=field+'.'+index;
+		if(!object(rule))throw new InvalidDiagnosticExclusionsError(itemField);
+		for(const name of Object.keys(rule))if(!['checks','files','folders'].includes(name))
+			throw new InvalidDiagnosticExclusionsError(itemField+'.'+name);
+		if(!strings(rule.checks) || !rule.checks.length || rule.checks.some(check=>!(diagnosticChecks as readonly string[]).includes(check)))
+			throw new InvalidDiagnosticExclusionsError(itemField+'.checks');
+		const files='files' in rule?validateDiagnosticPaths(rule.files,itemField+'.files'):0;
+		const folders='folders' in rule?validateDiagnosticPaths(rule.folders,itemField+'.folders'):0;
+		if(!files && !folders)throw new InvalidDiagnosticExclusionsError(itemField);
+	}
+}
+
 export function declaration(raw:string):Declaration {
 	const data:unknown=JSON.parse(raw);
 	if(!object(data))bad('kb-template.json');
 	if('protocolVersion' in data && data.protocolVersion!==1)
 		throw new Error(tr('不支持该模板协议，请检查管理器版本。','Unsupported template protocol. Check your manager version.')+' · '+String(data.protocolVersion));
-	for(const name of Object.keys(data))if(!['$schema','protocolVersion','minManagerVersion','managedFiles','id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks','suggestedExcludedFolders'].includes(name))bad(name);
+	for(const name of Object.keys(data))if(!['$schema','protocolVersion','minManagerVersion','managedFiles','id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks','suggestedExcludedFolders','diagnosticExclusions'].includes(name))bad(name);
 	if('$schema' in data && typeof data.$schema!=='string')bad('$schema');
 	if('minManagerVersion' in data && !validMinimum(data.minManagerVersion))bad('minManagerVersion');
 	if('managedFiles' in data){
@@ -61,6 +98,7 @@ export function declaration(raw:string):Declaration {
 	for(const name of ['purposes','pageTemplates','hidden'])if(name in data && !strings(data[name]))bad(name);
 	for(const folder of (data.pageTemplates??[]) as string[])segments(folder);
 	if('suggestedExcludedFolders' in data)exclusionFolders(data.suggestedExcludedFolders,'suggestedExcludedFolders');
+	if('diagnosticExclusions' in data)validateDiagnosticExclusions(data.diagnosticExclusions);
 	if([data.purpose,...(data.purposes??[]) as string[]].some(value=>value!==undefined && (typeof value!=='string' || !slug.test(value))))bad('purpose');
 	if(data.managed!==undefined && (!strings(data.managed) || data.managed.length!==1 || data.managed[0]!=='knowledge.base:overview-bindings'))bad('managed');
 	if(data.paths!==undefined){
