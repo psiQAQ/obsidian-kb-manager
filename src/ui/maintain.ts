@@ -1,5 +1,5 @@
 import { tr } from '../i18n.ts';
-import { MarkdownView, Setting, TFile } from 'obsidian';
+import { Setting, TFile } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { digest } from '../fs/vault.ts';
 import { inspect, recheck } from '../kb/catalog.ts';
@@ -17,6 +17,7 @@ import { changeActions, changeComparison, panelGroup } from './change-preview.ts
 import { destinationParentField } from './registry-path-field.ts';
 import { vaultExclusions, showExclusionPlan } from './template-filter.ts';
 import { moveReferencesMatch, planMoveReferences, selectMoveReferences, verifyMoveReferences } from './move-links.ts';
+import { openMoveEditors, verifyMoveEditors } from './move-editors.ts';
 import { showAddedIgnoreRules } from './registry-ignore.ts';
 
 export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
@@ -56,21 +57,6 @@ export async function upgradeManifest(plugin:KnowledgeBaseManager,lib:Library,ow
 	dialog.open();
 }
 
-function editorContents(plugin:KnowledgeBaseManager,file:TFile) {
-	const contents:string[]=[];
-	plugin.app.workspace.iterateAllLeaves(leaf=>{
-		const view=leaf.view;
-		if(view instanceof MarkdownView && view.file===file && view.getMode()==='source')contents.push(view.editor.getValue());
-	});
-	return contents;
-}
-
-const editorText=(text:string)=>text.replace(/^\uFEFF/u,'').replace(/\r\n/gu,'\n');
-function verifyEditors(path:string,text:string,editors:readonly string[]){
-	if(editors.some(value=>editorText(value)!==editorText(text)))
-		throw new Error(tr('请先保存编辑器中的修改并重新预览：','Save the edits in the open editor and preview again: ')+path);
-}
-
 export function visible(plugin:KnowledgeBaseManager,protectEditors=false):VisibleFiles {
 	const vault=plugin.app.vault;
 	return {
@@ -81,7 +67,7 @@ export function visible(plugin:KnowledgeBaseManager,protectEditors=false):Visibl
 			if(!(file instanceof TFile))throw new Error(tr('等待 Obsidian 刷新路径后，请在管理器中继续',"Wait for Obsidian to refresh the path, then continue in the manager"));
 			await vault.process(file,text=>{
 				if(digest(text)!==before)throw new Error(tr('文件已变化，请重新预览：',"File changed. Preview again: ")+relative);
-				if(protectEditors)verifyEditors(relative,text,editorContents(plugin,file));
+				if(protectEditors)verifyMoveEditors(relative,text,openMoveEditors(plugin).get(file) ?? []);
 				return after;
 			});
 		}
@@ -210,9 +196,9 @@ function moveReview(plugin:KnowledgeBaseManager,record:MoveRecord,title:string,o
 	dialog.contentEl.createEl('p',{text:tr('移动整个知识库目录，包括目录内的 Git 数据。成功后登记列表指向目标路径。',
 		'Move the entire library folder, including its Git data. After the move, the registry points to the destination.')});
 	if(record.changes.length){
-		dialog.contentEl.createEl('h3',{text:tr('移动后更新的文件','Files updated after the move')});
+		dialog.contentEl.createEl('h3',{text:tr('随移动更新','Updates applied with the move')});
 		for(const change of record.changes){
-			const file=dialog.contentEl.createEl('details',{cls:'kb-v3-detail'});
+			const file=dialog.contentEl.createEl('details',{cls:'kb-v3-detail',attr:{'data-move-reference-section':'managed'}});
 			file.createEl('summary',{text:record.destination+'/'+change.file});
 			dialogContents(file).lines(change.fields);
 			changeComparison(file,[{
@@ -279,10 +265,11 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw stale();
 			if(selected.length){
 				if(!await moveReferencesMatch(plugin,fresh,selected))throw stale();
+				const openEditors=openMoveEditors(plugin);
 				for(const edit of selected){
 					const file=plugin.app.vault.getFileByPath(edit.file);
-					const editors=file ? editorContents(plugin,file) : [];
-					if(editors.length)verifyEditors(edit.file,await readMoveReference(plugin.disk,edit.file),editors);
+					const editors=file ? openEditors.get(file) : undefined;
+					if(editors?.length)verifyMoveEditors(edit.file,await readMoveReference(plugin.disk,edit.file),editors);
 				}
 			}
 			await plugin.disk.registry.assertWritable();

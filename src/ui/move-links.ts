@@ -1,18 +1,20 @@
 import { parseLinktext } from 'obsidian';
-import type { CachedMetadata, LinkCache, Reference, TFile, Vault } from 'obsidian';
+import type { CachedMetadata, LinkCache, TFile, Vault } from 'obsidian';
 import type KnowledgeBaseManager from '../main.ts';
 import { tr } from '../i18n.ts';
-import { overlaps } from '../fs/vault.ts';
+import { digest, overlaps } from '../fs/vault.ts';
 import { compareRegistryPaths, sameOrBelow } from '../registry/paths.ts';
 import { discover } from '../kb/catalog.ts';
 import type { Library } from '../kb/catalog.ts';
 import { managedBaseFile, moveBaseFields } from '../kb/move-base-paths.ts';
 import type { MoveBaseField } from '../kb/move-base-paths.ts';
 import { canvasMoveTargets, moveVaultPath, relocateMarkdownReference } from '../kb/move-link-text.ts';
+import { keepsRelativeLinkTarget, managedPropertyTarget, movePropertyToken, movePropertyValues, moveReferenceDefinition, moveReferenceUse, uncoveredManagedMarkdown } from '../kb/move-markdown-paths.ts';
 import { affectedByMove, ambiguousWikiMoveTargets, assertWritableOwner, baseMoveTokens, readMoveReference, referenceEdit, referenceOwner } from '../kb/move-references.ts';
 import type { MoveLinks, MoveToken, ReferenceEdit } from '../kb/move-references.ts';
 import type { MoveRecord } from '../kb/move.ts';
 import { dialogContents } from './dialog.ts';
+import { hasUnsavedMoveEditor, openMoveEditors, saveMoveEditorMessage } from './move-editors.ts';
 
 interface ReferenceFile {
 	file: string;
@@ -22,7 +24,7 @@ interface ReferenceFile {
 	baseFields: MoveBaseField[];
 }
 interface ReferenceGroup { path: string; label: string; files: ReferenceFile[] }
-interface ReferencePlan { groups: ReferenceGroup[]; review: string[] }
+interface ReferencePlan { groups: ReferenceGroup[]; review: string[]; preserved: string[] }
 
 function annotationOffset(text: string, original: string, position: LinkCache['position']['start']) {
 	const matches=(offset:number)=>text.slice(offset,offset+original.length)===original;
@@ -40,24 +42,18 @@ function annotationOffset(text: string, original: string, position: LinkCache['p
 }
 
 function markdownLinkDrafts(plugin: KnowledgeBaseManager, file: TFile, cache: CachedMetadata | null, plan: MoveRecord, review: (reason:string)=>void,
-	ambiguousTargets: ReturnType<typeof ambiguousWikiMoveTargets>) {
+	ambiguousTargets: ReturnType<typeof ambiguousWikiMoveTargets>, definitions?: ReadonlyMap<string,string>) {
 	const {metadataCache}=plugin.app;
 	if (!cache) {
 		if (sameOrBelow(file.path,plan.source) || Object.keys(metadataCache.resolvedLinks[file.path] ?? {})
 			.some(target=>sameOrBelow(target,plan.source))) review(tr('缓存未就绪','Metadata cache is not ready'));
 		return [];
 	}
-	const hasAffectedTarget=(ref: Pick<Reference,'link'>) => {
-		const path=parseLinktext(ref.link).path;
-		if (!path) return;
-		const target=metadataCache.getFirstLinkpathDest(path,file.path)?.path;
-		return target && affectedByMove(file.path,target,plan) ? target : undefined;
-	};
-	if ([...(cache.frontmatterLinks ?? []),...(cache.referenceLinks ?? [])].some(hasAffectedTarget))
-		review(tr('检查属性或引用式链接','Review property or reference-style links'));
 	const links=[...(cache.links ?? []),...(cache.embeds ?? [])];
 	const drafts=[];
 	for (const ref of links) {
+		const definition=moveReferenceUse(ref.original,ref.displayText ?? '');
+		if (definition && definitions?.get(definition)===ref.link) continue;
 		const path=parseLinktext(ref.link).path;
 		if (!path) continue;
 		const target=metadataCache.getFirstLinkpathDest(path,file.path)?.path;
@@ -78,6 +74,56 @@ function markdownLinkDrafts(plugin: KnowledgeBaseManager, file: TFile, cache: Ca
 		else if (replacement!==ref.original) drafts.push({ref,target});
 	}
 	return drafts;
+}
+
+function previewAuxiliaryLinks(plugin: KnowledgeBaseManager, file: TFile, cache: CachedMetadata, plan: MoveRecord,
+	text: string, managedAfter: string|undefined, unsaved: boolean, manual: (reason:string)=>void,
+	preserve: (reason:string)=>void, ambiguousTargets: ReturnType<typeof ambiguousWikiMoveTargets>) {
+	const moving=sameOrBelow(file.path,plan.source);
+	const values=cache.frontmatterLinks?.length ? movePropertyValues(text) : undefined;
+	const updated=managedAfter!==undefined && values ? movePropertyValues(managedAfter) : undefined;
+	const lines=cache.referenceLinks?.length ? text.split(/\r?\n/u) : [];
+	const updatedLines=cache.referenceLinks?.length && managedAfter!==undefined ? managedAfter.split(/\r?\n/u) : undefined;
+	const definitions=new Map<string,string>();
+	const inspect=(link:string,label:string,original:string,verified:boolean,property?:{key:string; value:string|undefined})=>{
+		if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(link)) return;
+		const {path}=parseLinktext(link);
+		const target=path ? plugin.app.metadataCache.getFirstLinkpathDest(path,file.path)?.path : link.startsWith('#') ? file.path : undefined;
+		const ambiguous=ambiguousTargets(file.path,path,target,plan);
+		if (!moving && !(target && affectedByMove(file.path,target,plan)) && !ambiguous.length &&
+			!sameOrBelow(path.replace(/^(?:\/|\.\/)/u,''),plan.source)) return;
+		const display=label+' · '+original;
+		const review=(reason:string)=>manual(display+' · '+reason);
+		if (unsaved) { review(saveMoveEditorMessage()); return; }
+		if (!verified) { review(tr('原文与链接缓存不一致','The link cache differs from the saved contents')); return; }
+		if (ambiguous.length) { review(tr('同名候选','Same-name candidates')+' → '+ambiguous.join(', ')); return; }
+		if (!target) { review(tr('无法解析目标','The target does not resolve')); return; }
+		if (moving!==sameOrBelow(target,plan.source)) { review(tr('跨库或库外依赖','Dependency outside the moving library')+' → '+target); return; }
+		const after=property && updated?.(property.key);
+		if (property && managedPropertyTarget(property.value,after || undefined,original,path,file.path,target,plan)) return;
+		if (property && managedAfter!==undefined && after!==property.value) {
+			review(tr('受管更新改动此属性，请核对目标','The managed update changes this property. Verify its target'));
+			return;
+		}
+		if (!path || keepsRelativeLinkTarget(path,file.path,target,plan)) {
+			preserve(display+' → '+moveVaultPath(target,plan.source,plan.destination));
+			return;
+		}
+		review(tr('无法确认移动后仍指向同一目标','The original path may not resolve to the same target after the move')+' → '+target);
+	};
+	for (const ref of cache.frontmatterLinks ?? []) {
+		const value=values?.(ref.key);
+		inspect(ref.link,tr('属性','Property')+' '+ref.key,ref.original,movePropertyToken(value,ref.original),{key:ref.key,value});
+	}
+	for (const ref of cache.referenceLinks ?? []) {
+		const line=ref.position.start.line;
+		const exact=moveReferenceDefinition(lines,ref.id,ref.position,ref.link);
+		inspect(ref.link,tr('引用定义','Reference definition')+' '+ref.id+' · '+tr('行','Line')+' '+(line+1),
+			exact ?? lines[line]?.trim() ?? ref.link,!!exact && (!updatedLines || updatedLines[line]===lines[line]));
+		const id=ref.id.trim().replace(/\s+/gu,' ').toLowerCase();
+		if (exact) definitions.set(id,ref.link);
+	}
+	return definitions;
 }
 
 function markdownEdits(text: string, drafts: ReturnType<typeof markdownLinkDrafts>, review: (reason:string)=>void): MoveLinks | undefined {
@@ -112,8 +158,10 @@ function canvasEdits(plugin: KnowledgeBaseManager, text: string, plan: MoveRecor
 export async function planMoveReferences(plugin: KnowledgeBaseManager, plan: MoveRecord,
 	only?: ReadonlySet<string>): Promise<ReferencePlan> {
 	const libraries=await discover(plugin.disk,plugin.config);
-	const groups=new Map<string,ReferenceGroup>(), review=new Set<string>(), permissions=new Map<string,Promise<void>>();
+	const groups=new Map<string,ReferenceGroup>(), review=new Set<string>(), preserved=new Set<string>(), permissions=new Map<string,Promise<void>>();
 	const files=plugin.app.vault.getFiles();
+	const editors=openMoveEditors(plugin);
+	const changes=new Map(plan.changes.map(change=>[plan.source+'/'+change.file,change]));
 	const ambiguousTargets=ambiguousWikiMoveTargets(function* () {for (const file of files) yield file.path;});
 	const candidates=files.filter(file=>(!only || only.has(file.path)) && ['md','canvas','base'].includes(file.extension.toLowerCase())
 		&& !plugin.config.templates.some(template=>overlaps(file.path,template)));
@@ -122,21 +170,37 @@ export async function planMoveReferences(plugin: KnowledgeBaseManager, plan: Mov
 		const owner=referenceOwner(libraries,file.path), path=owner?.location ?? '';
 		const label=owner?.identity?.displayName ?? owner?.location ?? tr('Vault 未登记区域','Unregistered Vault files');
 		const manual=(reason:string)=>review.add(label+' · '+file.path+' · '+reason);
+		const preserve=(reason:string)=>preserved.add(label+' · '+file.path+' · '+reason);
 		try {
 			const extension=file.extension.toLowerCase();
 			const cache=extension==='md' ? plugin.app.metadataCache.getFileCache(file) : null;
 			const inlineBase=extension==='md' && (cache?.sections?.some(section=>['code','base'].includes(section.type)) ??
 				sameOrBelow(file.path,plan.source));
-			const drafts=extension==='md' ? markdownLinkDrafts(plugin,file,cache,plan,manual,ambiguousTargets) : [];
+			const open=editors.get(file);
+			const auxiliary=cache && ((cache.frontmatterLinks?.length ?? 0)>0 || (cache.referenceLinks?.length ?? 0)>0);
+			let text=extension!=='md' || open || auxiliary ? await readMoveReference(plugin.disk,file.path) : undefined;
+			const unsaved=text!==undefined && !!open && hasUnsavedMoveEditor(text,open);
+			if (unsaved) manual(saveMoveEditorMessage());
+			const change=changes.get(file.path);
+			const plannedContents=(value:string)=>!unsaved && change && digest(value)===change.before ? change.after : undefined;
+			const definitions=auxiliary && text!==undefined
+				? previewAuxiliaryLinks(plugin,file,cache,plan,text,plannedContents(text),unsaved,manual,preserve,ambiguousTargets) : undefined;
+			const drafts=extension==='md' ? markdownLinkDrafts(plugin,file,cache,plan,manual,ambiguousTargets,definitions) : [];
 			if (extension==='md' && !inlineBase && !drafts.length) continue;
-			const text=await readMoveReference(plugin.disk,file.path);
-			const base=extension==='base' || extension==='md' ? moveBaseFields(text,file.path,plan,managedBaseFile(owner,file.path)) : undefined;
+			text??=await readMoveReference(plugin.disk,file.path);
+			const after=plannedContents(text);
+			const base=extension==='base' || extension==='md' ? moveBaseFields(text,file.path,plan,managedBaseFile(owner,file.path),
+				after) : undefined;
 			for (const issue of base?.manual ?? []) manual(issue);
 			const links=extension==='canvas' ? canvasEdits(plugin,text,plan,manual) : markdownEdits(text,drafts,manual);
 			const baseFields=base?.fields ?? [];
 			if (!links && !baseFields.length) continue;
-			if (sameOrBelow(file.path,plan.source) && plan.changes.some(change=>plan.source+'/'+change.file===file.path)) {
-				manual(tr('此文件同时有受管绑定更新，请在移动后核对引用','A managed binding also updates this file. Review its references after moving.'));
+			if (change) {
+				const overlap=tr('受管更新未覆盖此引用','The managed update does not cover this reference');
+				if (links?.kind==='markdown') for (const {line,token} of uncoveredManagedMarkdown(text,after,file.path,plan,links.tokens))
+					manual(tr('行','Line')+' '+line+' · '+token.original+' · '+overlap);
+				if (links?.kind==='canvas') for (const target of links.targets) manual(target+' · '+overlap);
+				for (const field of baseFields) manual(field.location+' · '+field.before+' · '+overlap);
 				continue;
 			}
 			if (owner && path!==plan.source) {
@@ -155,7 +219,7 @@ export async function planMoveReferences(plugin: KnowledgeBaseManager, plan: Mov
 			group.files.push({file:file.path,owner,text,links,baseFields});
 		} catch (error) { manual(String(error)); }
 	}
-	return {groups:[...groups.values()],review:[...review]};
+	return {groups:[...groups.values()],review:[...review],preserved:[...preserved]};
 }
 
 function selectReferenceFile(plan: MoveRecord, draft: ReferenceFile, links: boolean, offsets?: ReadonlySet<number>) {
@@ -244,10 +308,14 @@ export function selectMoveReferences(parent: HTMLElement, vault: Vault, plan: Mo
 			}
 		}
 	}
-	if (referencePlan.review.length) {
-		const review=parent.createEl('details',{cls:'kb-v3-detail'});
-		review.createEl('summary',{text:tr('需人工核对的引用','References for manual review')+' ('+referencePlan.review.length+')'});
-		dialogContents(review).lines(referencePlan.review);
+	for (const [section,title,rows] of [
+		['preserved',tr('路径保持有效','Paths that remain valid'),referencePlan.preserved],
+		['manual',tr('需人工核对的引用','References for manual review'),referencePlan.review],
+	] as const) {
+		if (!rows.length) continue;
+		const detail=parent.createEl('details',{cls:'kb-v3-detail',attr:{'data-move-reference-section':section}});
+		detail.createEl('summary',{text:title+' ('+rows.length+')'});
+		dialogContents(detail).lines(rows);
 	}
 	parent.createEl('p',{text:tr('预览会检查 Base 文件、已索引的 Markdown 代码块及所选库中尚未索引的笔记。外部剪藏、脚本与动态查询需人工核对。',
 		'The preview checks Base files, indexed Markdown code blocks and unindexed notes in the moving library. Review external clippings, scripts and dynamic queries manually.')});

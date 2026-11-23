@@ -6,6 +6,7 @@ import { digest } from '../src/fs/vault.ts';
 import { discover, newIdentity, writeIdentity } from '../src/kb/catalog.ts';
 import { executeMove, planMove } from '../src/kb/move.ts';
 import { ambiguousWikiMoveTargets, referenceEdit } from '../src/kb/move-references.ts';
+import { keepsRelativeLinkTarget, managedPropertyTarget, movePropertyToken, movePropertyValues, moveReferenceDefinition, moveReferenceUse, uncoveredManagedMarkdown } from '../src/kb/move-markdown-paths.ts';
 import { registerVaultLibrary } from '../src/registry/discovery.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
 
@@ -29,6 +30,46 @@ test('require review for affected short or suffix wikilinks with multiple target
 	assert.deepEqual(lookup('Start.md','Picture.svg','Beta/Picture.svg',scope),[]);
 	assert.deepEqual(lookup('Alpha/Start.md','Picture.svg','Beta/Picture.svg',scope),['Beta/Picture.svg','Other/Picture.svg']);
 	assert.equal(snapshots,1);
+});
+
+test('prove saved property and reference links keep their target after the move',()=>{
+	const scope={source:'Old/Library',destination:'Elsewhere/Nested/Library'};
+	const from='Old/Library/Notes/From.md', target='Old/Library/Related/Note.md';
+	assert(keepsRelativeLinkTarget('../Related/Note',from,target,scope));
+	assert(!keepsRelativeLinkTarget('../Related/Note',from,'Elsewhere/Related/Note.md',scope));
+	assert(!keepsRelativeLinkTarget('../../Peer/Note',from,'Old/Peer/Note.md',scope));
+	assert(!keepsRelativeLinkTarget('Note',from,target,scope));
+	const original='[[Old/Library/Related/Note#Heading|Label]]';
+	const text='---\r\nrelated:\r\n  - "'+original+'"\r\n  - "[[../Related/Note]]"\r\n---\r\n';
+	const before=movePropertyValues(text);
+	const after=movePropertyValues(text.replace('Old/Library','Elsewhere/Nested/Library'));
+	assert.equal(before('related.0'),original);
+	assert(movePropertyToken(before('related.1'),'[[../Related/Note]]'));
+	assert(managedPropertyTarget(before('related.0'),after('related.0'),original,'Old/Library/Related/Note',from,target,scope));
+	assert(!managedPropertyTarget(before('related.0'),after('related.1'),original,'Old/Library/Related/Note',from,target,scope));
+	assert(!managedPropertyTarget(before('related.0'),after('related.0')?.replace('#Heading','#Other'),original,
+		'Old/Library/Related/Note',from,target,scope));
+	const lines=['[Description][The Label]', '[The Label]: <../Related/A%20B.md#Heading> "Title"'];
+	const position={start:{line:1,col:0,offset:24},end:{line:1,col:57,offset:81}};
+	assert.equal(moveReferenceDefinition(lines,'the label',position,'../Related/A B.md#Heading'),
+		'[The Label]: <../Related/A%20B.md#Heading>');
+	assert.equal(moveReferenceDefinition(lines,'the label',position,'../Other/A B.md#Heading'),undefined);
+	assert.equal(moveReferenceUse(lines[0],'Description'),'the label');
+});
+
+test('only suppress managed Markdown overlaps whose exact link token was updated',()=>{
+	const scope={source:'Old/Library',destination:'Elsewhere/Library'};
+	const file='Old/Library/From.md';
+	const first='[[Old/Library/First#Topic|Label]]', second='![[Old/Library/List.base#Tab]]';
+	const text='# Links\r\n'+first+' · '+second+'\r\n';
+	const tokens=[
+		{offset:text.indexOf(second),original:second,target:'Old/Library/List.base'},
+		{offset:text.indexOf(first),original:first,target:'Old/Library/First.md'},
+	];
+	const after=text.replace(first,first.replace('Old/Library','Elsewhere/Library'));
+	assert.deepEqual(uncoveredManagedMarkdown(text,after,file,scope,tokens),[{line:2,token:tokens[0]}]);
+	assert.deepEqual(uncoveredManagedMarkdown(text,text.replaceAll('Old/Library','Elsewhere/Library'),file,scope,tokens),[]);
+	assert.equal(uncoveredManagedMarkdown(text,after.replace('#Topic','#Other'),file,scope,tokens).length,2);
 });
 
 test('move selected references, refuse stale or read-only sources, and resume after a partial rewrite', async t=>{

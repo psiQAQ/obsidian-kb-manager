@@ -57,6 +57,31 @@ test('offer only scoped Base path literals and identify expressions for review',
 	assert.equal(shared.manual.length,2);
 });
 
+test('hide only Base path reviews proved by the exact managed field update',()=>{
+	const scope={source:'Source',destination:'Dest/Moved'};
+	const text=[
+		'filters:',
+		'  and:',
+		'    - file.inFolder("Source/Courses")',
+		'    - file.inFolder("Source/Notes") && file.inFolder("Source/Extras")',
+		'    - file.path.contains("Source/dynamic")',
+		'    - file.path.startsWith("Source")',
+	].join('\n');
+	const after=text.replace('Source/Courses','Dest/Moved/Courses')
+		.replace('Source/Notes','Dest/Moved/Notes').replace('startsWith("Source")','startsWith("Dest/Moved")');
+	const preview=moveBaseFields(text,'Source/Managed.base',scope,true,after);
+	assert.deepEqual(preview.fields,[]);
+	assert.equal(preview.manual.length,3);
+	assert(preview.manual.some(line=>line.includes('Source/Extras')));
+	assert(preview.manual.some(line=>line.includes('Source/dynamic')));
+	assert(preview.manual.some(line=>line.includes('startsWith("Source")')));
+	const changedPredicate=after.replace('file.inFolder("Dest/Moved/Courses")','!file.inFolder("Dest/Moved/Courses")');
+	assert(moveBaseFields(text,'Source/Managed.base',scope,true,changedPredicate).manual
+		.some(line=>line.includes('Source/Courses')));
+	assert(moveBaseFields(text,'Source/Managed.base',scope,true,after.replace('Dest/Moved/Courses','Dest/Moved/Sibling')).manual
+		.some(line=>line.includes('Source/Courses')));
+});
+
 test('preserve unselected Base fields, combine checked literals with Markdown links, and resume recovery',async t=>{
 	await fs.mkdir('.tmp',{recursive:true});
 	const root=await fs.mkdtemp(path.resolve('.tmp','move-base-paths-'));

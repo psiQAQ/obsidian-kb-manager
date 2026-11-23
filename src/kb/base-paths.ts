@@ -4,6 +4,8 @@ import {fencedBlocks} from '../diagnostics/fences.ts';
 
 interface BasePathArgument {
 	value: string;
+	expressionStart: number;
+	expressionEnd: number;
 	// The complete literal, including the quotes as encoded by the YAML scalar.
 	start?: number;
 	end?: number;
@@ -145,7 +147,7 @@ function inspectExpression(source: string, expression: string, field: string, of
 		const at = mapped?.[i]?.start;
 		const reference: BasePathReference = {kind,receiver,expression,field,...position(at === undefined ? start : literal!.offsets[at]!)};
 		if (first?.value !== undefined && lexemes[opening + 2]?.text === ')') {
-			reference.argument = {value:first.value};
+			reference.argument = {value:first.value,expressionStart:first.start,expressionEnd:first.end};
 			const raw = mapped?.[opening + 1];
 			if (raw && literal && !readOnly) {
 				reference.argument.start = offset + literal.offsets[raw.start]!;

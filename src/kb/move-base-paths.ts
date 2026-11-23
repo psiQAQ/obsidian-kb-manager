@@ -3,6 +3,7 @@ import { key } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { sameOrBelow } from '../registry/paths.ts';
 import { scanBasePathFilters, scanBasePaths } from './base-paths.ts';
+import type { BasePathFilter, BasePathReference } from './base-paths.ts';
 import type { Library } from './catalog.ts';
 
 interface Scope { source: string; destination: string }
@@ -29,7 +30,32 @@ function isVaultPath(value: string) {
 	catch { return false; }
 }
 
-export function moveBaseFields(text: string, file: string, scope: Scope, managed: boolean) {
+function managedPathUpdates(before: BasePathFilter[], after: BasePathFilter[], scope: Scope) {
+	const covered=new Set<BasePathReference>();
+	if (before.length!==after.length || before.some((filter,index)=>filter.field!==after[index]?.field)) return covered;
+	for (const [index,filter] of before.entries()) {
+		const updated=after[index]!;
+		if (filter.line!==updated.line || filter.references.length!==updated.references.length) continue;
+		let expression=updated.expression;
+		const matches:BasePathReference[]=[];
+		for (let i=filter.references.length-1;i>=0;i--) {
+			const previous=filter.references[i]!, next=updated.references[i]!;
+			const old=previous.argument, replacement=next.argument;
+			if (previous.kind!==next.kind || previous.receiver!==next.receiver || old?.start===undefined ||
+				replacement?.start===undefined || !sameOrBelow(old.value,scope.source) ||
+				replacement.value!==scope.destination+old.value.slice(scope.source.length)) continue;
+			expression=expression.slice(0,replacement.expressionStart)+
+				filter.expression.slice(old.expressionStart,old.expressionEnd)+expression.slice(replacement.expressionEnd);
+			matches.push(previous);
+		}
+		// Restore only provable path replacements. A changed predicate, another
+		// field, or a moved inline block cannot stand in for this expression.
+		if (expression===filter.expression) for (const match of matches) covered.add(match);
+	}
+	return covered;
+}
+
+export function moveBaseFields(text: string, file: string, scope: Scope, managed: boolean, managedAfter?: string) {
 	const extension=file.toLowerCase().endsWith('.base') ? 'base' : 'md';
 	const inside=sameOrBelow(file,scope.source);
 	const escaped=scope.source.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
@@ -40,6 +66,8 @@ export function moveBaseFields(text: string, file: string, scope: Scope, managed
 	const location=(match:{field:string;line:number;column:number})=>`${match.field} · ${match.line}:${match.column}`;
 	const filters=scanBasePathFilters(text,extension);
 	const references=filters.flatMap(filter=>filter.references);
+	const covered=managed && managedAfter!==undefined
+		? managedPathUpdates(filters,scanBasePathFilters(managedAfter,extension),scope) : undefined;
 	for (const filter of filters) {
 		const mentions=[...filter.expression.matchAll(mentionsSource)].length;
 		const known=filter.references.filter(ref=>ref.argument && sourceSpelling(ref.argument.value)).length;
@@ -58,12 +86,12 @@ export function moveBaseFields(text: string, file: string, scope: Scope, managed
 			if (sourceSpelling(value)) review(tr('检查 Base 路径拼写','Review the Base path spelling'));
 			continue;
 		}
-		if (managed) {
-			review(tr('检查模板声明的受管文件','Review this template-managed file'));
-			continue;
-		}
 		if (match.kind==='startsWith' && value===scope.source) {
 			review(tr('路径前缀缺少目录分隔符','The path prefix has no folder separator'));
+			continue;
+		}
+		if (managed) {
+			if (!covered?.has(match)) review(tr('受管更新未覆盖此 Base 路径','The managed update does not cover this Base path'));
 			continue;
 		}
 		if (start===undefined || end===undefined || !replace || !isVaultPath(value)) {
