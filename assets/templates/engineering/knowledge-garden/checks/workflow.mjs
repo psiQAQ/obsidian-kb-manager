@@ -4,6 +4,11 @@ export default function check({ notes, links }) {
 	let unverified = 0;
 	for (const { path, properties } of notes) {
 		if (properties.type !== 'garden-note' || properties.publish_ready !== true) continue;
+		const privatePage = properties.visibility === 'private';
+		const visibilityMessage = '该页面标为私有，同时被标记为拟分享。请核对页面的 visibility 与 publish_ready。';
+		checkedItems.push({file:path, subject:'拟分享页面自身的 visibility',
+			outcome:privatePage ? visibilityMessage : '页面未标记为私有。'});
+		if (privatePage) findings.push({severity:'warning', code:'sharing-private-page', file:path, message:visibilityMessage});
 		const source = links?.[path];
 		if (!source?.complete) {
 			unverified++;

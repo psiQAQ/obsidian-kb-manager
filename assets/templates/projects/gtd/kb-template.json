@@ -1,6 +1,6 @@
 {
   "id": "gtd",
-  "version": "4",
+  "version": "5",
   "name": "行动清单与 GTD",
   "description": "从收件箱整理下一步行动、等待事项和重复行动。",
   "purpose": "projects",
@@ -32,7 +32,7 @@
   "checks": [
     {
       "id": "workflow",
-      "name": "等待事项跟进日期",
+      "name": "等待事项位置与跟进日期",
       "path": "checks/workflow.mjs"
     }
   ],

@@ -22,15 +22,20 @@ export default async function check(context) {
 	for (const { path, properties } of notes) {
 		const { type, manuscript, chapter } = properties;
 		if (!path.startsWith('Manuscript/Chapters/') || type !== 'chapter') continue;
-		const numbered = chapter !== '' && chapter != null;
+		const numbered = chapter != null && (typeof chapter !== 'string' || !!chapter.trim());
+		const hasManuscript = manuscript != null && (typeof manuscript !== 'string' || !!manuscript.trim());
+		if (!numbered && !hasManuscript) continue;
 		const orderValid = Number.isInteger(chapter) && chapter >= 1;
-		if (numbered) {
-			const message = '章节序号 chapter 应为正整数。';
-			checkedItems.push({file:path, subject:'章节的 chapter 序号', outcome:orderValid ? '正整数序号：' + chapter : message});
-			if (!orderValid) findings.push({severity:'warning', code:'chapter-order-invalid', file:path, message});
-		}
-		if (!numbered && !manuscript) continue;
+		const orderMessage = numbered ? '章节序号 chapter 应为正整数。' : '填写书稿链接后，应填写章节序号 chapter。';
+		checkedItems.push({file:path, subject:'章节的 chapter 序号', outcome:orderValid ? '正整数序号：' + chapter : orderMessage});
+		if (!orderValid) findings.push({severity:'warning', code:numbered ? 'chapter-order-invalid' : 'chapter-order-missing', file:path, message:orderMessage});
 		const subject = '章节的 manuscript 书稿链接';
+		if (!hasManuscript) {
+			const message = '填写章节序号后，应填写指向本库书稿页的 manuscript 链接。';
+			checkedItems.push({file:path, subject, outcome:message});
+			findings.push({severity:'warning', code:'chapter-manuscript-missing', file:path, message});
+			continue;
+		}
 		const target = localTarget(manuscript, path, context);
 		if (target === null) {
 			unverified++;

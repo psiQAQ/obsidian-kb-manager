@@ -79,7 +79,7 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 	await scan(root);
 	verifyDeclaration(spec,files.map(file=>file.name),folders);
 	return {id:spec.id??'folder',version:spec.version??await hash(JSON.stringify([spec,folders,sourceFiles])),files,folders,rootSlots,paths:spec.paths,excluded,
-		entry:spec.entry,overview:!!spec.managed?.length,suggestedExcludedFolders:spec.suggestedExcludedFolders,managedFiles:spec.managedFiles};
+		entry:spec.entry,overview:!!spec.managed?.length,suggestedExcludedFolders:spec.suggestedExcludedFolders,defaultExcludedFolders:spec.defaultExcludedFolders,managedFiles:spec.managedFiles};
 }
 export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,id:string=crypto.randomUUID()){
 	const location=await destination(ctx,input.parent,input.name,true);
@@ -102,7 +102,7 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,
 	const files=await previewInitialFiles({root:location,disk:ctx.disk,configDir:ctx.configDir},template.files);
 	assertCreationFilesTracked(template,files.map(file=>file.name));
 	const registryIgnore=await previewMobileRegistryIgnore(ctx);
-	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,checkKit,template.rootSlots,files.map(file=>file.name),
+	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.defaultExcludedFolders,template.entry,template.overview,checkKit,template.rootSlots,files.map(file=>file.name),
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
 	return {location,input,id,template,signature,registryIgnore,checkKit,initial:{files,author,origin,...options}};
 }

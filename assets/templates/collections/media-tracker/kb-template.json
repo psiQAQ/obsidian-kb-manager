@@ -1,6 +1,6 @@
 {
   "id": "media-tracker",
-  "version": "4",
+  "version": "5",
   "name": "媒体体验记录",
   "description": "统一记录书影音进度、评分、体验感想和合集。",
   "purpose": "collections",
@@ -41,7 +41,7 @@
   "checks": [
     {
       "id": "workflow",
-      "name": "媒体进度和评分",
+      "name": "媒体进度、评分和完成日期",
       "path": "checks/workflow.mjs"
     }
   ],

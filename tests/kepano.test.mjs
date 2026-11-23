@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import { createContext, runInContext } from 'node:vm';
 import { renderKepano, rebindKepano } from '../src/kb/kepano.ts';
 import { kepanoBindingAssets, kepanoTemplate } from '../src/kb/template-core.ts';
+import {declaration} from '../src/kb/template-declaration.ts';
 
 const dir = new URL('../assets/templates/collections/kepano/', import.meta.url);
 function entries(subdirectory = '') {
@@ -20,6 +21,14 @@ const destination = 'Collections/二号';
 const instance = root => Object.fromEntries(kepanoTemplate(skeleton, root).files.map(({name,bytes}) => [name, new TextDecoder().decode(bytes)]));
 const rendered = instance(previous);
 const moved = instance(destination);
+test('new Kepano libraries offer the Templates exclusion without selecting it', () => {
+	const template = kepanoTemplate(skeleton, previous);
+	assert.deepEqual(template.suggestedExcludedFolders, ['Templates']);
+	assert.deepEqual(template.defaultExcludedFolders, []);
+	assert.throws(() => declaration(JSON.stringify({
+		suggestedExcludedFolders:['Templates'],defaultExcludedFolders:['Other'],
+	})), /defaultExcludedFolders/u);
+});
 const metadata = (text, path) => parse(/^---\r?\n([\s\S]*?)\r?\n---/u.exec(text[path])[1]);
 
 test('built-in Kepano edition contains the pinned templates, categories, examples and MIT license', () => {

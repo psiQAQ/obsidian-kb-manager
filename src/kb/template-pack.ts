@@ -34,5 +34,5 @@ export function renderPack(id:string,vars:Variables):Template {
 		files.push({name,bytes:Uint8Array.from(atob(encoded),letter=>letter.charCodeAt(0))});
 	if(!files.some(file=>file.name==='.gitattributes'))files.push(builtinAttributesFile());
 	return {id,paths:descriptor.paths,version:descriptor.version,entry:descriptor.entry,files,folders:[...pack.folders],rootSlots,excluded:[],
-		suggestedExcludedFolders:descriptor.suggestedExcludedFolders,managedFiles:descriptor.managedFiles};
+		suggestedExcludedFolders:descriptor.suggestedExcludedFolders,defaultExcludedFolders:descriptor.defaultExcludedFolders,managedFiles:descriptor.managedFiles};
 }

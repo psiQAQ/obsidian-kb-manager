@@ -97,7 +97,7 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	else template.files.push({name:'.gitignore',bytes});
 	const checkKit=await addCreationCheckKit(template,digest);
 	const digests=Object.fromEntries(declaredTemplateFiles(template).map(file=>[file.name,digest(file.bytes)]));
-	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,checkKit,template.rootSlots,
+	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,template.defaultExcludedFolders,warnings,checkKit,template.rootSlots,
 		template.files.map(file=>[file.name,digest(file.bytes)]),digests]));
 	return {input,location,template,signature,warnings,checkKit,digests};
 }

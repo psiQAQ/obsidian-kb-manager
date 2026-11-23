@@ -78,6 +78,8 @@
 }
 ```
 
+`defaultExcludedFolders` 可指定建库预览中默认勾选的建议目录，省略时默认全选。比如 Kepano 提供 `Templates` 供勾选，同时设置 `"defaultExcludedFolders": []`，新库的模板浏览视图默认能列出模板。已有 Vault 的排除设置独立生效。
+
 `suggestedExcludedFolders` 是模板作者给 Obsidian 搜索与图谱的建议，每项是实例内实际存在的相对目录。可包括页面模板和辅助目录，例如用于保存生成器的 `Integrations`。字段缺省时没有建议。建库人可逐项取消，选中的目录写入实例 `kb.toml` 的 `[manager].excludedFolders`。
 
 `diagnosticExclusions` 记录本库检验中仍待插入或实例化的模板源。每条规则的 `checks` 至少指定一项，可选 `links`（链接）、`anchors`（锚点）、`portability`（可移植性）和 `bases`（Bases）。`files` 按完整文件路径匹配，`folders` 匹配该目录及其子目录中的文件，两者至少有一项包含路径。路径以实例根目录为起点，使用 `/` 并按实际大小写填写。路径不得使用绝对路径、`..` 或通配符。

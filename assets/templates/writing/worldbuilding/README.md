@@ -1,6 +1,6 @@
 # 世界观与时间线
 
-每类实体都有独立模板。先建地点和阵营，再填人物的 `home`、`faction`，给事件填 `location` 和 `participants`。关联属性使用本库双链。事件日期采用 `YYYY-MM-DD`，这样时间线能排序。
+每类实体都有独立模板。先建地点和阵营，再填人物的 `home`、`faction`，给事件填 `location` 和 `participants`。关联属性使用本库双链。事件的公历日期使用 `YYYY-MM-DD`。使用架空纪年时，可采用如「星历 42 年 6 月」的写法。
 
 启用 [Dataview](https://obsidian.md/plugins?id=dataview) 即可生成索引，无需 JavaScript 查询。示例 [驿站换班](./Events/驿站换班.md) 展示如何从事件走到地点和角色。
 

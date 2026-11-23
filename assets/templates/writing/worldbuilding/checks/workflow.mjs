@@ -11,6 +11,12 @@ function localTarget(value, file, { libraryRoot, links }) {
 	return null;
 }
 
+function gregorianDate(value) {
+	if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) return undefined;
+	const date = new Date(value + 'T00:00:00Z');
+	return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
 export default async function check(context) {
 	const { notes } = context;
 	const places = new Set(notes.filter(note => note.path.startsWith('Places/') && note.properties.type === 'world-place').map(note => note.path.replace(/\.md$/u, '')));
@@ -20,7 +26,15 @@ export default async function check(context) {
 	for (const {path, properties} of notes) {
 		if (!path.startsWith('Events/') || properties.type !== 'world-event') continue;
 		const { start, end, location } = properties;
-		if (typeof start === 'string' && typeof end === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(start) && /^\d{4}-\d{2}-\d{2}$/u.test(end)) {
+		const startValid = gregorianDate(start);
+		const endValid = gregorianDate(end);
+		for (const [field, value, valid] of [['start', start, startValid], ['end', end, endValid]]) {
+			if (valid === undefined) continue;
+			const message = `${field} 填写为 ${value}，该日期在公历中不存在。`;
+			checkedItems.push({file:path, subject:`事件的 ${field} 公历日期`, outcome:valid ? '日期有效：' + value : message});
+			if (!valid) findings.push({severity:'warning', code:'event-date-invalid', file:path, message});
+		}
+		if (startValid && endValid) {
 			const message = '事件结束日期早于开始日期。';
 			checkedItems.push({file:path, subject:'事件的 start 与 end 先后顺序', outcome:end < start ? message : `${start} 至 ${end}，顺序符合规则。`});
 			if (end < start) findings.push({severity:'warning', code:'event-date-order', file:path, message});

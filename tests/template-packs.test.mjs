@@ -513,3 +513,107 @@ test('explicit Templater actions respect their instance, preserve existing cours
 	await archive({ config:{ target_file:journalFile } }, app);
 	assert.equal(moved, `${root}/Notes/2026/待归档.md`);
 });
+
+test('the revised template checks retain trusted v4 scripts', () => {
+	const published = {
+		'knowledge-garden': '40f0d2a04f46f39cf18562461d8d4755243786891b46465df9b6c8d2a147401b',
+		'media-tracker': 'bc5bea045030cde26cd6a37f75331614c5a411c297a5ab4dbb6e7cf5becd9224',
+		manuscript: '36ecc4b50525c045c05986358bb6719554e81a561c7058f39488b1212aab58fe',
+		gtd: '916c536b38660c4f6f8c2b99a902912669de69a40cd94b23a106ac90d7b4ce00',
+		worldbuilding: '39c228000b86ea882db8694737b2c459f25ae444076cb8f958c3c334f11f8720',
+	};
+	for (const [id, digest] of Object.entries(published)) {
+		assert.equal(packs[id].descriptor.version, '5', id);
+		assert.ok(digests.includes(digest), id);
+	}
+});
+
+test('the garden warns when a page marked for sharing is itself private', async () => {
+	const inputs = [
+		{path:'Guides/拟分享的私有条目.md', properties:{type:'garden-note', publish_ready:true, visibility:'private'}},
+		{path:'Guides/拟分享的公开条目.md', properties:{type:'garden-note', publish_ready:true, visibility:'public'}},
+		{path:'Drafts/仅内部使用.md', properties:{type:'garden-note', publish_ready:false, visibility:'private'}},
+	];
+	const links = Object.fromEntries(inputs.map(note => [note.path,{complete:true,references:[]}]));
+	const result = await garden({notes:inputs,links});
+	assert.deepEqual(result.findings.map(({file,code,severity}) => [file,code,severity]), [
+		[inputs[0].path,'sharing-private-page','warning'],
+	]);
+	assert.equal(result.unverified, 0);
+});
+
+test('only completed media need a finished field for the annual summary', async () => {
+	const variants = [
+		['Media/没有日期.md',{status:'completed'}],
+		['Media/日期为空.md',{status:'completed',finished:''}],
+		['Media/日期是空白.md',{status:'completed',finished:'  '}],
+		['Media/已记日期.md',{status:'completed',finished:'2026-04-01'}],
+		['Media/仍在体验.md',{status:'active'}],
+	];
+	const result = await mediaTracker({notes:variants.map(([path, properties]) => ({
+		path, properties:{type:'media-item', ...properties},
+	}))});
+	assert.deepEqual(result.findings.map(({file,code}) => [file,code]),
+		variants.slice(0,3).map(([file]) => [file,'media-finished-missing']));
+	assert.deepEqual(result.checkedItems.map(({file}) => file), variants.slice(0,4).map(([file]) => file));
+});
+
+test('a manuscript chapter can leave both fields empty or fill both', async () => {
+	const variants = [
+		['草稿',{chapter:'',manuscript:null}],
+		['缺编号',{chapter:null,manuscript:'[[Manuscript/书稿]]'}],
+		['缺书稿',{chapter:2,manuscript:' '}],
+		['已编排',{chapter:1,manuscript:'[[Manuscript/书稿]]'}],
+	];
+	const result = await manuscript({notes:[
+		{path:'Manuscript/书稿.md',properties:{type:'manuscript'}},
+		...variants.map(([name, properties]) => ({path:'Manuscript/Chapters/'+name+'.md',properties:{type:'chapter',...properties}})),
+	]});
+	assert.deepEqual(result.findings.map(({file,code}) => [file,code]), [
+		['Manuscript/Chapters/缺编号.md','chapter-order-missing'],
+		['Manuscript/Chapters/缺书稿.md','chapter-manuscript-missing'],
+	]);
+	assert.ok(result.checkedItems.some(({file}) => file==='Manuscript/Chapters/已编排.md'));
+	assert.ok(result.checkedItems.every(({file}) => file!=='Manuscript/Chapters/草稿.md'));
+});
+
+test('GTD checks the folder and follow-up for waiting actions outside Actions too', async () => {
+	const variants = [
+		['Actions/项目/有效.md',{follow_up:'2028-02-29'}],
+		['Actions/日期无效.md',{follow_up:'2025-02-29'}],
+		['Inbox/原地转等待.md',{follow_up:'2026-04-01'}],
+		['Inbox/原地转等待且日期无效.md',{follow_up:'2025-04-31'}],
+		['Templates/等待.md',{}],
+		['Integrations/等待.md',{}],
+		['Actions/下一步.md',{status:'next'}],
+	];
+	const result = await gtd({notes:variants.map(([path,properties]) => ({
+		path, properties:{type:'gtd-action',status:'waiting',...properties},
+	}))});
+	assert.deepEqual(result.findings.map(({file,code}) => [file,code]), [
+		[variants[1][0],'waiting-follow-up-missing'],
+		[variants[2][0],'waiting-action-outside-actions'],
+		[variants[3][0],'waiting-action-outside-actions'],
+		[variants[3][0],'waiting-follow-up-missing'],
+	]);
+	assert.ok(result.checkedItems.some(({file}) => file===variants[0][0]));
+});
+
+test('worldbuilding checks Gregorian dates without applying a calendar to fictional dates', async () => {
+	const variants = [
+		['无效开始',{start:'2025-02-31',end:'2025-02-01'}],
+		['无效结束',{start:'星历 3 年 9 月',end:'2100-02-29'}],
+		['闰日',{start:'2000-02-29',end:'2000-03-01'}],
+		['架空纪年',{start:'星历 3 年 9 月',end:'星历 4 年 1 月'}],
+		['草案',{start:'',end:null}],
+	];
+	const result = await worldbuilding({notes:variants.map(([name,properties]) => ({
+		path:'Events/'+name+'.md',properties:{type:'world-event',...properties},
+	}))});
+	assert.deepEqual(result.findings.map(({file,code}) => [file,code]), [
+		['Events/无效开始.md','event-date-invalid'],
+		['Events/无效结束.md','event-date-invalid'],
+	]);
+	assert.ok(result.checkedItems.some(({file,subject}) => file==='Events/闰日.md' && subject.includes('先后顺序')));
+	assert.ok(result.checkedItems.every(({file}) => file!=='Events/架空纪年.md' && file!=='Events/草案.md'));
+});

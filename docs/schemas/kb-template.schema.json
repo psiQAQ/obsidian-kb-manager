@@ -48,6 +48,10 @@
     "suggestedExcludedFolders": {
       "$ref": "#/definitions/paths"
     },
+    "defaultExcludedFolders": {
+      "description": "Initially selected subset of suggestedExcludedFolders. Defaults to all suggestions.",
+      "$ref": "#/definitions/paths"
+    },
     "diagnosticExclusions": {
       "description": "Skip selected diagnostic checks on the named files or folder descendants in the instance.",
       "type": "array",

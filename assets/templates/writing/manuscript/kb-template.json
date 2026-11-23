@@ -1,6 +1,6 @@
 {
   "id": "manuscript",
-  "version": "4",
+  "version": "5",
   "name": "长篇书稿",
   "description": "一部书稿一个大纲，通过独立章节撰写和修订。",
   "purpose": "writing",

@@ -16,6 +16,7 @@ export interface Declaration extends TemplateRequirements {
 	id?:string; version?:string; name?:string; description?:string; purpose?:string; purposes?:string[];
 	entry?:string; pageTemplates?:string[]; sources?:TemplateSource[];
 	suggestedExcludedFolders?:string[];
+	defaultExcludedFolders?:string[];
 	diagnosticExclusions?:DiagnosticExclusion[];
 	paths?:Record<string,string>; variables?:Record<string,string|number|boolean>; managed?:string[]; hidden?:string[]; text?:Record<string,string[]>; checks?:CheckDeclaration[];
 }
@@ -68,7 +69,7 @@ export function declaration(raw:string):Declaration {
 	if(!object(data))bad('kb-template.json');
 	if('protocolVersion' in data && data.protocolVersion!==1)
 		throw new Error(tr('不支持该模板协议，请检查管理器版本。','Unsupported template protocol. Check your manager version.')+' · '+String(data.protocolVersion));
-	for(const name of Object.keys(data))if(!['$schema','protocolVersion','minManagerVersion','managedFiles','id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks','suggestedExcludedFolders','diagnosticExclusions'].includes(name))bad(name);
+	for(const name of Object.keys(data))if(!['$schema','protocolVersion','minManagerVersion','managedFiles','id','version','name','description','purpose','purposes','entry','pageTemplates','dependencies','sources','paths','variables','managed','hidden','text','checks','suggestedExcludedFolders','defaultExcludedFolders','diagnosticExclusions'].includes(name))bad(name);
 	if('$schema' in data && typeof data.$schema!=='string')bad('$schema');
 	if('minManagerVersion' in data && !validMinimum(data.minManagerVersion))bad('minManagerVersion');
 	if('managedFiles' in data){
@@ -98,6 +99,11 @@ export function declaration(raw:string):Declaration {
 	for(const name of ['purposes','pageTemplates','hidden'])if(name in data && !strings(data[name]))bad(name);
 	for(const folder of (data.pageTemplates??[]) as string[])segments(folder);
 	if('suggestedExcludedFolders' in data)exclusionFolders(data.suggestedExcludedFolders,'suggestedExcludedFolders');
+	if('defaultExcludedFolders' in data){
+		const defaults=exclusionFolders(data.defaultExcludedFolders,'defaultExcludedFolders');
+		const suggested=Array.isArray(data.suggestedExcludedFolders)?data.suggestedExcludedFolders:[];
+		if(defaults.some(folder=>!suggested.includes(folder)))bad('defaultExcludedFolders');
+	}
 	if('diagnosticExclusions' in data)validateDiagnosticExclusions(data.diagnosticExclusions);
 	if([data.purpose,...(data.purposes??[]) as string[]].some(value=>value!==undefined && (typeof value!=='string' || !slug.test(value))))bad('purpose');
 	if(data.managed!==undefined && (!strings(data.managed) || data.managed.length!==1 || data.managed[0]!=='knowledge.base:overview-bindings'))bad('managed');
