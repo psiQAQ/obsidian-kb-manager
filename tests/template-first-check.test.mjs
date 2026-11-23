@@ -143,8 +143,9 @@ test('first general and specialized checks find no errors in newly created libra
 				check.checkedItems.reduce((total,item) => total + (item.count ?? 1),0)));
 			if (id !== 'llm-wiki') return;
 
-			assert.ok(links.diagnostics.some(row => row.file === categoryTemplate &&
-				row.code === 'template-link-deferred' && row.severity === 'info'));
+			assert.deepEqual(links.templateExcludedSources.filter(row => row.file === categoryTemplate),
+				[{file:categoryTemplate,matches:['files:'+categoryTemplate]}]);
+			assert.ok(!links.diagnostics.some(row => row.file === categoryTemplate));
 			const templatePath = path.join(libraryRoot,categoryTemplate);
 			const original = await fs.readFile(templatePath,'utf8');
 			const inserted = insertTemplate('',original,0,'实际分类',() => '2026-11-21');
@@ -160,7 +161,7 @@ test('first general and specialized checks find no errors in newly created libra
 			await fs.appendFile(templatePath,'\n![[../缺失附件.png]]\n');
 			const changed = (await run()).checks.find(check => check.id === 'links').diagnostics;
 			assert.deepEqual(changed.filter(row => row.severity === 'error').map(({file,code}) => [file,code]),[
-				[categoryTemplate,'missing-attachment'],[page,'missing-attachment'],
+				[page,'missing-attachment'],
 			]);
 			assert.ok(changed.some(row => row.file === page && row.evidence === wrongBase));
 		});
