@@ -57,7 +57,7 @@ export function cloneWizard(plugin:KnowledgeBaseManager,owner:Window=activeWindo
 			files.createEl('summary',{text:t('下载的文件','Downloaded files')+' ('+clone.files.length+')'});
 			dialogContents(files).lines(clone.files);
 			if(clone.tracked)preview.lines([t('远端跟踪 kb.toml。Git 历史和暂存区将保留；导入后若要同步，请先在 Git 中将清单取消跟踪。','The remote tracks kb.toml. Git history and the index are retained. Untrack the manifest in Git before syncing.')]);
-			preview.lines([t('导入后可从“检验”检查链接与可移植性。恢复原清单时可按原记录复核受管路径；按新库接管时请核对旧链接。','After import, use Check library to check links and portability. The original manifest supplies binding records. Review existing links when adopting a new identity.')]);
+			preview.lines([t('导入后可在“检验”中检查链接、Bases 和可移植性。若新库的目录与原库不同，请核对筛选和嵌入是否仍指向本库。','After import, run the link, Bases and portability checks. If the library path changed, verify that filters and embeds still point to this library.')]);
 			const publish=async(choice?:CloneManifestChoice)=>{
 				publishing=true;
 				try{

@@ -135,7 +135,7 @@ export function edit(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 export async function maintainBindings(plugin:KnowledgeBaseManager,lib:Library,owner:Window=activeWindow) {
 	const library=await recheck(plugin.disk,plugin.config,lib);
 	const originals=new Map<string,string>();
-	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library),library.location,originals);
+	const {manual,repairs}=await examineBindings(plugin.disk,library,plugin.templateAssets(library),library.location,originals,'legacy');
 	const dialog=new Dialog(plugin.app,tr('维护受管文件','Maintain managed files'),owner);
 	dialog.facts([[tr('知识库','Library'),library.location]]);
 	if(manual.length)dialog.lines(manual);
@@ -263,14 +263,10 @@ export function move(plugin:KnowledgeBaseManager,lib:Library,owner:Window=active
 			const fresh=await planMove(plugin.disk,plugin.config,lib,target,targetName,skeleton,store);
 			const stale=()=>new Error(tr('预览已变化，请重新预览',"Preview has changed. Open a new preview."));
 			if(JSON.stringify({...fresh,token:plan.token})!==JSON.stringify(plan))throw stale();
-			if(selected.length){
-				if(!await moveReferencesMatch(plugin,fresh,selected))throw stale();
-				const openEditors=openMoveEditors(plugin);
-				for(const edit of selected){
-					const file=plugin.app.vault.getFileByPath(edit.file);
-					const editors=file ? openEditors.get(file) : undefined;
-					if(editors?.length)verifyMoveEditors(edit.file,await readMoveReference(plugin.disk,edit.file),editors);
-				}
+			if(selected.length && !await moveReferencesMatch(plugin,fresh,selected))throw stale();
+			const affected=new Set([...selected.map(edit=>edit.file),...fresh.changes.map(change=>fresh.source+'/'+change.file)]);
+			for(const [file,editors] of openMoveEditors(plugin)){
+				if(affected.has(file.path) && editors.length)verifyMoveEditors(file.path,await readMoveReference(plugin.disk,file.path),editors);
 			}
 			await plugin.disk.registry.assertWritable();
 			const record={...plan,references:selected};

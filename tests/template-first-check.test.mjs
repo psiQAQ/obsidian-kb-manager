@@ -127,9 +127,13 @@ test('first general and specialized checks find no errors in newly created libra
 			assert.deepEqual(report.checks.flatMap(check => check.diagnostics.filter(row => row.severity === 'error')),[]);
 			const byId = new Map(report.checks.map(check => [check.id,check]));
 			assert.equal(byId.get('manifest').status,'passed');
-			for (const check of ['properties','links','bases','bindings','portability']) {
+			for (const check of ['properties','links','bases','portability']) {
 				assert.ok(byId.get(check).coverage.checked > 0,`${id}: ${check} had no checked items`);
 			}
+			const bindings = byId.get('bindings');
+			assert.equal(bindings.coverage.checked,library.identity.managed.length);
+			assert.deepEqual((bindings.checkedItems ?? []).map(item=>item.file).sort(),
+				library.identity.managed.map(item=>item.path).sort());
 			const links = byId.get('links');
 			assert.equal(links.coverage.unknown,0,JSON.stringify(links.diagnostics));
 			assert.ok(report.logPath,report.logError);

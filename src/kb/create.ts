@@ -17,7 +17,7 @@ import type { InitialConfig, InitialDraft, InitialPreview } from '../git/initial
 import { discover, identityFile, newIdentity, readManifest, recheck, withLibraryIgnores, writeCheckKit, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
 import type { CheckKitRecord, Config, Library } from './catalog.ts';
 import { addCreationCheckKit, assertCreationFilesTracked } from './check-kit-creation.ts';
-import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate, kepanoBinding } from './template.ts';
+import { builtinTemplate, folderTemplate, kepanoSource, kepanoTemplate } from './template.ts';
 import type { Template } from './template.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { registerVaultLibrary, validateLibraryLocation } from '../registry/discovery.ts';
@@ -97,12 +97,12 @@ async function describeCreation(disk: VaultDisk, config: Config, input: CreateIn
 	else template.files.push({name:'.gitignore',bytes});
 	const checkKit=await addCreationCheckKit(template,digest);
 	const digests=Object.fromEntries(declaredTemplateFiles(template).map(file=>[file.name,digest(file.bytes)]));
-	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,checkKit,
+	const signature = digest(JSON.stringify([input,template.id,template.version,template.overview,template.entry,template.folders,template.excluded,template.suggestedExcludedFolders,warnings,checkKit,template.rootSlots,
 		template.files.map(file=>[file.name,digest(file.bytes)]),digests]));
 	return {input,location,template,signature,warnings,checkKit,digests};
 }
 
-async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,skeleton:Record<string,string>,excludedFolders?:string[]){
+async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof describeCreation>>,excludedFolders?:string[]){
 	const {template,input,location}=creation;
 	const manifest=newIdentity(input.displayName,input.description,{id:template.id,version:template.version},template.entry);
 	manifest.schemaVersion=2;
@@ -121,11 +121,6 @@ async function writeTemplate(dir:string,creation:Awaited<ReturnType<typeof descr
 		const offsets=template.rootSlots?.[file.name];
 		if(offsets?.length){
 			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'template-root',offsets});
-		}else if(input.source===kepanoSource && kepanoBinding(skeleton,file.name)){
-			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,role:'kepano-bindings'});
-		}else if((!input.source || template.overview) && file.name==='knowledge.base'){
-			manifest.managed.push({path:file.name,fingerprint:digest(file.bytes),root:location,
-				role:input.source?'overview-bindings':undefined});
 		}
 	}
 	let raw=writeCheckKit(writeIdentity(original || instanceManifestSeed(template),manifest),creation.checkKit);
@@ -151,7 +146,7 @@ export async function previewCreate(disk: VaultDisk, config: Config, input: Crea
 	const temporary=await fs.mkdtemp(path.join(await fs.realpath(disk.root),'.kb-preview-'));
 	const owned=await fs.lstat(temporary,{bigint:true});
 	try{
-		await writeTemplate(temporary,creation,skeleton);
+		await writeTemplate(temporary,creation);
 		const git=await previewInitialRepository(temporary,creationPaths(creation.template),gitConfig);
 		assertCreationFilesTracked(creation.template,git.staged);
 		return {...creation,gitConfig,git};
@@ -175,7 +170,7 @@ export async function createLibrary(disk: VaultDisk, config: Config, preview: Cr
 	const {template,location}=fresh,paths=creationPaths(template);
 	let receipt:CreationReceipt|undefined;
 	try {
-		const owned=await fs.lstat(temporary,{bigint:true}),written=await writeTemplate(temporary,fresh,skeleton,confirmedFolders);
+		const owned=await fs.lstat(temporary,{bigint:true}),written=await writeTemplate(temporary,fresh,confirmedFolders);
 		const git=await previewInitialRepository(temporary,paths,gitConfig);
 		if(JSON.stringify(git)!==JSON.stringify(preview.git))
 			throw new Error(tr('首提交内容已变化，请重新预览。','Initial commit contents changed. Preview again.'));

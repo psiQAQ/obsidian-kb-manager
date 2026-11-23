@@ -6,6 +6,7 @@ import {templateCompatibility} from './template-requirements.ts';
 import type {TemplateHost} from './template-requirements.ts';
 export { declaration } from './template-declaration.ts';
 import { renderKepano } from './kepano.ts';
+import {literalRootOffsets,opaqueRootOffsets} from './path-binding-ownership.ts';
 import { parseDocument, isScalar } from 'yaml';
 
 export interface TemplateFile { name: string; bytes: Uint8Array }
@@ -44,7 +45,7 @@ export function isBuiltinWiki(template?:TemplateIdentity) {
 export function sharedTemplateKind(template:TemplateIdentity):BuiltinKind|undefined {
 	return template.version === '2' && (template.id === 'llm-wiki' || template.id === 'kepano') ? template.id : undefined;
 }
-export function kepanoBindingAssets(skeleton:Record<string,string>, version:string) {
+export function kepanoBindingAssets(skeleton:Record<string,string>, version:string):Record<string,string> {
 	const historical = skeleton['README.v' + version + '.md'];
 	// Existing instances still bind the original Markdown paths and Base expressions.
 	const previousBindings = /^[1-6]$/u.test(version) && skeleton['Bindings.v6.json']
@@ -71,10 +72,19 @@ export function kepanoTemplate(skeleton:Record<string,string>, root:string):Temp
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
 	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^(?:README\.v[12]\.md|Bindings\.v[568]\.json)$/u.test(name)));
-	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => ({name,bytes:new TextEncoder().encode(bundledText(name,text))}));
+	const rootSlots:Record<string,number[]>={};
+	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => {
+		const content=bundledText(name,text);
+		if(kepanoBinding(assets,name)){
+			const offsets=literalRootOffsets(bundledText(name,assets[name]!),'__KB_ROOT__');
+			const opaque=opaqueRootOffsets(name,content,offsets,root);
+			if(opaque.length)rootSlots[name]=opaque;
+		}
+		return {name,bytes:new TextEncoder().encode(content)};
+	});
 	files.push(builtinAttributesFile());
 	const {suggestedExcludedFolders,managedFiles}=skeleton['kb-template.json']?declaration(skeleton['kb-template.json']):{};
-	return {id:'kepano',version:kepanoVersion,entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders,managedFiles};
+	return {id:'kepano',version:kepanoVersion,entry:'README.md',files,folders:[],excluded:[],suggestedExcludedFolders,managedFiles,rootSlots};
 }
 
 export function renderBase(source: string, root: string): string {

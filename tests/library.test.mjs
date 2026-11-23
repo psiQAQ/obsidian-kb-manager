@@ -289,7 +289,7 @@ test('declared template fields, legacy opt-in and snapshot nanoseconds',async t=
 	const preview=await previewCreate(disk,config,{...input,source:'样板'},skeleton);
 	await createLibrary(disk,config,preview,skeleton);
 	const [custom]=await discover(disk,config);
-	assert.equal(custom.identity.managed[0].role,'overview-bindings');
+	assert.deepEqual(custom.identity.managed,[]);
 	assert.match(await fs.readFile(await disk.path(custom.location+'/README.md'),'utf8'),/^光学 \{\{date:YYYY-MM-DD\}\}\n\n## 检验本库\n/u);
 	const customRoot=await disk.path(custom.location);
 	const git=(...args)=>execFileSync('git',['-C',customRoot,...args]).toString().trim();

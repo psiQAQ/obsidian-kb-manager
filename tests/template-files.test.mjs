@@ -131,7 +131,7 @@ test('Kepano restoration binds bundled links while insertion preserves edits to 
 	assert.equal(files.get(actor.path), actor.content);
 	const v2 = { ...identity, template: { id: 'kepano', version: '2' } };
 	const bindings = await restoredTemplateBindings(v2, [actor], root, kepano, async () => 'hash');
-	assert.deepEqual(bindings, [{ path: actor.bundledPath, root, fingerprint: 'hash', role: 'kepano-bindings' }]);
+	assert.equal(bindings,undefined);
 	const old = historical[actor.bundledPath].replaceAll('__KB_ROOT__/', '')
 		.replace('[[References/Actors]]', '[[Private/Cast]]') + '\nOriginal user edit\n';
 	const inserted = bindSharedKepanoPage('Actor Template.md', old, root, historical);

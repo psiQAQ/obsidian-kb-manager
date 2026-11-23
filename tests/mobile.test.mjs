@@ -5,6 +5,7 @@ import {constants} from 'node:fs';
 import * as path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {parse as parseToml, stringify as stringifyToml} from 'smol-toml';
 import {createPreview,destination,instantiate,discoverMobile,newIdentity} from '../src/mobile/catalog.ts';
 import {parseIdentity,readManifest,writeIdentity,writePreferences} from '../src/kb/identity-core.ts';
 import {assignMobileCopyId,previewMobileRemoval,registerMobile,scanMobile,selectMobileManifest,verifyLibrary} from '../src/mobile/registration.ts';
@@ -411,12 +412,18 @@ test('mobile rebuilds a registry from a selected folder and rebinds only matchin
 	const {root,disk,ctx,dataPath,storage}=await setup(t),assets=await inputs(root);
 	const initial=await createPreview(ctx,{parent:'libs',name:'a',displayName:'Alpha',description:'',source:'builtin:kepano',author},assets);
 	const {identity}=await instantiate(ctx,initial,assets);
+	// Older Kepano manifests tracked both the workflow page and the entire Base.
+	const scoped='Templates/Bases/Books.base',changed='Templates/Book Template.md';
+	const raw=parseToml(await disk.read('libs/a/kb.toml'));
+	raw.manager.managed=await Promise.all([scoped,changed].map(async path=>({
+		path,role:'kepano-bindings',root:'libs/a',
+		fingerprint:createHash('sha256').update(await disk.read('libs/a/'+path)).digest('hex'),
+	})));
+	await disk.write('libs/a/kb.toml',stringifyToml(raw));
 	await disk.mkdir('incoming');
 	await disk.rename('libs/a','incoming/moved');
 	assert.equal((await discoverMobile(ctx))[0].missing,true);
 	assert.deepEqual((await storage.load()).registeredLibraries,['libs/a']);
-	const scoped='Templates/Bases/Books.base';
-	const changed=identity.managed.find(item=>item.path!==scoped).path;
 	const home=await disk.read('incoming/moved/README.md');
 	const changedPath='incoming/moved/'+changed,edited=await disk.read(changedPath)+'\nUser edit\n';
 	await disk.write(changedPath,edited);

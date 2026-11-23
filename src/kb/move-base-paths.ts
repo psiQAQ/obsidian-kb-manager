@@ -1,10 +1,11 @@
+import { parseDocument } from 'yaml';
+import { fencedBlocks } from '../diagnostics/fences.ts';
 import { segments } from '../fs/segments.ts';
 import { key } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { sameOrBelow } from '../registry/paths.ts';
 import { scanBasePathFilters, scanBasePaths } from './base-paths.ts';
 import type { BasePathFilter, BasePathReference } from './base-paths.ts';
-import type { Library } from './catalog.ts';
 
 interface Scope { source: string; destination: string }
 export interface MoveBaseToken { offset: number; original: string }
@@ -15,14 +16,7 @@ export interface MoveBaseField {
 	before: string;
 	after: string;
 	replacement: string;
-}
-
-export type BaseFieldOwner = Pick<Library,'location'|'identity'|'templateFiles'>;
-export function managedBaseFile(owner: BaseFieldOwner | undefined, file: string) {
-	if (!owner) return false;
-	const matches=(relative:string)=>key(owner.location+'/'+relative)===key(file);
-	return (owner.identity?.managed.some(binding=>matches(binding.path)) ?? false) ||
-		Object.keys(owner.templateFiles?.digests ?? {}).some(matches);
+	link?: {path:string; subpath:string};
 }
 
 function isVaultPath(value: string) {
@@ -55,7 +49,8 @@ function managedPathUpdates(before: BasePathFilter[], after: BasePathFilter[], s
 	return covered;
 }
 
-export function moveBaseFields(text: string, file: string, scope: Scope, managed: boolean, managedAfter?: string) {
+export function moveBaseFields(text: string, file: string, scope: Scope, managed: boolean, managedAfter?: string,
+	allowOrdinary=false) {
 	const extension=file.toLowerCase().endsWith('.base') ? 'base' : 'md';
 	const inside=sameOrBelow(file,scope.source);
 	const escaped=scope.source.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
@@ -68,6 +63,11 @@ export function moveBaseFields(text: string, file: string, scope: Scope, managed
 	const references=filters.flatMap(filter=>filter.references);
 	const covered=managed && managedAfter!==undefined
 		? managedPathUpdates(filters,scanBasePathFilters(managedAfter,extension),scope) : undefined;
+	const sections=extension==='base' ? [{line:1,source:text}] : fencedBlocks(text,true).filter(block=>block.language==='base');
+	for (const {line,source} of sections) {
+		if (!inside && ![...source.matchAll(mentionsSource)].length) continue;
+		if (parseDocument(source).errors.length) manual.push(tr('行','Line')+' '+line+' · '+tr('Base YAML 无法解析','Base YAML could not be parsed'));
+	}
 	for (const filter of filters) {
 		const mentions=[...filter.expression.matchAll(mentionsSource)].length;
 		const known=filter.references.filter(ref=>ref.argument && sourceSpelling(ref.argument.value)).length;
@@ -82,19 +82,25 @@ export function moveBaseFields(text: string, file: string, scope: Scope, managed
 			continue;
 		}
 		const {value,start,end,replace}=argument;
-		if (!sameOrBelow(value,scope.source)) {
-			if (sourceSpelling(value)) review(tr('检查 Base 路径拼写','Review the Base path spelling'));
+		const hash=match.kind==='link' ? value.indexOf('#') : -1;
+		const path=hash===-1 ? value : value.slice(0,hash);
+		const link=match.kind==='link' ? {path,subpath:hash===-1 ? '' : value.slice(hash)} : undefined;
+		if (!sameOrBelow(path,scope.source)) {
+			if (sourceSpelling(path) || (inside && link && !path.includes('/')))
+				review(tr('检查 Base 路径拼写','Review the Base path spelling'));
 			continue;
 		}
 		if (match.kind==='startsWith' && value===scope.source) {
 			review(tr('路径前缀缺少目录分隔符','The path prefix has no folder separator'));
 			continue;
 		}
-		if (managed) {
+		if (covered?.has(match)) continue;
+		if (managed && !allowOrdinary) {
 			if (!covered?.has(match)) review(tr('受管更新未覆盖此 Base 路径','The managed update does not cover this Base path'));
 			continue;
 		}
-		if (start===undefined || end===undefined || !replace || !isVaultPath(value)) {
+		if (start===undefined || end===undefined || !replace || !isVaultPath(path) ||
+			(link && (path===scope.source || /[#|[\]^\\]/u.test(scope.destination)))) {
 			review(tr('检查无法安全替换的 Base 路径','Review this Base path before replacing it'));
 			continue;
 		}
@@ -115,7 +121,7 @@ export function moveBaseFields(text: string, file: string, scope: Scope, managed
 				continue;
 			}
 		}
-		fields.push({token,field:match.field,location:location(match),before:value,after,replacement});
+		fields.push({token,field:match.field,location:location(match),before:value,after,replacement,...(link ? {link} : {})});
 	}
 	return {fields,manual};
 }

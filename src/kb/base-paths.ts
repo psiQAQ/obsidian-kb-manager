@@ -13,8 +13,8 @@ interface BasePathArgument {
 }
 
 export interface BasePathReference {
-	kind: 'inFolder' | 'startsWith';
-	receiver: 'file' | 'this.file';
+	kind: 'inFolder' | 'startsWith' | 'link';
+	receiver: 'file' | 'this.file' | 'link';
 	field: string;
 	expression: string;
 	line: number;
@@ -41,7 +41,7 @@ interface Token {
 
 type FilterRole = 'conjunct' | 'negated' | 'compound';
 
-const folderCall = /\b(?:inFolder|startsWith)\b/u;
+const pathCall = /\b(?:inFolder|startsWith|link)\b/u;
 const identifier = /[\p{ID_Continue}$]+/uy;
 const regexp = /\/(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\\\]\r\n])*\]|[^/[\\\r\n])+\/[a-z]*/iy;
 
@@ -123,7 +123,7 @@ function inspectExpression(source: string, expression: string, field: string, of
 	};
 	const references: BasePathReference[] = [];
 	const filter = {field,expression,...position(start),references};
-	if (!folderCall.test(expression)) return filter;
+	if (!pathCall.test(expression)) return filter;
 	const lexemes = tokens(expression);
 	const literal = aliased ? undefined : literalSource(source,start,end,style);
 	const spelling = literal && (literal.text === expression ? lexemes : tokens(literal.text));
@@ -135,13 +135,16 @@ function inspectExpression(source: string, expression: string, field: string, of
 		const token = lexemes[i]!;
 		if (lexemes[i - 1]?.text === '.') continue;
 		const receiver = token.text === 'this' && lexemes[i + 1]?.text === '.' && lexemes[i + 2]?.text === 'file' ? 'this.file'
-			: token.text === 'file' ? 'file' : undefined;
+			: token.text === 'file' || token.text === 'link' ? token.text : undefined;
 		if (!receiver) continue;
 		const member = i + (receiver === 'file' ? 1 : 3);
-		if (lexemes[member]?.text !== '.') continue;
 		let opening = member + 2;
 		let kind: BasePathReference['kind'];
-		if (lexemes[member + 1]?.text === 'inFolder') kind = 'inFolder';
+		if(receiver==='link'){
+			kind='link';
+			opening=i+1;
+		} else if(lexemes[member]?.text!=='.')continue;
+		else if (lexemes[member + 1]?.text === 'inFolder') kind = 'inFolder';
 		else if (lexemes[member + 1]?.text === 'path' && lexemes[opening]?.text === '.' && lexemes[opening + 1]?.text === 'startsWith') {
 			kind = 'startsWith';
 			opening += 2;
@@ -153,7 +156,7 @@ function inspectExpression(source: string, expression: string, field: string, of
 		if (first?.value !== undefined && lexemes[opening + 2]?.text === ')') {
 			reference.argument = {value:first.value,expressionStart:first.start,expressionEnd:first.end};
 			const negated = i === 1 && lexemes[0]?.text === '!';
-			if (lexemes.length === opening + 3 && (i === 0 || negated)) {
+			if (kind!=='link' && lexemes.length === opening + 3 && (i === 0 || negated)) {
 				reference.wholeFilter = true;
 				// A disjunction or multi-operand negation can change the scope of an exclusion.
 				if (role === 'conjunct' && negated || role === 'negated' && !negated) reference.exclusion = true;

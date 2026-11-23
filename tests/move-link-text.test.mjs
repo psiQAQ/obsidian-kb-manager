@@ -48,6 +48,8 @@ test('updates only Canvas file node targets while preserving layout, escapes and
 		.replace('"Books\\/A\\/photo.png"', '"New shelf/Topic/A2/photo.png"');
 	assert.equal(relocateCanvasReferences(canvas, source, destination), expected);
 	assert.equal(relocateCanvasReferences(expected, source, destination), expected);
+	for (const empty of ['{}','{"edges":[]}','{"nodes":[]}']) assert.equal(relocateCanvasReferences(empty,source,destination),empty);
 	assert.throws(() => relocateCanvasReferences('{bad}', source, destination));
+	assert.throws(() => relocateCanvasReferences('{"nodes":{}}', source, destination));
 	assert.throws(() => relocateCanvasReferences('{"nodes":[{"type":"file","file":"x","file":"Books/A/y"}]}', source, destination));
 });

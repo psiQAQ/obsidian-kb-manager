@@ -18,6 +18,40 @@ export function inlineDestination(text:string) {
 	return url === undefined ? undefined : destination(url);
 }
 
+function escapedLink(source:string,at:number){
+	let start=at;
+	while(start>0 && source[start-1]==='\\')start--;
+	return (at-start)%2!==0;
+}
+
+export function wikiDestinations(source:string) {
+	return [...source.matchAll(wikiPattern)].filter(match=>!escapedLink(source,match.index))
+		.map(match=>match[1]!.split(/[|#]/u)[0]!.trim());
+}
+
+export function markdownPathDestinations(body:string) {
+	const visible=prose(body.replace(/^\uFEFF/u,'').replace(/^(?: {0,3}>[ \t]?)+/gmu,''))
+		.replace(/%%[\s\S]*?(?:%%|$)|\$\$[\s\S]*?\$\$|(?<![\\\w$])\$[^$\n]+\$(?![\w$])|<%[\s\S]*?%>/gu,newlines)
+		.replace(/<(script|style|pre)\b[^>]*>[\s\S]*?(?:<\/\1[ \t]*>|$)/giu,newlines)
+		.replace(/^(?: {4}|\t).*$/gmu,'');
+	const definitions=new Map<string,string|undefined>();
+	const proseText=visible.replace(definition,(_match:string,label:string,url:string)=>{
+		const key=labelKey(label);
+		definitions.set(key,definitions.has(key)?undefined:destination(url));
+		return '';
+	});
+	const targets=wikiDestinations(proseText);
+	for(const match of proseText.matchAll(linkPattern)){
+		if(escapedLink(proseText,match.index))continue;
+		const raw=match[2]===undefined?definitions.get(labelKey(match[3] || match[1]!)):destination(match[2]);
+		if(!raw)continue;
+		const url=raw.split(/[?#]/u)[0]!;
+		try {targets.push(decodeURIComponent(url));}
+		catch { /* Keep the slot when its literal target cannot be parsed. */ }
+	}
+	return targets;
+}
+
 // Keep line positions for log records and link findings. Pair equal-length
 // backtick runs only; an unmatched run remains ordinary visible text.
 function removeCodeSpans(paragraph:string) {

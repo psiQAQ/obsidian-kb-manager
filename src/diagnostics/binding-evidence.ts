@@ -1,4 +1,5 @@
 import {posix} from 'node:path';
+import {classifyPathBinding} from '../kb/path-binding-ownership.ts';
 import {baseViewStatus} from './base-view.ts';
 import {bindingHistory} from './binding-history.ts';
 import {verifyBindingStructure} from './binding-structure.ts';
@@ -71,7 +72,8 @@ export async function bindingEvidence(options: EvidenceOptions, location: Locati
 	const libraryPath = identifiedVault ? relative : undefined;
 	const baseline = bindingHistory(root,identifiedVault ? vault : undefined,signal);
 	const bindings = [];
-	for (const binding of manifest.parsed?.identity?.managed ?? []) {
+	const identity=manifest.parsed?.identity;
+	for (const binding of identity?.managed ?? []) {
 		const {path,fingerprint,root: savedRoot} = binding;
 		const entry = {path,fingerprint,root:savedRoot};
 		try {
@@ -81,11 +83,14 @@ export async function bindingEvidence(options: EvidenceOptions, location: Locati
 			let evidence: string | undefined;
 			if (semantic) {
 				verification = digest === fingerprint ? 'verified' : 'unknown';
-				if (savedRoot && /\.(?:md|base)$/iu.test(path)) {
+				if (savedRoot && /\.(?:md|base|canvas)$/iu.test(path)) {
 					const previous = digest === fingerprint ? bytes : await baseline(path,fingerprint);
 					if (previous) {
+						const original=bindingDecoder.decode(previous);
+						const ownership=classifyPathBinding(binding,original,identity?.template);
+						if(ownership && !ownership.opaque)continue;
 						const scope = libraryPath ?? savedRoot;
-						const observed = await verifyBindingStructure(binding,bindingDecoder.decode(previous),bindingDecoder.decode(bytes),
+						const observed = await verifyBindingStructure(ownership?.opaque ?? binding,original,bindingDecoder.decode(bytes),
 							scope,libraryLink(root,scope,options,path));
 						if (observed.status !== 'unsupported') verification = observed.status;
 						evidence = observed.evidence;

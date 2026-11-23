@@ -1,18 +1,7 @@
-import {parseDocument,visit} from 'yaml';
-import {tr} from '../i18n.ts';
 import {validateKepanoRoot} from './kepano.ts';
+import {opaqueRootOffsets} from './path-binding-ownership.ts';
+import {applyRootPatches,rootPatches,singleQuotedScalars} from './path-binding-slots.ts';
 import type {Variables} from './template-core.ts';
-
-function singleQuotedScalars(source:string){
-	const doc=parseDocument(source);
-	if(doc.errors.length)throw new Error(doc.errors[0]?.message);
-	const scalars: {start:number;end:number;value:string}[]=[];
-	visit(doc,{Scalar(_,node){
-		if(node.type==='QUOTE_SINGLE' && node.range && typeof node.value==='string')
-			scalars.push({start:node.range[0],end:node.range[1],value:node.value});
-	}});
-	return scalars;
-}
 
 export function instanceText(file:string, source:string, fields:readonly string[], vars:Variables) {
 	const offsets:number[]=[];
@@ -38,22 +27,10 @@ export function instanceText(file:string, source:string, fields:readonly string[
 		}else content+=name==='kb_name'?vars.displayName:vars.description;
 		cursor=hit.index+hit[0].length;
 	}
-	return {content:content+source.slice(cursor),offsets};
+	content+=source.slice(cursor);
+	return {content,offsets:opaqueRootOffsets(file,content,offsets,vars.destination)};
 }
 
 export function rebindSlots(source:string, offsets:readonly number[], previous:string, destination:string, file='') {
-	validateKepanoRoot(destination);
-	const quoted=file.endsWith('.base') && (previous.includes("'") || destination.includes("'"))?singleQuotedScalars(source):[];
-	let cursor=0, content='', rootLength=0;
-	for(const offset of offsets){
-		const start=offset+rootLength;
-		const singleQuoted=quoted.some(range=>start>=range.start && start<range.end);
-		const old=singleQuoted?previous.replaceAll("'","''"):previous;
-		if(start<cursor || source.slice(start,start+old.length)!==old)
-			throw new Error(tr('声明的位置与文件内容不符，需人工核对','Declared positions differ from file contents. Review manually.'));
-		content+=source.slice(cursor,start)+(singleQuoted?destination.replaceAll("'","''"):destination);
-		cursor=start+old.length;
-		rootLength+=old.length;
-	}
-	return content+source.slice(cursor);
+	return applyRootPatches(source,rootPatches(source,offsets,previous,destination,file));
 }

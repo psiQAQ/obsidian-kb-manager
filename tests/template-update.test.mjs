@@ -3,7 +3,7 @@ import test from 'node:test';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { digest } from '../src/fs/vault.ts';
-import { discover, readManifest } from '../src/kb/catalog.ts';
+import { discover, readManifest, writeIdentity } from '../src/kb/catalog.ts';
 import { createLibrary, previewCreate } from '../src/kb/create.ts';
 import { initialIdentityDefaults } from '../src/git/initial.ts';
 import { applyTemplateUpdate, previewTemplateUpdate } from '../src/kb/template-update.ts';
@@ -50,6 +50,13 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(second.templateFiles.digests[card],digest(secondOriginal));
 	assert.notEqual(first.templateFiles.digests[card],second.templateFiles.digests[card]);
 	assert.ok(first.identity.managed.some(file=>file.path===removed));
+	assert.ok(!first.identity.managed.some(file=>file.path===card));
+	const currentManifest=await read(first,'kb.toml');
+	const legacyIdentity=readManifest(currentManifest).identity;
+	legacyIdentity.managed.push({path:card,root:first.location,role:'template-root',offsets:[firstOriginal.indexOf(first.location)],
+		fingerprint:digest(firstOriginal)});
+	await write(first,'kb.toml',writeIdentity(currentManifest,legacyIdentity));
+	const legacyLibrary=(await discover(disk,config)).find(lib=>lib.location===first.location);
 	await write(first,'自己的笔记.md',draft);
 	await write(second,card,secondOriginal+'我的批注\n');
 	await fs.unlink(await disk.path(second.location+'/'+legacy));
@@ -60,10 +67,11 @@ test('managed template updates render per instance and preserve edits, missing f
 	await fs.writeFile(path.join(sourceDir,legacy),'new release\n');
 	await fs.writeFile(path.join(sourceDir,added),'new file\n');
 	await fs.writeFile(path.join(sourceDir,reference),'new reference\n');
-	const plan=await previewTemplateUpdate(disk,config,first,source,host);
+	const plan=await previewTemplateUpdate(disk,config,legacyLibrary,source,host);
 	assert.deepEqual(Object.fromEntries(plan.files.map(file=>[file.path,file.change])),{[card]:'replace',[legacy]:'replace',[added]:'add',[reference]:'replace',[removed]:'retained'});
 	assert.equal(plan.canApply,true);
 	assert.equal(await read(first,card),firstOriginal);
+	assert.equal(readManifest(await read(first,'kb.toml')).identity.managed.some(file=>file.path===card),true);
 	await assert.rejects(applyTemplateUpdate(disk,config,plan,host,()=>{throw new Error('open editor has unsaved changes');}),/unsaved/u);
 	assert.equal(await read(first,card),firstOriginal);
 	await fs.writeFile(path.join(sourceDir,card),'external edit\n');
@@ -81,9 +89,7 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(after.templateFiles.digests[card],digest(await read(first,card)));
 	assert.equal(after.templateFiles.digests[removed],undefined);
 	assert.equal(after.identity.managed.some(file=>file.path===removed),false);
-	const binding=after.identity.managed.find(file=>file.path===card);
-	assert.deepEqual(binding.offsets,[updated.indexOf('{{kb_root}}')]);
-	assert.equal(binding.fingerprint,after.templateFiles.digests[card]);
+	assert.equal(after.identity.managed.some(file=>file.path===card),false);
 	const conflict=await previewTemplateUpdate(disk,config,second,source,host);
 	assert.deepEqual(Object.fromEntries(conflict.files.map(file=>[file.path,file.change])),{[card]:'conflict',[legacy]:'missing',[added]:'conflict',[reference]:'replace',[removed]:'retained'});
 	assert.equal(conflict.canApply,true);

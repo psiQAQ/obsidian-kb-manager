@@ -59,6 +59,7 @@ export function manifestForm(plugin:MobilePlugin,replace?:string){
 		if(replace)changeComparison(review.contentEl,[{label:tr('登记路径','Registered path'),before:replace,after:lib.location}]);
 		const lines=[...manifestLines(lib),
 			...related.map(entry=>tr('相同 ID · ','Same ID · ')+entry.location)];
+		if(lib.identity)lines.push(tr('路径不同时，请在登记后核对普通链接和 Base 路径。','If the library path changed, check ordinary links and Base paths after registration.'));
 		if(lib.identity && !related.length){
 			const plan=await previewBindings(plugin.ctx,lib.location,lib.location,lib.manifest!,plugin.templates.kepano);
 			if(plan.edits.length || plan.manual.length)lines.push(...bindingLines(plan),tr('可在登记后单独确认绑定修改','Review and confirm binding changes after registration'));

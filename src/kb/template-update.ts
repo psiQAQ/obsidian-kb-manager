@@ -8,11 +8,14 @@ import { tr } from '../i18n.ts';
 import { identityFile, readManifest, recheck, retireTemplateFiles, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
 import type { Config, Identity, Library } from './catalog.ts';
 import { instanceText } from './instance-text.ts';
+import {classifyLibraryBinding} from './maintenance.ts';
+import {classifyPathBinding,retirePathBindings} from './path-binding-ownership.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { declaration } from './template-declaration.ts';
 import { managedText, managedTextLimit } from './template-file-record.ts';
 import { templateCompatibility } from './template-requirements.ts';
 import type { TemplateHost } from './template-requirements.ts';
+import {renderBase} from './template-core.ts';
 
 function stale(name:string){
 	return new Error(tr('模板、清单或目标文件已变化，请重新预览。','The template, manifest or destination file changed. Preview again.')+' · '+name);
@@ -56,7 +59,7 @@ async function snapshot(disk:VaultDisk,root:string,file:string){
 type Change='current'|'add'|'replace'|'conflict'|'missing'|'retained'|'unavailable';
 interface FileUpdate {
 	path:string; change:Change; before?:string; after?:string; installed?:string; target?:string;
-	offsets?:number[]; reason?:string;
+	offsets?:number[]; retireBinding?:boolean; reason?:string;
 }
 
 function older(target:string,installed:string){
@@ -89,7 +92,8 @@ export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expecte
 	for(const path of names){
 		const original=await snapshot(disk,source,path);
 		if(original.text===undefined)throw new Error(tr('缺少声明的文件：','Missing declared file: ')+path);
-		const rendered=instanceText(path,original.text,spec.text?.[path] ?? [],vars);
+		const sourceText=path==='knowledge.base' && spec.managed?.length?renderBase(original.text,vars.destination):original.text;
+		const rendered=instanceText(path,sourceText,spec.text?.[path] ?? [],vars);
 		const after=rendered.content,target=digest(after);
 		managedText(path,new TextEncoder().encode(after));
 		const offsets=rendered.offsets.length?rendered.offsets:undefined;
@@ -97,8 +101,10 @@ export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expecte
 		const recorded=templateFiles.digests[path];
 		try {
 			const file=await snapshot(disk,library.location,path);
-			const base={path,before:file.text,after,installed:file.signature,target,offsets};
-			if(binding && (binding.role!=='template-root' || !offsets)){
+			const ownership=binding && file.text!==undefined && await classifyLibraryBinding(disk,library,binding,file.text);
+			const scans=ownership && !ownership.opaque;
+			const base={path,before:file.text,after,installed:file.signature,target,offsets,retireBinding:scans && !offsets ? true : undefined};
+			if(binding && !scans && (binding.role!=='template-root' || !offsets)){
 				files.push({...base,change:'conflict',reason:tr('路径绑定方式已变化。','The path binding has changed.')});
 			} else if(file.signature===undefined){
 				files.push({...base,change:recorded?'missing':'add'});
@@ -107,8 +113,9 @@ export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expecte
 			} else if(file.signature===target){
 				files.push({...base,change:'current'});
 			} else {
-				const original=binding?.fingerprint ?? recorded;
-				files.push({...base,change:file.signature===original?'replace':'conflict'});
+				// A path rebind can keep user edits and still refresh its own fingerprint.
+				// Only the recorded template version authorizes replacing the whole file.
+				files.push({...base,change:file.signature===recorded?'replace':'conflict'});
 			}
 		} catch(error) {files.push({path,change:'unavailable',after,target,offsets,reason:String(error)});}
 	}
@@ -167,18 +174,25 @@ export async function applyTemplateUpdate(disk:VaultDisk,config:Config,approved:
 		const seen=approved.files[index];
 		if(!seen || file.path!==seen.path || file.target!==seen.target || JSON.stringify(file.offsets)!==JSON.stringify(seen.offsets))return false;
 		// A previous interrupted apply may already have written an approved byte sequence.
-		if(file.installed===seen.target && seen.target!==undefined && (seen.change==='add' || seen.change==='replace'))return true;
-		return file.change===seen.change && file.installed===seen.installed;
+		if(file.installed===seen.target && seen.target!==undefined && (seen.change==='add' || seen.change==='replace')){
+			if(file.retireBinding===seen.retireBinding)return true;
+			const binding=fresh.library.identity?.managed.find(item=>item.path===file.path);
+			const proof=seen.retireBinding && binding && seen.before!==undefined && digest(seen.before)===binding.fingerprint &&
+				classifyPathBinding(binding,seen.before,fresh.library.identity?.template);
+			return !!proof && !proof.opaque;
+		}
+		return file.change===seen.change && file.installed===seen.installed && file.retireBinding===seen.retireBinding;
 	});
 	if(fresh.blockers.length || fresh.manifestSignature!==approved.manifestSignature || fresh.sourceSignature!==approved.sourceSignature || !sameFiles)
 		throw stale(location);
 	const manifest=await readManifestFile(await disk.path(location+'/'+identityFile));
 	if(manifest.signature!==approved.manifestSignature)throw stale(location);
+	const accepted=approved.files.filter(file=>file.change==='add' || file.change==='replace' || file.change==='current');
 	const retired=new Set(approved.files.filter(file=>file.change==='retained').map(file=>file.path));
-	const retainedManifest=retireTemplateFiles(manifest.raw,retired);
+	const retiredBindings=new Set(accepted.filter(file=>file.retireBinding).map(file=>file.path));
+	const retainedManifest=retirePathBindings(retireTemplateFiles(manifest.raw,retired),retiredBindings);
 	const {identity,templateFiles}=readManifest(retainedManifest);
 	if(!identity || !templateFiles)throw stale(location);
-	const accepted=approved.files.filter(file=>file.change==='add' || file.change==='replace' || file.change==='current');
 	const filesToWrite=fresh.files.filter(file=>file.change==='add' || file.change==='replace');
 	for(const file of filesToWrite)inspectEditor(location+'/'+file.path,file.before);
 	for(const file of accepted){

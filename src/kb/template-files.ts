@@ -5,7 +5,8 @@ import { compareRegistryPaths, registryKey, sameOrBelow } from '../registry/path
 import { renderKepano } from './kepano.ts';
 import type { Identity } from './identity-core.ts';
 import type { Mapping } from './mapping.ts';
-import { isKepano, kepanoBinding } from './template-core.ts';
+import {literalRootOffsets,opaqueRootOffsets} from './path-binding-ownership.ts';
+import { isKepano, kepanoBinding, kepanoBindingAssets } from './template-core.ts';
 import type { BuiltinKind } from './template-core.ts';
 
 export const libraryBoundaries = ['.git', 'kb.toml', 'kb-manager.json'];
@@ -159,11 +160,15 @@ export async function restoredTemplateBindings(identity: Identity, files: Preset
 	skeleton: Record<string, string>, hash: (content: string) => string | Promise<string>) {
 	if (!isKepano(identity.template)) return undefined;
 	const updates = new Map<string, Identity['managed'][number]>();
+	const assets=kepanoBindingAssets(skeleton,identity.template.version);
 	for (const { path, bundledPath, content } of files) {
-		if (path !== root + '/' + bundledPath || !kepanoBinding(skeleton, bundledPath)) continue;
+		if (path !== root + '/' + bundledPath || !kepanoBinding(assets, bundledPath)) continue;
 		const old = identity.managed.find(item => registryKey(item.path) === registryKey(bundledPath));
-		if (old && (old.path !== bundledPath || old.role !== 'kepano-bindings')) continue;
-		updates.set(bundledPath, { path: bundledPath, root, fingerprint: await hash(content), role: 'kepano-bindings' });
+		if (old && (old.path !== bundledPath || old.role !== 'kepano-bindings' && old.role !== 'template-root')) continue;
+		const source=assets[bundledPath]!;
+		if(source.replaceAll('__KB_ROOT__',root)!==content)continue;
+		const offsets=opaqueRootOffsets(bundledPath,content,literalRootOffsets(source,'__KB_ROOT__'),root);
+		if(offsets.length)updates.set(bundledPath,{path:bundledPath,root,fingerprint:await hash(content),role:'template-root',offsets});
 	}
 	if (!updates.size) return undefined;
 	const existing = identity.managed.map(item => {

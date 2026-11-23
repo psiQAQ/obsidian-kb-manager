@@ -9,7 +9,7 @@ import {assertUnreservedLibraryPath,libraryDestination,validateRegistryPath,vaul
 import {identityFile,readManifest,withLibraryIgnores,writeCheckKit,writeIdentity,writeTemplateFileRecord} from '../kb/identity-core.ts';
 import type {Identity} from '../kb/identity-core.ts';
 import {addCreationCheckKit,assertCreationFilesTracked} from '../kb/check-kit-creation.ts';
-import {builtinTemplate,kepanoSource,kepanoTemplate,kepanoBinding,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
+import {builtinTemplate,kepanoSource,kepanoTemplate,declaration,excludedNames,renderBase} from '../kb/template-core.ts';
 import type {Template,Variables} from '../kb/template-core.ts';
 import {buffer,bytes,checkSpelling,children,decode,ensureFolder,hash,key,relative} from './disk.ts';
 import {applyMobileRegistryIgnore,libraryPath,nested,previewMobileRegistryIgnore,readMobileRegistry,updateMobileRegistry} from './registration.ts';
@@ -66,13 +66,13 @@ async function directoryTemplate(ctx:Catalog,root:string,vars:Variables):Promise
 			if(key(name)===identityFile && (file!==identityFile || readManifest(decode(data)).identity))
 				throw new Error(tr('模板含知识库身份文件','Template contains a library identity')+': '+file);
 			sourceFiles.push(file+':'+await hash(data));
+			if(file==='knowledge.base' && spec.managed?.length)data=bytes(renderBase(decode(data),vars.destination));
 			const fields=spec.text?.[file];
 			if(fields){
 				const rendered=instanceText(file,decode(data),fields,vars);
 				data=bytes(rendered.content);
 				if(rendered.offsets.length)rootSlots[file]=rendered.offsets;
 			}
-			if(file==='knowledge.base' && spec.managed?.length)data=bytes(renderBase(decode(data),vars.destination));
 			files.push({name:file,bytes:data});
 		}
 	}
@@ -102,7 +102,7 @@ export async function createPreview(ctx:Catalog,input:Creation,assets:Templates,
 	const files=await previewInitialFiles({root:location,disk:ctx.disk,configDir:ctx.configDir},template.files);
 	assertCreationFilesTracked(template,files.map(file=>file.name));
 	const registryIgnore=await previewMobileRegistryIgnore(ctx);
-	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,checkKit,files.map(file=>file.name),
+	const signature=await hash(JSON.stringify([input,id,template.id,template.version,template.folders,template.excluded,template.suggestedExcludedFolders,template.entry,template.overview,checkKit,template.rootSlots,files.map(file=>file.name),
 		await Promise.all(template.files.map(async f=>[f.name,await hash(f.bytes)]))]));
 	return {location,input,id,template,signature,registryIgnore,checkKit,initial:{files,author,origin,...options}};
 }
@@ -169,10 +169,6 @@ export async function instantiate(ctx:Catalog,confirmed:Awaited<ReturnType<typeo
 	for(const file of template.files){
 		const offsets=template.rootSlots?.[file.name];
 		if(offsets?.length)identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:'template-root',offsets});
-		else if(input.source===kepanoSource && kepanoBinding(assets.kepano,file.name))
-			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:'kepano-bindings'});
-		else if((!input.source || template.overview) && file.name==='knowledge.base')
-			identity.managed.push({path:file.name,root:location,fingerprint:await hash(file.bytes),role:input.source?'overview-bindings':undefined});
 	}
 	const asset=template.files.find(file=>file.name===identityFile);
 	let manifest=writeCheckKit(writeIdentity(asset?decode(asset.bytes):instanceManifestSeed(template),identity),confirmed.checkKit);

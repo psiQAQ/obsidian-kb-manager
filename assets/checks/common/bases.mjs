@@ -65,12 +65,15 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 				continue;
 			}
 			const outcome = status === 'relative' ? tr('以 ./ 或 ../ 开头，不能按文件所在目录解析','Relative to the file rather than the vault root') :
+				kind === 'link' ? status === 'missing' ? tr('Vault 中未找到链接目标','Link target not found in the vault') : tr('Vault 中的链接目标存在','Link target exists in the vault') :
 				exclusion ? tr('目录不存在，排除条件未命中任何路径','The folder is absent, so the exclusion matches no paths') :
 					status === 'missing' ? tr('Vault 中未找到目录','Folder not found in the vault') : tr('Vault 中的目录存在','Folder exists in the vault');
 			recordChecked(check,file,field + ' · ' + expression,outcome + ' · ' + value,line);
 			if (status === 'relative') check.diagnostics.push({...position,severity:'warning',code:'base-path-relative',message:tr(
 				'Bases 路径以 Vault 根目录为基准。请检查 ./ 或 ../ 开头的路径。','Bases paths are relative to the vault root. Review the path beginning with ./ or ../.')});
-			if (status === 'missing' && !exclusion) check.diagnostics.push({...position,severity:'info',code:'base-path-missing-folder',message:kind === 'inFolder'
+			if (status === 'missing' && kind === 'link') check.diagnostics.push({...position,severity:'info',code:'base-link-missing-target',message:tr(
+				'Vault 中未找到过滤器链接的目标文件。','The file linked by the filter was not found in the vault.')});
+			else if (status === 'missing' && !exclusion) check.diagnostics.push({...position,severity:'info',code:'base-path-missing-folder',message:kind === 'inFolder'
 				? tr('Vault 中未找到过滤器指定的文件夹。','The folder used by the filter was not found in the vault.')
 				: tr('Vault 中未找到此前缀指向的文件夹。','The folder used as a path prefix was not found in the vault.')});
 		}

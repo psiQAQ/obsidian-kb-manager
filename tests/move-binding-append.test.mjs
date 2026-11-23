@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
+import test from 'node:test';
+import {digest} from '../src/fs/vault.ts';
+import {discover} from '../src/kb/catalog.ts';
+import {createLibrary,previewCreate} from '../src/kb/create.ts';
+import {executeMove,planMove} from '../src/kb/move.ts';
+import {referenceEdit} from '../src/kb/move-references.ts';
+import {previewTemplateUpdate} from '../src/kb/template-update.ts';
+import {vaultDisk} from './fixtures/vault-disk.mjs';
+
+test('move a mixed binding after independent prose was appended and verify the resumed plan',async t=>{
+	const workspace=path.resolve('.tmp');
+	await fs.mkdir(workspace,{recursive:true});
+	const root=await fs.mkdtemp(path.join(workspace,'move-binding-append-'));
+	t.after(async()=>{
+		assert.equal(path.dirname(root),workspace);
+		await fs.rm(root,{recursive:true,force:true});
+	});
+	const disk=vaultDisk(root,'.settings');
+	const source='Templates/Mixed', file='Mixed.md', pure='Script.md';
+	const config={parents:['Libraries'],templates:[source]};
+	await fs.mkdir(await disk.path(source),{recursive:true});
+	const read=async(relative)=>fs.readFile(await disk.path(relative),'utf8');
+	const write=async(relative,content)=>fs.writeFile(await disk.path(relative),content);
+	const install=async(version,mixed)=>{
+		await write(source+'/kb-template.json',JSON.stringify({protocolVersion:1,id:'mixed',version,managedFiles:[file],
+			text:{[file]:['kb_root'],[pure]:['kb_root']}}));
+		await write(source+'/'+file,mixed);
+	};
+	const script='```js\nconst root = "{{kb_root}}";\n```\n';
+	const template='# Test\n\n[[{{kb_root}}/Found]]\n\n'+script;
+	await install('1',template);
+	await write(source+'/'+pure,'# Script\n\n'+script);
+	await write(source+'/Found.md','# Found\n');
+	const preview=await previewCreate(disk,config,{parent:'Libraries',name:'New',source,displayName:'New',description:''},{});
+	await createLibrary(disk,config,preview,{});
+	const [library]=await discover(disk,config);
+	const relative=library.location+'/'+file, purePath=library.location+'/'+pure;
+	const baseline=await read(relative);
+	const appendix='\nUser appended an independent paragraph.\n\n作者保留的正文。\n';
+	const appended=baseline+appendix;
+	const originalBinding=library.identity.managed.find(binding=>binding.path===file);
+	assert.equal(originalBinding.offsets.length,1);
+	assert.equal(originalBinding.fingerprint,digest(baseline));
+	const plan=()=>planMove(disk,config,library,'Libraries','Relocated',{});
+	await write(relative,baseline+'User continued the existing block.\n');
+	assert.ok((await plan()).warnings.some(row=>row.includes(file)));
+	await write(relative,baseline+'\n[alias]: Other.md\n');
+	assert.ok((await plan()).warnings.some(row=>row.includes(file)));
+	await write(relative,baseline.replace('# Test','# Edited')+appendix);
+	assert.ok((await plan()).warnings.some(row=>row.includes(file)));
+	const pureAppended=await read(purePath)+appendix;
+	await write(purePath,pureAppended);
+	await write(relative,appended);
+	const move=await plan();
+	assert.ok(move.warnings.some(row=>row.includes(pure)));
+	assert.ok(!move.warnings.some(row=>row.includes(file)));
+	const repair=move.changes.find(item=>item.file===file);
+	assert.equal(repair.before,digest(appended));
+	assert.equal(repair.bindingBefore,digest(baseline));
+	const original='[['+library.location+'/Found]]';
+	move.references=[referenceEdit(relative,library,appended,move,{kind:'markdown',tokens:[{
+		offset:appended.indexOf(original),original,target:library.location+'/Found.md',
+	}]},repair)];
+	const visible={async replace(target,before,after){
+		assert.equal(digest(await read(target)),before);
+		await write(target,after);
+	}};
+	const edited={...move,changes:move.changes.map(item=>item===repair?{...item,bindingBefore:'0'.repeat(64)}:item)};
+	await assert.rejects(executeMove(disk,config,edited,visible,async()=>{}));
+	assert.equal(await read(relative),appended);
+	let saved;
+	const save=async record=>{saved=structuredClone(record);};
+	await assert.rejects(executeMove(disk,config,move,{replace:async()=>{throw new Error('interrupted write');}},save),/interrupted write/u);
+	assert.equal(saved.phase,'moved');
+	const movedPath=move.destination+'/'+file;
+	await write(movedPath,appended+'Edited during recovery.\n');
+	await assert.rejects(executeMove(disk,config,saved,visible,save));
+	await write(movedPath,appended);
+	await executeMove(disk,config,saved,visible,save);
+	assert.equal(saved.phase,'complete');
+	assert.equal(await read(movedPath),baseline.replaceAll(library.location,move.destination)+appendix);
+	assert.equal(await read(move.destination+'/'+pure),pureAppended);
+	const [moved]=await discover(disk,config);
+	assert.equal(moved.identity.managed.find(binding=>binding.path===file).fingerprint,digest(await read(movedPath)));
+	await install('2',template.replace('# Test','# Updated template'));
+	const update=await previewTemplateUpdate(disk,config,moved,source,{version:'3.4.0',pluginVersion:()=>undefined});
+	assert.equal(update.files.find(item=>item.path===file).change,'conflict');
+	assert.equal(await read(movedPath),baseline.replaceAll(library.location,move.destination)+appendix);
+});

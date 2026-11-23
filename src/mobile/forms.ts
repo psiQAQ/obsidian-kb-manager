@@ -134,6 +134,7 @@ export function cloneForm(plugin:MobilePlugin) {
 			const approved=await result.review(plugin.ctx,choice,plugin.templates.kepano),manifest=readManifest(approved.source);
 			confirm(plugin,tr('确认克隆','Confirm clone'),[result.location,address,result.branch,result.head,
 				manifest.identity!.displayName+' · '+manifest.identity!.id,...(manifest.identity!.entry?[manifest.identity!.entry]:[]),
+				tr('路径不同时，请在克隆后核对普通链接和 Base 路径。','If the library path changed, check ordinary links and Base paths after cloning.'),
 				...Object.entries(manifest.preferences).map(([key,value])=>'preferences.'+key+' = '+String(value)),
 				...bindingLines(approved.bindings),...registryIgnoreLines(approved.registryIgnore)],async()=>{
 				publishing=true;

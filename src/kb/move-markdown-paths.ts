@@ -1,7 +1,8 @@
 import {posix} from 'node:path';
-import {isScalar, parseDocument} from 'yaml';
+import {isMap, isNode, isScalar, isSeq, parseDocument} from 'yaml';
+import type {Node} from 'yaml';
 import type {Pos} from 'obsidian';
-import {moveVaultPath, relocateMarkdownReference} from './move-link-text.ts';
+import {moveVaultPath} from './move-link-text.ts';
 import type {MoveToken} from './move-references.ts';
 
 interface Scope { source: string; destination: string }
@@ -11,13 +12,13 @@ function exactTarget(path: string, target: string) {
 }
 
 export function keepsRelativeLinkTarget(path: string, from: string, target: string, scope: Scope) {
-	if (!/^\.\.?\//u.test(path) || /[\\%]/u.test(path)) return false;
+	if (!path || /[\\]/u.test(path)) return false;
 	const relativeTo=(file:string)=>posix.normalize(posix.join(posix.dirname(file),path));
 	const moved=(file:string)=>moveVaultPath(file,scope.source,scope.destination);
 	return exactTarget(relativeTo(from),target) && exactTarget(relativeTo(moved(from)),moved(target));
 }
 
-export function movePropertyValues(text: string) {
+export function moveProperties(text: string) {
 	const header=/^\uFEFF?---[ \t]*\r?\n/u.exec(text);
 	if (!header) return;
 	const body=text.slice(header[0].length);
@@ -25,39 +26,58 @@ export function movePropertyValues(text: string) {
 	if (!end) return;
 	const yaml=parseDocument(body.slice(0,end.index));
 	if (yaml.errors.length) return;
-	return (key:string)=>{
-		const parts=key.split('.');
-		const entry=yaml.getIn(parts,true);
-		return isScalar(entry) && typeof entry.value==='string' ? entry.value : undefined;
+	const bodyStart=header[0].length;
+	const fields=new Map<string,{value:string; offset:number; raw:string; encode:(value:string)=>string}|undefined>();
+	function walk(node:Node, key:string) {
+		if ('anchor' in node && node.anchor || node.tag) return;
+		if (isMap(node)) {
+			for (const pair of node.items) {
+				if (!isScalar(pair.key) || typeof pair.key.value!=='string' || !isNode(pair.value)) continue;
+				walk(pair.value,key ? key+'.'+pair.key.value : pair.key.value);
+			}
+		} else if (isSeq(node)) {
+			for (const [index,item] of node.items.entries()) if (isNode(item)) walk(item,key+'.'+index);
+		} else if (isScalar(node) && node.range && typeof node.value==='string') {
+			const [start,end]=node.range;
+			const encode=node.type==='QUOTE_SINGLE' ? (value:string)=>value.replaceAll("'","''") :
+				node.type==='QUOTE_DOUBLE' ? (value:string)=>JSON.stringify(value).slice(1,-1) : (value:string)=>value;
+			fields.set(key,fields.has(key) ? undefined : {
+				value:node.value,offset:bodyStart+start,raw:body.slice(start,end),encode,
+			});
+		}
+	}
+	if (yaml.contents) walk(yaml.contents,'');
+	return fields;
+}
+
+export function movePropertyTokens(properties: ReturnType<typeof moveProperties>, key:string, original:string, target:string): MoveToken[] {
+	const property=properties?.get(key);
+	if (!property || !/^\[\[[^\r\n]*\]\]$/u.test(original)) return [];
+	const raw=property.encode(original);
+	const occurrences=(text:string, token:string)=>{
+		const offsets:number[]=[];
+		for (let start=0; ; ) {
+			const index=text.indexOf(token,start);
+			if (index===-1) return offsets;
+			offsets.push(index);
+			start=index+token.length;
+		}
 	};
+	const offsets=occurrences(property.raw,raw);
+	if (offsets.length!==occurrences(property.value,original).length) return [];
+	return offsets.map(offset=>({offset:property.offset+offset,original:raw,target,property:{key,link:original}}));
 }
 
-export function movePropertyToken(value: string | undefined, original: string) {
-	if (!value || !/^\[\[[^\r\n]*\]\]$/u.test(original)) return false;
-	const index=value.indexOf(original);
-	return index!==-1 && value.indexOf(original,index+original.length)===-1;
-}
-
-export function managedPropertyTarget(before: string | undefined, after: string | undefined, original: string,
-	path: string, file: string, target: string, scope: Scope) {
-	if (!movePropertyToken(before,original) || before===undefined || !after) return false;
-	const replacement=relocateMarkdownReference(original,file,target,scope.source,scope.destination);
-	if (!replacement || replacement===original || after!==before.replace(original,()=>replacement)) return false;
-	const next=replacement.slice(2,-2).split(/#|\|/u)[0]!;
-	const moved=moveVaultPath(target,scope.source,scope.destination);
-	return path.includes('/') && exactTarget(path,target) && next.includes('/') && exactTarget(next,moved);
-}
-
-const referenceId=(id:string)=>id.trim().replace(/\s+/gu,' ').toLowerCase();
+export const referenceId=(id:string)=>id.trim().replace(/\s+/gu,' ').toUpperCase().toLowerCase();
 
 export function moveReferenceDefinition(lines: readonly string[], id: string, position: Pos, link: string) {
-	const line=lines[position.start.line];
+	const line=lines[position.start.line]?.replace(/^\uFEFF/u,'');
 	if (!line) return;
-	const match=/^ {0,3}\[([^\]\r\n]+)\]:[ \t]*(?:<([^>\r\n]+)>|([^ \t]+))/u.exec(line);
+	const match=/^ {0,3}\[((?:[^\]\\\r\n]|\\.)+)\]:[ \t]*(?:<([^>\r\n]+)>|([^\s]+))/u.exec(line);
 	if (!match || referenceId(match[1]!)!==referenceId(id)) return;
 	const value=(match[2] ?? match[3])!;
 	try {
-		if (decodeURIComponent(value)===link) return match[0];
+		if (value===link || decodeURIComponent(value.replace(/\\([()\\])/gu,'$1'))===link) return match[0];
 	} catch { /* Require an unambiguous, decodable destination. */ }
 	return undefined;
 }
@@ -65,36 +85,4 @@ export function moveReferenceDefinition(lines: readonly string[], id: string, po
 export function moveReferenceUse(original: string, displayText: string) {
 	const match=/^!?\[((?:[^[\]\\]|\\.)+)\](?:\[([^[\]\\]*)\])?$/u.exec(original);
 	return match ? referenceId(match[2] || displayText || match[1]!) : undefined;
-}
-
-export function uncoveredManagedMarkdown(text: string, after: string|undefined, file: string, scope: Scope,
-	tokens: readonly MoveToken[]) {
-	const beforeLines=text.split('\n'), afterLines=after?.split('\n');
-	const groups=new Map<number,{token:MoveToken; column:number}[]>();
-	for (const token of tokens) {
-		const line=text.slice(0,token.offset).split('\n').length-1;
-		const rows=groups.get(line) ?? [];
-		rows.push({token,column:token.offset-(text.lastIndexOf('\n',token.offset-1)+1)});
-		groups.set(line,rows);
-	}
-	return [...groups].flatMap(([line,rows])=>{
-		const original=beforeLines[line]!, current=afterLines?.length===beforeLines.length ? afterLines[line] : undefined;
-		const all=()=>rows.map(({token})=>({line:line+1,token}));
-		if (current===undefined) return all();
-		let beforeAt=0, afterAt=0;
-		const review:{line:number;token:MoveToken}[]=[];
-		for (const {token,column} of rows.sort((a,b)=>a.column-b.column)) {
-			const unchanged=original.slice(beforeAt,column);
-			if (column<beforeAt || !current.startsWith(unchanged,afterAt)) return all();
-			afterAt+=unchanged.length;
-			const replacement=relocateMarkdownReference(token.original,file,token.target,scope.source,scope.destination);
-			const keepsOld=current.startsWith(token.original,afterAt);
-			const hasNew=replacement && current.startsWith(replacement,afterAt);
-			if (!replacement || keepsOld===!!hasNew) return all();
-			if (keepsOld) review.push({line:line+1,token});
-			afterAt+=keepsOld ? token.original.length : replacement.length;
-			beforeAt=column+token.original.length;
-		}
-		return original.slice(beforeAt)===current.slice(afterAt) ? review : all();
-	});
 }

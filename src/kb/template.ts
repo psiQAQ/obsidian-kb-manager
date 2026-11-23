@@ -36,16 +36,16 @@ export async function folderTemplate(root: string, configDir: string, vars: Vari
 			if (!stat.isFile()) throw new Error(fromEnglish('Expected a regular template file: ','模板项必须为常规文件：') + file);
 			let bytes: Uint8Array = await fs.readFile(absolute);
 			sourceFiles.push(file + ':' + digest(bytes));
+			if (file === 'knowledge.base' && spec.managed?.length) {
+				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
+				bytes = Buffer.from(renderBase(original,vars.destination));
+			}
 			const fields = spec.text?.[file];
 			if (fields) {
 				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
 				const rendered=instanceText(file,original,fields,vars);
 				bytes=Buffer.from(rendered.content);
 				if(rendered.offsets.length)rootSlots[file]=rendered.offsets;
-			}
-			if (file === 'knowledge.base' && spec.managed?.length) {
-				const original = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
-				bytes = Buffer.from(renderBase(original,vars.destination));
 			}
 			files.push({name:file, bytes});
 		}

@@ -103,7 +103,9 @@ test('move resumes after rename, refuses a new edit, preserves staged bytes and 
 	await assert.rejects(executeMove(disk,config,record,{...files,replace:()=>Promise.reject(new Error('interrupted'))},persist),/interrupted/);
 	assert.equal(saved.phase,'moved');
 	assert.equal(Object.hasOwn(saved,'originals'),false);
-	for(const change of saved.changes)assert.deepEqual(Object.keys(change).sort(),['after','before','fields','file']);
+	assert.deepEqual(saved.changes.map(change=>Object.keys(change).sort()),[
+		['after','before','fields','file','patches'],['after','before','fields','file'],
+	]);
 	const moved=path.join(dest,'knowledge.base');
 	const previous=await fs.readFile(moved,'utf8');
 	await fs.writeFile(moved,previous+'# new edit');

@@ -10,6 +10,7 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 		const embeddedBase='[[Alpha/Detail#Detail|section]]\n\n```base\n'+baseFilters+'```\n';
 		const sources={
 			'Alpha/Inside.md':'[[Alpha/Detail#Detail|section]]\n',
+			'Alpha/Relative.md':'---\nsource: "[[./Detail]]"\n---\n\n[[./Detail]]\n',
 			'Beta/References.md':'[[Alpha/Detail#^place|paragraph]]\n![[Alpha/pic.svg|40]]\n[details](../Alpha/Detail.md#Detail)\n',
 			'Beta/Links.canvas':'{"nodes":[{"id":"a","type":"file","file":"Alpha/Detail.md","x":0,"y":0,"width":200,"height":80}],"edges":[]}\n',
 			'Keep.md':untouched,
@@ -43,6 +44,10 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 			return Object.fromEntries(controls.map(el=>[el.getAttribute('aria-label'),el.checked]));
 		});
 		assert.deepEqual(groups,{Alpha:true,Beta:false,'Unregistered Vault files':false});
+		assert(await evaluate(()=>{
+			const dialog=[...document.querySelectorAll('.modal')].at(-1);
+			return !dialog.querySelector('[data-move-reference-section="preserved"]') && !dialog.textContent.includes('Alpha/Relative.md');
+		}));
 		assert(await evaluate(()=>[...document.querySelectorAll('.modal details li')].some(el=>el.textContent.includes('Same name.md') && el.textContent.includes('ambiguous wikilink'))));
 		await evaluate(()=>document.querySelector('.kb-move-reference-group input[aria-label="Beta"]').click());
 		const selectedFields=await evaluate(()=>{
@@ -81,6 +86,7 @@ export async function verifyMoveAndLayout({fixture,scenario,command,observe,moda
 		assert.equal(await read('Beta/References.md'),sources['Beta/References.md'].replaceAll('Alpha/','Renamed/'));
 		assert.equal(await read('Beta/Links.canvas'),sources['Beta/Links.canvas'].replace('Alpha/','Renamed/'));
 		assert.equal(await read('Renamed/Inside.md'),sources['Alpha/Inside.md'].replace('Alpha/','Renamed/'));
+		assert.equal(await read('Renamed/Relative.md'),sources['Alpha/Relative.md']);
 		assert.equal(await read('Renamed/Personal.base'),baseFilters.replace('Alpha/Notes','Renamed/Notes'));
 		assert.equal(await read('Renamed/Embedded.md'),embeddedBase.replace('Alpha/Notes','Renamed/Notes').replace('Alpha/Detail','Renamed/Detail'));
 		await observe('resolved destinations after the rename',()=>{

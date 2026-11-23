@@ -18,6 +18,7 @@ const readme = '# Course\n\n## Overview\n\n![['+rootToken+'/'+base+']]\n\n## Oth
 const filters = 'filters:\n  and:\n    - "file.path.startsWith(\\"'+rootToken+'/\\")"\n'
 	+ '    - "this.file.path.startsWith(\\"'+rootToken+'/\\")"\nviews:\n  - name: Courses\n    type: table\n';
 const assignment = '---\ncourse: "[['+rootToken+'/Notes/Course]]"\n---\n# Assignment\n';
+const opaque = '# Script\n\n```js\nconst root = "'+rootToken+'";\n```\n\n[['+rootToken+'/Notes/Course]]\n';
 
 function bind(path,source) {
 	let offset = 0;
@@ -45,18 +46,20 @@ async function fixture(t, withHistory = true) {
 	const markdown = bind('README.md',readme);
 	const courses = bind(base,filters);
 	const properties = bind('Assignments/Today.md',assignment);
+	const mixed = bind('Integrations/Setup.md',opaque);
 	// A creation kit can track normalized Git blobs while recording the CRLF worktree fingerprint.
 	const withCrLf = text => text.replaceAll('\n','\r\n');
 	const crlf = bind('Notes/Root.md',withCrLf('# Root\n\n![['+rootToken+'/'+base+']]\n'));
-	for (const item of [markdown,courses,properties]) await put(item.managed.path,item.rendered);
+	for (const item of [markdown,courses,properties,mixed]) await put(item.managed.path,item.rendered);
 	await put(crlf.managed.path,crlf.rendered.replaceAll('\r\n','\n'));
 	await put('Notes/Course.md','# Course\n');
 	await put('Other/Course.md','# Another course with the same filename\n');
+	await put('.gitignore','/.log/\n');
 	const kit = checkKitFiles();
 	for (const [name,source] of Object.entries(kit)) await put(name,source);
 	const raw = toml({version:2,manager:{schemaVersion:2,id:'81079855-d3ba-4c76-b59a-042412ba624a',
 		displayName:'Course',description:'',archived:false,template:{id:'course-test',version:'1'},
-		managed:[markdown,courses,properties,crlf].map(item => item.managed)}});
+		managed:[markdown,courses,properties,crlf,mixed].map(item => item.managed)}});
 	await put('kb.toml',writeCheckKit(raw,{protocol:1,version:checkKitVersion,digests:Object.fromEntries(
 		Object.entries(kit).map(([path,source]) => [path,digest(source)]))}));
 	if (withHistory) {
@@ -65,10 +68,13 @@ async function fixture(t, withHistory = true) {
 		git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','-m','Initial fixture');
 	}
 	const check = async options => (await runDiagnostics({libraryRoot:root,vaultRoot:vault,selected:['bindings'],...options})).checks[0];
-	return {base:courses.rendered,readme:markdown.rendered,assignment:properties.rendered,put,check,remove:path => fs.unlink(join(root,path))};
+	const standalone=()=>JSON.parse(execFileSync(process.execPath,[join(root,'checks/kb-check.cjs'),'--library',root,'--vault-root',vault,
+		'--checks','bindings'],{encoding:'utf8',windowsHide:true})).checks[0];
+	return {base:courses.rendered,readme:markdown.rendered,assignment:properties.rendered,script:mixed.rendered,put,check,standalone,
+		remove:path => fs.unlink(join(root,path))};
 }
 
-test('managed binding diagnostics use file structure and actual targets after ordinary edits', async t => {
+test('managed checks ignore proven ordinary fields and still verify the opaque slot in a mixed file', async t => {
 	const item = await fixture(t);
 	const serialized = yamlString(yaml(item.base),{defaultStringType:'QUOTE_SINGLE'});
 	assert.notEqual(serialized,item.base);
@@ -77,28 +83,29 @@ test('managed binding diagnostics use file structure and actual targets after or
 	await item.put('Assignments/Today.md',item.assignment.replace(location+'/Notes/Course','../Notes/Course'));
 	const harmless = await item.check();
 	assert.equal(harmless.status,'passed');
-	assert.deepEqual(harmless.coverage,{checked:4,skipped:0,unknown:0});
+	assert.deepEqual(harmless.coverage,{checked:1,skipped:0,unknown:0});
 	assert.deepEqual(harmless.diagnostics,[]);
 
 	await item.put('README.md',item.readme.replace(location+'/'+base,'./Views/Wrong.base')+'\n![['+location+'/'+base+']]\n');
 	await item.put(base,serialized.replace(location+'/', 'Another/Root/')+'\n# Original text: '+location+'/\n');
 	await item.put('Assignments/Today.md',item.assignment.replace(location+'/Notes/Course','../Other/Course')+'\n[['+location+'/Notes/Course]]');
+	await item.put('Integrations/Setup.md',item.script.replace(location+'/Notes/Course','Elsewhere/Course')+'\nMore prose.\n');
 	const changed = await item.check();
-	assert.equal(changed.status,'findings');
-	assert.deepEqual(changed.diagnostics.filter(row => row.code === 'binding-drift').map(row => row.file),
-		['README.md',base,'Assignments/Today.md']);
-	assert.match(changed.diagnostics.find(row => row.file === base).evidence,/filters\.and\[0\].*Another\/Root/u);
+	assert.equal(changed.status,'passed');
+	assert.deepEqual(changed.diagnostics,[]);
+	assert.deepEqual(item.standalone().coverage,changed.coverage);
+	await item.put('Integrations/Setup.md',item.script.replace('const root = "'+location+'"','const root = "Another/Root"'));
+	assert.ok((await item.check()).diagnostics.some(row=>row.file==='Integrations/Setup.md' && row.code==='binding-unverified'));
 });
 
-test('unchanged source links still require a readable target and desktop link resolution', async t => {
+test('ordinary link targets are verified by the link check and do not get duplicated as bindings', async t => {
 	const item = await fixture(t);
 	const notIndexed = await item.check({resolveLink:() => ({status:'unknown'})});
-	assert.equal(notIndexed.status,'partial');
-	assert.ok(notIndexed.diagnostics.some(row => row.file === 'Assignments/Today.md' && row.code === 'binding-unverified'));
+	assert.equal(notIndexed.status,'passed');
 	await item.remove('Notes/Course.md');
 	const missing = await item.check();
-	assert.equal(missing.status,'findings');
-	assert.ok(missing.diagnostics.some(row => row.file === 'Assignments/Today.md' && row.code === 'binding-drift'));
+	assert.equal(missing.status,'passed');
+	assert.deepEqual(missing.diagnostics,[]);
 });
 
 test('binding checks report unavailable evidence and identify known legacy bundled scripts', async t => {

@@ -46,6 +46,7 @@ export async function showImportPreview(plugin:KnowledgeBaseManager, location:st
 		[t('登记状态','Registration'),existing ? t('此路径已登记','This path is registered') : t('此路径尚未登记','This path is unregistered')],
 	]);
 	if(missing)changeComparison(dialog.contentEl,[{label:t('登记路径','Registered path'),before:missing.location,after:location}]);
+	if(missing || !existing)dialog.lines([t('如果这个库原先位于其他目录，登记后可在“检验”中核对链接和 Base 筛选路径。','If this library came from another folder, run the link and Bases checks after registration.')]);
 	if(missing && !missing.id)dialog.lines([t('此前没有记录该库的 ID，请核对所选库的身份。','The previous ID is unavailable. Verify the selected library identity.')]);
 	if(!preview.library.identity)dialog.lines([t('登记现有路径后，可在侧栏预览接管并给旧库分配身份。','After registering this path, use Preview adoption in the sidebar to assign the legacy library an identity.')]);
 	const protect=await reviewRegistryProtection(plugin,dialog);

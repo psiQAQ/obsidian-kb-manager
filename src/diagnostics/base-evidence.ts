@@ -5,6 +5,7 @@ import type {BasePathReference} from '../kb/base-paths.ts';
 import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
+import {linkResolver} from './links.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, entryVersion, readRelative, relativeEntry, relativePath, unavailableVersion} from './snapshot.ts';
 import type {Inventory, libraryLocation} from './snapshot.ts';
@@ -57,13 +58,19 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 	const {signal,trace} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
 	const lookup = folderLookup(location,options);
-	async function inspectPath({argument,kind,expression,field,line,column,wholeFilter,exclusion}: BasePathReference, lineOffset: number, inTemplate: boolean) {
+	const links=linkResolver(options,inventory,root,location.relative);
+	async function inspectPath({argument,kind,expression,field,line,column,wholeFilter,exclusion}: BasePathReference, file:string, lineOffset: number, inTemplate: boolean) {
 		const value = argument?.value;
 		const evidence = {kind,expression:expression.slice(0,512),field,line:line + lineOffset,column,value:value?.slice(0,2048)};
 		if (value === undefined) return {...evidence,status:'unverified'};
 		if (/\{\{[^{}]+\}\}|<%[\s\S]*?%>|__[A-Z][A-Z0-9_]*__/u.test(value))
 			return {...evidence,status:'unverified',placeholder:inTemplate ? 'deferred' : 'unsubstituted',wholeFilter};
 		if (/^\.\.?\//u.test(value)) return {...evidence,status:'relative'};
+		if(kind==='link'){
+			if(!relativePath(value) || /[#%|?]/u.test(value) || value.endsWith('/'))return {...evidence,status:'unverified'};
+			const found=await links.resolve(file,{source:links.vaultPath(file),target:value,syntax:'wiki',kind:'link'});
+			return {...evidence,status:found.status==='unknown'?'unverified':found.status};
+		}
 		// An arbitrary startsWith prefix may be a partial file name. Only a
 		// slash-terminated prefix unambiguously names a folder to check.
 		if (kind === 'startsWith' && !value.endsWith('/')) return undefined;
@@ -79,7 +86,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 		if (data !== undefined) for (const reference of scanBasePaths(text,'base')) {
 			const pause = checkpoint?.();
 			if (pause) await pause;
-			const path = await inspectPath(reference,lineOffset,inTemplate);
+			const path = await inspectPath(reference,file,lineOffset,inTemplate);
 			if (path) paths.push(path);
 		}
 		return {data,paths};

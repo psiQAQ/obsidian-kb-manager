@@ -2,6 +2,7 @@ import { tr } from '../i18n.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { bindingHistory } from '../diagnostics/binding-history.ts';
 import { gitResult } from '../git/network-native.ts';
 import { VaultDisk, digest, key, statIfPresent } from '../fs/vault.ts';
 import { renameNewDirectory } from '../fs/publish.ts';
@@ -11,7 +12,7 @@ import { repository } from '../git/repository.ts';
 import { ancestorWarnings } from './create.ts';
 import { discover, identityFile, parseIdentity, readManifest, recheck, writeIdentity } from './catalog.ts';
 import type { Config, Library } from './catalog.ts';
-import { examine } from './maintenance.ts';
+import { classifyLibraryBinding, examine } from './maintenance.ts';
 import type { Repair, VisibleFiles } from './maintenance.ts';
 import { isKepano, kepanoBinding, kepanoBindingAssets } from './template.ts';
 import {rebindSlots} from './instance-text.ts';
@@ -19,6 +20,7 @@ import { validateKepanoRoot } from './kepano.ts';
 import { readManifestFile, replaceLibraryManifest } from './manifest-disk.ts';
 import { assertNoAncestorLibrary, registerVaultLibrary } from '../registry/discovery.ts';
 import { assertUnreservedLibraryPath, libraryDestination, validateLibraryPath, vaultParent, vaultPath } from '../registry/paths.ts';
+import { retirePathBindings } from './path-binding-ownership.ts';
 
 import { applyExclusionPlan, assertExclusionPlan, assertMoveExclusionScope, planMovedExclusions } from './template-exclusions.ts';
 import type { ExclusionPlan, ExclusionStore } from './template-exclusions.ts';
@@ -70,14 +72,40 @@ export async function planMove(disk:VaultDisk,config:Config,lib:Library,parent:s
 		if(!binding)throw new Error(tr('未登记的受管文件：','Unregistered managed file: ')+change.file);
 		binding.root=destination;
 		binding.fingerprint=digest(change.after);
+		if(change.bindingOffsets)binding.offsets=change.bindingOffsets;
 	}
-	if(changes.length){
+	const retired=new Set(report.retired);
+	if(changes.length || retired.size){
 		originals?.set(identityFile,previous);
-		changes.push({file:identityFile,before:signature,after:writeIdentity(previous,next),fields:[tr('记录新绑定位置','Record the new binding locations')]});
+		const fields=[];
+		if(changes.length)fields.push(tr('记录新绑定位置','Record the new binding locations'));
+		if(retired.size)fields.push(tr('移除已由普通引用扫描处理的旧绑定','Retire legacy bindings covered by the reference scan')+' · '+[...retired].join(', '));
+		changes.push({file:identityFile,before:signature,after:retirePathBindings(writeIdentity(previous,next),retired),fields});
 	}
 	const exclusions=store && await planMovedExclusions(store,next.id,source,destination,next.excludedFolders ?? []);
 	return {token:randomUUID(),exclusions,id:lib.identity.id,source,destination,git:await gitStamp(dir),manifest:signature,
 		changes,warnings:[...warnings,...report.manual],phase:'prepared'};
+}
+
+function manifestAfterReferences(record:MoveRecord, managedManifest:Repair|undefined) {
+	if(!managedManifest)return undefined;
+	const changes=new Map(record.changes.filter(change=>change.file!==identityFile).map(change=>[record.source+'/'+change.file,change]));
+	const overlaps=(record.references ?? []).flatMap(edit=>{
+		const managed=edit && changes.get(edit.file);
+		return managed ? [{edit,managed}] : [];
+	});
+	if(!overlaps.length)return managedManifest.after;
+	const identity=parseIdentity(managedManifest.after);
+	for(const {edit,managed} of overlaps){
+		const binding=identity.managed.find(item=>item.path===managed.file);
+		if(!managed.patches?.length || !binding || binding.fingerprint!==digest(managed.after) || edit.before!==managed.before ||
+			!/^[a-f0-9]{64}$/u.test(edit.result) || (managed.bindingOffsets===undefined)!==(edit.bindingOffsets===undefined) ||
+			(edit.bindingOffsets!==undefined && (!Array.isArray(edit.bindingOffsets) || edit.bindingOffsets.length!==managed.bindingOffsets?.length)))
+			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
+		binding.fingerprint=edit.result;
+		if(edit.bindingOffsets)binding.offsets=edit.bindingOffsets;
+	}
+	return writeIdentity(managedManifest.after,identity);
 }
 
 export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord,files:MoveFiles,save:(value:MoveRecord)=>Promise<void>,kepanoSkeleton:Record<string,string>={},store?:ExclusionStore){
@@ -101,7 +129,7 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		throw new Error(tr('无效的库目录或文件系统','Invalid library folder or filesystem'));
 	const manifestPath=path.join(current,identityFile);
 	const {raw:manifest,signature}=await readManifestFile(manifestPath);
-	const {identity,templateFiles}=readManifest(manifest);
+	const {identity}=readManifest(manifest);
 	if(!identity || identity.archived || identity.id!==record.id || (await gitStamp(current))!==record.git)
 		throw new Error(tr('知识库已归档，或 ID、HEAD、索引变化，请人工复核','The library was archived, or its ID, HEAD or index changed. Review the library before continuing.'));
 	const assertUnreserved=async()=>{
@@ -115,29 +143,45 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 		await assertExclusionPlan(store,record.exclusions,current===destination);
 	}
 	const manifestEdit=record.changes.find(c=>c.file===identityFile);
-	if(signature!==record.manifest && !(current===destination && manifestEdit && digest(manifestEdit.after)===signature))throw new Error(tr('清单已变化','The library manifest changed'));
+	if((manifestEdit && manifestEdit.before!==record.manifest) ||
+		(record.references!==undefined && !Array.isArray(record.references)))
+		throw new Error(tr('无效的恢复记录','Invalid move recovery record'));
+	const manifestAfter=manifestAfterReferences(record,manifestEdit);
+	if(signature!==record.manifest && !(current===destination && manifestAfter!==undefined && digest(manifestAfter)===signature))throw new Error(tr('清单已变化','The library manifest changed'));
 	const libraries=await discover(disk,config);
 	const duplicate=libraries.some(lib=>lib.identity?.id===record.id && ![record.source,record.destination].includes(lib.location));
 	if(duplicate)throw new Error(tr('ID 重复','Duplicate library ID'));
 	const bindingAssets=kepanoBindingAssets(kepanoSkeleton,identity.template.version);
+	const selectedReferences=new Map((record.references ?? []).map(edit=>[edit.file,edit]));
 	for(const item of record.changes){
+		if(item.file===identityFile)continue;
 		const binding=identity.managed.find(m=>m.path===item.file);
 		const allowed=binding?.role==='template-root' || (isKepano(identity.template)?binding?.role==='kepano-bindings' && kepanoBinding(bindingAssets,item.file):item.file==='knowledge.base' && !!binding);
-		if(item.file!==identityFile && !allowed)throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
-		if(item.file!==identityFile && binding?.fingerprint!==item.before && !(current===destination && binding?.fingerprint===digest(item.after)))
+		if(!allowed)throw new Error(tr('恢复记录包含未受管文件','The recovery record includes an unmanaged file'));
+		const reference=selectedReferences.get(record.source+'/'+item.file);
+		const result=reference?.result ?? digest(item.after);
+		if(item.bindingBefore!==undefined && (item.bindingBefore===item.before || !item.patches?.length || binding?.role!=='template-root'))
+			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
+		if(binding?.fingerprint!==(item.bindingBefore ?? item.before) && !(current===destination && binding?.fingerprint===result))
 			throw new Error(tr('受管文件的指纹已变化','A managed file fingerprint changed'));
 		if(item.file.includes('/'))await existingDirectory(current,path.posix.dirname(item.file));
 		const f=path.join(current,item.file);
 		const stat=await fs.lstat(f);
 		if(!stat.isFile() || stat.nlink!==1)throw new Error(tr('受管路径发生变化：','Managed path changed: ')+item.file);
 		const bytes=await fs.readFile(f),hash=digest(bytes);
-		if(hash===item.before && binding?.role==='template-root' && binding.root && binding.offsets &&
-			rebindSlots(bytes.toString('utf8'),binding.offsets,binding.root,record.destination,binding.path)!==item.after)
-			throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
-		if(hash!==item.before && !(current===destination && hash===digest(item.after)))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
+		if(hash===item.before && binding?.role==='template-root' && binding.root && binding.offsets){
+			const text=bytes.toString('utf8');
+			const classified=item.patches && await classifyLibraryBinding(disk,{location:record.source,identity},binding,text,kepanoSkeleton,
+				undefined,item.bindingBefore ? bindingHistory(current,disk.root) : undefined);
+			const effective=classified?.opaque ?? binding;
+			if((item.bindingBefore && !classified?.verifiedAppend) || !effective.root || !effective.offsets ||
+				rebindSlots(text,effective.offsets,effective.root,record.destination,binding.path)!==item.after)
+				throw new Error(tr('恢复数据与路径绑定不一致','Recovery record differs from the path binding'));
+		}
+		if(hash!==item.before && !(current===destination && hash===result))throw new Error(tr('文件已被编辑：','File was edited: ')+item.file);
 	}
 	const references=await prepareReferenceWrites(disk,config,record,libraries,current,
-		{location:record.source,identity,templateFiles},current===destination);
+		{location:record.source,identity},current===destination);
 	await disk.registry.assertWritable();
 	if(current!==destination){
 		await assertUnreserved();
@@ -159,15 +203,17 @@ export async function executeMove(disk:VaultDisk,config:Config,record:MoveRecord
 	}
 	record={...record,phase:'moved'};await save(record);
 	for(const item of record.changes){
+		if(item.file===identityFile || selectedReferences.has(record.source+'/'+item.file))continue;
 		const relative=record.destination+'/'+item.file;
 		const absolute=await disk.path(relative);
 		const content=await fs.readFile(absolute);
 		if(digest(content)===digest(item.after))continue;
 		if(item.before===null || digest(content)!==item.before)throw new Error(tr('已移动，文件变化，请复核：','The directory moved and this file changed. Review: ')+relative);
-		if(item.file===identityFile)await replaceLibraryManifest(disk,record.destination,item.before,item.after);
-		else await files.replace(relative,item.before,item.after);
+		await files.replace(relative,item.before,item.after);
 	}
 	for(const edit of references)await files.replace(edit.file,edit.before,edit.after);
+	if(manifestAfter!==undefined && digest(manifestAfter)!==signature)
+		await replaceLibraryManifest(disk,record.destination,record.manifest,manifestAfter);
 	if(record.exclusions && store)await applyExclusionPlan(store,record.exclusions);
 	await registerVaultLibrary(disk,config,record.destination,record.source);
 	await save({...record,phase:'complete'});
