@@ -10,16 +10,17 @@ import {footnoteEvidence} from './references.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, libraryLocation, manifestSnapshot} from './snapshot.ts';
+import type {SourceInclusion} from './source-exclusions.ts';
 import {isRecord} from './types.ts';
 import type {DiagnosticCheckResult, LinkOccurrence, LinkRequest} from './types.ts';
 
 type Manifest = Awaited<ReturnType<typeof manifestSnapshot>>;
 type Location = Awaited<ReturnType<typeof libraryLocation>>;
 
-async function* readStructured(root: string, inventory: Inventory, extension: string, {signal,trace}: EvidenceOptions) {
+async function* readStructured(root: string, inventory: Inventory, extension: string, {signal,trace}: EvidenceOptions, includes: (file: string) => boolean) {
 	let remaining = 24 * 1024 * 1024;
 	for (const file of inventory.files) {
-		if (!file.toLowerCase().endsWith(extension)) continue;
+		if (!file.toLowerCase().endsWith(extension) || !includes(file)) continue;
 		let text: string | undefined;
 		try {
 			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024),signal,trace);
@@ -31,7 +32,7 @@ async function* readStructured(root: string, inventory: Inventory, extension: st
 }
 
 export function commonEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
-	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>) {
+	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>, includes: SourceInclusion) {
 	const {root, relative, vault, identifiedVault} = location;
 	const {signal} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
@@ -55,8 +56,10 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 	}
 	async function readLinks() {
 		const {vaultPath} = getResolver();
+		const active = ['links','anchors','portability'].filter(id => selected.has(id));
 		const notes = [];
 		for (const note of inventory.notes) {
+			if (!active.some(id => includes(id,note.path))) continue;
 			const pause = checkpoint?.();
 			if (pause) await pause;
 			const {path:file, body, lineOffset, problem} = note;
@@ -78,7 +81,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 	async function readCanvases() {
 		const {vaultPath} = getResolver();
 		const canvases = [];
-		for await (const {file,text} of readStructured(root,inventory,'.canvas',options)) {
+		for await (const {file,text} of readStructured(root,inventory,'.canvas',options,file => includes('canvas',file) || includes('portability',file))) {
 			if (text === undefined) {canvases.push({file, unreadable:true}); continue;}
 			let data: unknown;
 			try {data = JSON.parse(text);} catch {canvases.push({file, malformed:true}); continue;}
@@ -109,8 +112,9 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 
 	return async (check: DiagnosticCheckResult, bundled = false) => {
 		const {id} = check;
+		const includesSource = (file: string) => includes(id,file);
 		if (['links','anchors','portability','properties','bases','canvas'].includes(id)) reportInventoryCoverage(check,inventory);
-		if (['links','anchors','portability','properties'].includes(id)) reportUnreadableNotes(check,inventory);
+		if (['links','anchors','portability','properties'].includes(id)) reportUnreadableNotes(check,inventory,includesSource);
 		switch (id) {
 		case 'manifest':
 			return {result:check, manifest:{parsed:manifest.parsed && {identity:manifest.parsed.identity},paths:manifest.paths,reason:manifest.reason},
@@ -119,9 +123,10 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 					directories:[...inventory.directories],unreadableDirectories:[...inventory.unreadableDirectories]}};
 		case 'properties': return {result:check, templateDirs, notes:inventory.notes.map(({path,problem}) => ({path,problem}))};
 		case 'bindings': return {result:check,...await bindingEvidence(options,location,manifest,bundled)};
-		case 'bases': return readBaseEvidence(options,location,inventory,check,templateDirs);
+		case 'bases': return readBaseEvidence(options,location,inventory,check,templateDirs,includesSource);
 		case 'links': case 'anchors':
-			return {result:check, notes:await getLinks(), linksSelected:selected.has('links'), anchorsSelected:selected.has('anchors'), desktop:!!options.resolveLink};
+			return {result:check, notes:(await getLinks()).filter(note => includesSource(note.file)),
+				linksSelected:selected.has('links'), anchorsSelected:selected.has('anchors'), desktop:!!options.resolveLink};
 		case 'canvas': return {result:check, canvases:await getCanvases(), portabilitySelected:selected.has('portability')};
 		case 'portability': {
 			const scope = options.linkCandidateScope;
@@ -132,7 +137,8 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 				check.reason = check.reason ? reason + ' ' + check.reason : reason;
 				if (scope === 'registered' && !options.registeredPaths) check.coverage.unknown++;
 			}
-			const notes = await getLinks(), canvasFiles = await getCanvases();
+			const notes = (await getLinks()).filter(note => includesSource(note.file));
+			const canvasFiles = (await getCanvases()).filter(canvas => includesSource(canvas.file));
 			const {candidates} = getResolver();
 			const candidateMatches = [];
 			const canvasMatches = [];

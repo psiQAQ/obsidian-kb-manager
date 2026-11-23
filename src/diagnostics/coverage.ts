@@ -29,11 +29,12 @@ export function reportUnreadableDirectories(check: DiagnosticCheckResult, invent
 	addReason(check, tr('部分目录无法遍历。','Some directories could not be scanned.'));
 }
 
-export function reportUnreadableNotes(check: DiagnosticCheckResult, inventory: Inventory) {
-	if (!inventory.unreadable.length) return;
-	check.coverage.unknown += inventory.unreadable.length;
+export function reportUnreadableNotes(check: DiagnosticCheckResult, inventory: Inventory, includes: (file: string) => boolean = () => true) {
+	const unreadable = inventory.unreadable.filter(includes);
+	if (!unreadable.length) return;
+	check.coverage.unknown += unreadable.length;
 	const message = tr('Markdown 文件不可读或超出扫描限制。','Could not read the Markdown file within the scan limits.');
-	for (const file of inventory.unreadable)
+	for (const file of unreadable)
 		check.diagnostics.push({severity:'info', code:'unreadable-note', file, message});
 	addReason(check, tr('部分 Markdown 文件未能读取。','Some Markdown files could not be read.'));
 }

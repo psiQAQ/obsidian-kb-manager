@@ -10,7 +10,7 @@ import {defaultConfigDir, segments} from '../fs/segments.ts';
 import {key, statIfPresent} from '../fs/vault.ts';
 import {parseCheckKit, readManifest} from '../kb/identity-core.ts';
 import type {CheckKitRecord} from '../kb/identity-core.ts';
-import {declaration} from '../kb/template-declaration.ts';
+import {declaration, InvalidDiagnosticExclusionsError} from '../kb/template-declaration.ts';
 import type {CheckDeclaration, Declaration as TemplateDeclaration} from '../kb/template-declaration.ts';
 import {generalIds, isRecord, printable} from './types.ts';
 import type {CheckContext, DiagnosticOptions, SpecialCheck, TemplateIdentity} from './types.ts';
@@ -18,7 +18,14 @@ import type {InputTrace} from './provenance.ts';
 
 export type Declaration = TemplateDeclaration & TemplateIdentity;
 export interface DeclaredCheck extends SpecialCheck { source?: Buffer; linkEvidence?: CheckDeclaration['linkEvidence'] }
-export interface TemplateSnapshot { template?: Declaration; checks: DeclaredCheck[]; reason?: string; missing?: boolean }
+export interface TemplateSnapshot {
+	template?: Declaration;
+	checks: DeclaredCheck[];
+	diagnosticExclusions?: Declaration['diagnosticExclusions'];
+	sourceExclusionError?: string;
+	reason?: string;
+	missing?: boolean;
+}
 const bytesPerFile = 2 * 1024 * 1024;
 const bytesPerLibrary = 24 * 1024 * 1024;
 const templateFile = 'kb-template.json';
@@ -137,15 +144,29 @@ export async function readRelative(root: string, relative: string, limit = bytes
 }
 
 function readDeclaration(raw: string): TemplateSnapshot {
-	const parsed = declaration(raw);
+	let parsed: TemplateDeclaration;
+	let sourceExclusionError: string | undefined;
+	try {parsed = declaration(raw);}
+	catch (error) {
+		if (!(error instanceof InvalidDiagnosticExclusionsError)) throw error;
+		const message = Array.from(error.message.slice(0,512), character => {
+			const code = character.charCodeAt(0);
+			return code < 32 || code === 127 ? '�' : character;
+		}).join('');
+		sourceExclusionError = error.message.length > 512 ? message + '…' : message;
+		const data = JSON.parse(raw) as Record<string,unknown>;
+		delete data.diagnosticExclusions;
+		parsed = declaration(JSON.stringify(data));
+	}
 	const checks = parsed.checks ?? [];
 	if (checks.length > 64 || checks.some(check => !checkIdPattern.test(check.id) || generalIds.has(check.id) ||
 		!printable(check.name, 160) || !relativePath(check.path) || (check.description && !printable(check.description, 512))))
 		throw new Error('invalid-check-declaration');
+	const sources = {diagnosticExclusions:parsed.diagnosticExclusions, sourceExclusionError, reason:sourceExclusionError};
 	if (printable(parsed.id, 512) && printable(parsed.version, 512))
-		return {template: {...parsed, id: parsed.id, version: parsed.version}, checks: checks.map(check => ({...check}))};
+		return {template: {...parsed, id: parsed.id, version: parsed.version}, checks: checks.map(check => ({...check})), ...sources};
 	if (checks.length) throw new Error('missing-template-identity');
-	return {checks: []};
+	return {checks: [], ...sources};
 }
 
 export async function templateSnapshot(root: string, withScripts: boolean, signal?: AbortSignal, trace?: InputTrace): Promise<TemplateSnapshot> {
@@ -233,6 +254,7 @@ export interface Inventory {
 	directories: Set<string>;
 	excluded: Set<string>;
 	notes: NoteRecord[];
+	deferredNotes: Set<string>;
 	unreadable: string[];
 	unreadableDirectories: Set<string>;
 	skipped: number;
@@ -247,9 +269,10 @@ export function noteReader(root: string, signal?: AbortSignal, trace?: InputTrac
 	};
 }
 
-export async function inventory(root: string, configDir: string, mode: Inventory['mode'], signal?: AbortSignal, trace?: InputTrace): Promise<Inventory> {
+export async function inventory(root: string, configDir: string, mode: Inventory['mode'], signal?: AbortSignal, trace?: InputTrace,
+	shouldReadNote?: (file: string) => boolean): Promise<Inventory> {
 	const found: Inventory = {mode, files: new Set(), directories: new Set(), excluded: new Set(), notes: [], unreadable: [],
-		unreadableDirectories: new Set(), skipped: 0};
+		deferredNotes: new Set(), unreadableDirectories: new Set(), skipped: 0};
 	if (mode === 'none') return found;
 	const readNote = noteReader(root, signal, trace);
 	async function visit(relative: string) {
@@ -284,6 +307,7 @@ export async function inventory(root: string, configDir: string, mode: Inventory
 			if (!entry.isFile()) continue;
 			found.files.add(file);
 			if (mode !== 'notes' || !/\.md$/iu.test(file)) continue;
+			if (shouldReadNote && !shouldReadNote(file)) {found.deferredNotes.add(file); continue;}
 			try {found.notes.push(await readNote(file));}
 			catch {signal?.throwIfAborted(); found.unreadable.push(file);}
 		}

@@ -6,6 +6,7 @@ import {inspectPdfFragment} from './references.ts';
 import type {EvidenceOptions, InputTrace} from './provenance.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, TemplateSnapshot, manifestSnapshot} from './snapshot.ts';
+import type {SourceInclusion} from './source-exclusions.ts';
 import {isRecord, printable} from './types.ts';
 import type {Diagnostic, DiagnosticCheckResult, DiagnosticOptions, LinkRequest} from './types.ts';
 
@@ -98,10 +99,11 @@ export function inspectProperties(check: DiagnosticCheckResult, inventory: Inven
 
 async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string, inventory: Inventory, extension: string,
 	inspect: (file: string, text: string) => void | Promise<void>,
-	options: {inventoryCoverage?: false; onUnreadable?: (diagnostic: Diagnostic) => void; signal?: AbortSignal; trace?: InputTrace} = {}) {
+	options: {inventoryCoverage?: false; includes?: (file: string) => boolean; onUnreadable?: (file: string, diagnostic: Diagnostic) => void;
+		signal?: AbortSignal; trace?: InputTrace} = {}) {
 	if (options.inventoryCoverage !== false) reportInventoryCoverage(check, inventory);
 	for (const file of inventory.files) {
-		if (!file.toLowerCase().endsWith(extension)) continue;
+		if (!file.toLowerCase().endsWith(extension) || options.includes?.(file) === false) continue;
 		let text: string;
 		try {text = decode(await readRelative(root, file, undefined, options.signal, options.trace));}
 		catch {
@@ -110,7 +112,7 @@ async function inspectStructuredFiles(check: DiagnosticCheckResult, root: string
 			const diagnostic: Diagnostic = {severity:'info', code:'unreadable-file', file,
 				message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')};
 			check.diagnostics.push(diagnostic);
-			options.onUnreadable?.(diagnostic);
+			options.onUnreadable?.(file,diagnostic);
 			addReason(check, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
 			continue;
 		}
@@ -126,17 +128,19 @@ const nonempty = (value: unknown): value is string => typeof value === 'string' 
 const color = (value: unknown) => value === undefined || typeof value === 'string' && /^(?:#[0-9a-f]{6}|[1-6])$/iu.test(value);
 const optionalEnum = (value: unknown, domain: Set<string>) => value === undefined || typeof value === 'string' && domain.has(value);
 
-export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticCheckResult; portability?: DiagnosticCheckResult},
-	root: string, inventory: Inventory, options: EvidenceOptions, location: string) {
-	const check = canvas ?? portability;
+export async function inspectCanvas({canvas, portability: portabilityCheck}: {canvas?: DiagnosticCheckResult; portability?: DiagnosticCheckResult},
+	root: string, inventory: Inventory, options: EvidenceOptions, location: string, includes: SourceInclusion) {
+	const check = canvas ?? portabilityCheck;
 	if (!check) return;
 	const checkpoint = diagnosticCheckpoint(options.signal);
 	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
-	const selected = [canvas, portability].filter((item): item is DiagnosticCheckResult => !!item);
-	let deferred = false;
+	const selected = [canvas, portabilityCheck].filter((item): item is DiagnosticCheckResult => !!item);
+	const deferred = new Set<DiagnosticCheckResult>();
 	let unresolvedCanvas = false;
 	let unresolvedPortability = false;
 	await inspectStructuredFiles(check, root, inventory, '.canvas', async (file, text) => {
+		const portability = includes('portability',file) ? portabilityCheck : undefined;
+		const fileChecks = portability ? selected : canvas ? [canvas] : [];
 		let structureFailure: string | undefined;
 		function fail(code: string, message: string, evidence?: string) {
 			structureFailure ??= message;
@@ -171,8 +175,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		const inspectReference = async (link: LinkRequest, details: string) => {
 			const exact = link.canvasPath;
 			if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
-				for (const item of selected) item.coverage.skipped++;
-				deferred = true;
+				for (const item of fileChecks) {item.coverage.skipped++; deferred.add(item);}
 				check.diagnostics.push({file,evidence:details,severity:'info',code:'template-link-deferred',message:tr('Canvas 中的模板链接待实例化后检查。','Check the Canvas template link after its variables are filled in.')});
 				return;
 			}
@@ -180,7 +183,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 			const evidence = [found.path ?? (relativePath(link.target) ? link.target : undefined), details].filter(Boolean).join(' · ');
 			const cross = outsideTarget(found);
 			if (portability) await inspectPortability(portability, {file}, link, found, details);
-			else if (cross) check.diagnostics.push({file,evidence:[cross.evidence, details].join(' · '), severity:'info',code:'cross-library-link',
+			else if (!portabilityCheck && cross) check.diagnostics.push({file,evidence:[cross.evidence, details].join(' · '), severity:'info',code:'cross-library-link',
 				message:tr('Canvas 引用解析到当前知识库之外的 Vault 文件。','The Canvas reference resolves to a vault file outside this library.')});
 			const unknownBefore = canvas?.coverage.unknown ?? 0;
 			const pdf = canvas && inspectPdfFragment(canvas, link, found, {file,evidence}, details);
@@ -191,7 +194,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 					message:printable(found.reason,512) ? found.reason : exact
 						? tr('未能确认 Canvas 引用的文件。','Could not verify the Canvas file reference.')
 						: tr('未能确认 Canvas 文本节点中的链接。','Could not verify the link in the Canvas text node.')};
-				for (const item of selected) item.diagnostics.push(diagnostic);
+				for (const item of fileChecks) item.diagnostics.push(diagnostic);
 			} else if (canvas) {
 				const fileSubject = `${details} · ${link.target || file}`;
 				const resolved = `${tr('目标文件','Target file')} · ${found.path}`;
@@ -230,7 +233,7 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 					link = linkRequest(source,occurrence);
 				} catch {uninspectable('canvas-link-encoding',tr('Canvas 文本节点的链接包含无效 URL 转义。','The Canvas text node contains a link with invalid URL encoding.'),details); continue;}
 				if (link) await inspectReference(link, details);
-				else for (const item of selected) item.coverage.skipped++;
+				else for (const item of fileChecks) item.coverage.skipped++;
 			}
 		}
 		const ids = new Set<string>();
@@ -280,16 +283,17 @@ export async function inspectCanvas({canvas, portability}: {canvas?: DiagnosticC
 		signal: options.signal,
 		trace: options.trace,
 		inventoryCoverage: canvas ? undefined : false,
-		onUnreadable: diagnostic => {
-			if (canvas && portability) {
-				portability.coverage.unknown++;
-				portability.diagnostics.push(diagnostic);
-				addReason(portability, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
+		includes: file => !!canvas || includes('portability',file),
+		onUnreadable: (file, diagnostic) => {
+			if (canvas && portabilityCheck && includes('portability',file)) {
+				portabilityCheck.coverage.unknown++;
+				portabilityCheck.diagnostics.push(diagnostic);
+				addReason(portabilityCheck, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
 			}
 		},
 	});
 	for (const item of selected) {
-		if (deferred) addReason(item, tr('Canvas 中的部分模板链接待实例化后检查。','Check deferred Canvas template links after their variables are filled in.'));
+		if (deferred.has(item)) addReason(item, tr('Canvas 中的部分模板链接待实例化后检查。','Check deferred Canvas template links after their variables are filled in.'));
 		if (item === canvas ? unresolvedCanvas : unresolvedPortability)
 			addReason(item, tr('部分 Canvas 引用或链接未能确认。','Some Canvas references or links could not be verified.'));
 	}

@@ -24,6 +24,7 @@ export interface DiagnosticCheckResult {
 	diagnostics: Diagnostic[];
 	reason?: string;
 	excludedPaths?: string[];
+	templateExcludedSources?: {file:string; matches:string[]}[];
 	baseExpressions?: BaseExpression[];
 	baseExpressionCount?: number;
 	rule?: DiagnosticRuleVersion;

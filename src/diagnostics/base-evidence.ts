@@ -52,7 +52,7 @@ function baseData(text: string) {
 }
 
 export async function readBaseEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
-	check: DiagnosticCheckResult, templateDirs: readonly string[]) {
+	check: DiagnosticCheckResult, templateDirs: readonly string[], includes: (file: string) => boolean) {
 	const {root} = location;
 	const {signal,trace} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
@@ -89,7 +89,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 	const files = [];
 	let remaining = 24 * 1024 * 1024;
 	for (const file of inventory.files) {
-		if (!file.toLowerCase().endsWith('.base')) continue;
+		if (!file.toLowerCase().endsWith('.base') || !includes(file)) continue;
 		let text: string;
 		try {
 			const bytes = await readRelative(root,file,Math.min(remaining,2 * 1024 * 1024),signal,trace);
@@ -100,6 +100,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 	}
 	const notes = [];
 	for (const {path:file,problem,body,lineOffset} of inventory.notes) {
+		if (!includes(file)) continue;
 		const pause = checkpoint?.();
 		if (pause) await pause;
 		const blocks = [];

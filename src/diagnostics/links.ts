@@ -9,6 +9,7 @@ import {inspectFootnotes, inspectPdfFragment} from './references.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, noteReader, readRelative, relativePath} from './snapshot.ts';
 import type {Inventory, NoteRecord} from './snapshot.ts';
+import type {SourceInclusion} from './source-exclusions.ts';
 import {printable} from './types.ts';
 import type {Diagnostic, DiagnosticCheckResult, LinkOccurrence, LinkRequest, LinkResolution} from './types.ts';
 
@@ -81,7 +82,7 @@ export function linkResolver(options: EvidenceOptions, inventory: Inventory, roo
 	const {signal,trace} = options;
 	const files = new Set(inventory.files);
 	const notes = new Map(inventory.notes.map(note => [note.path, note]));
-	const readNote = inventory.mode === 'paths' ? noteReader(root, signal, trace) : undefined;
+	const readNote = noteReader(root, signal, trace);
 	const anchors = new Map<string, {headings: Set<string>; blocks: Set<string>} | undefined>();
 	const baseViews = new Map<string, Promise<ReadonlySet<string> | undefined>>();
 	const vaultPath = (file: string) => location ? `${location}/${file}` : file;
@@ -103,7 +104,7 @@ export function linkResolver(options: EvidenceOptions, inventory: Inventory, roo
 		if (!/\.md$/iu.test(file) || fragment.startsWith('##')) return 'unknown';
 		if (!anchors.has(file)) {
 			let note = notes.get(file);
-			if (!note && readNote) {
+			if (!note && (inventory.mode === 'paths' || inventory.deferredNotes.has(file))) {
 				try {note = await readNote(file);}
 				catch {signal?.throwIfAborted();}
 			}
@@ -232,19 +233,23 @@ function reasonForUnknown(check: DiagnosticCheckResult) {
 }
 
 export async function inspectLinks(options: EvidenceOptions, inventory: Inventory, root: string, location: string,
-	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}) {
-	const {links, anchors, portability} = checks;
+	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}, includes: SourceInclusion) {
 	const checkpoint = diagnosticCheckpoint(options.signal);
-	const all = [links, anchors, portability].filter((item): item is DiagnosticCheckResult => !!item);
+	const selected = Object.values(checks).filter((item): item is DiagnosticCheckResult => !!item);
 	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
-	for (const check of all) {
+	for (const check of selected) {
 		reportInventoryCoverage(check, inventory);
-		reportUnreadableNotes(check, inventory);
+		reportUnreadableNotes(check, inventory, file => includes(check.id,file));
 	}
 	for (const note of inventory.notes) {
 		const pause = checkpoint?.();
 		if (pause) await pause;
-		const footnotes = links ?? anchors;
+		const links = includes('links',note.path) ? checks.links : undefined;
+		const anchors = includes('anchors',note.path) ? checks.anchors : undefined;
+		const portability = includes('portability',note.path) ? checks.portability : undefined;
+		const all = [links, anchors, portability].filter((item): item is DiagnosticCheckResult => !!item);
+		if (!all.length) continue;
+		const footnotes = checks.links ? links : anchors;
 		if (footnotes && (note.body.includes('[^') || note.body.includes('^[')))
 			inspectFootnotes(footnotes,maskLiterals(prose(note.body)),note.path,note.lineOffset);
 		const dynamic = fencedBlocks(note.body).filter(block => /^(?:base|dataview(?:js)?|tasks|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language));
@@ -310,7 +315,7 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 						tr('目前无法确认 Obsidian 链接目标。','Obsidian could not resolve this link yet.') :
 						tr('离线环境无法确认 Obsidian 的实际链接目标。','Run this check in Obsidian to confirm where the link resolves.')});
 			}
-			const media = anchors ?? links;
+			const media = checks.anchors ? anchors : links;
 			const pdf = media && inspectPdfFragment(media,link,found,{...position,evidence});
 			if (anchors && link.fragment && !pdf) {
 				if (found.status === 'missing') anchors.coverage.skipped++;
@@ -333,6 +338,6 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 			if (portability) await inspectPortability(portability, position, link, found);
 		}
 	}
-	for (const check of all) reasonForUnknown(check);
+	for (const check of selected) reasonForUnknown(check);
 }
 import {diagnosticCheckpoint} from './checkpoint.ts';

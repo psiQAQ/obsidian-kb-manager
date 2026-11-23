@@ -136,6 +136,134 @@ test('checked rows account for files and positive and negative results in new an
 	}
 });
 
+test('template exclusions filter each source check while preserving resolved targets and other checks', async t => {
+	for (const kit of [false,true]) await t.test(kit ? 'distributed rules and CLI' : 'legacy rules', async t => {
+		const {options,put,root,vault} = await fixture(t);
+		const diagnosticExclusions = [
+			{checks:['links','anchors','portability','bases'],folders:['Guide']},
+			{checks:['links','bases'],files:['Guide/sample.md','Standalone.base']},
+			{checks:['links'],files:['Links only.md']},
+		];
+		await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions}));
+		await put('name.md','[[./Guide/sample.md#Guide heading]]\n![[./Standalone.base#Example]]\n');
+		await put('Guide/sample.md','---\nrepeated: 1\nrepeated: 2\n---\n# Guide heading\n[[./missing.md]]\n```base\nviews: invalid\n```\n');
+		await put('Guide/plain.md','<!--\n```base\nviews: invalid\n```\n-->\n');
+		await put('Guide/nested/target.md','# Second candidate\n');
+		await put('Guide/Bad.canvas','{');
+		await put('Guide/attachment.txt','A non-source file\n');
+		await put('Guide-other/keep.md','[[./ordinary-missing.md]]\n');
+		await put('Standalone.base','views:\n  - type: table\n    name: Example\n    filters: 5\n');
+		await put('Regular.base','views: invalid\n');
+		await put('Links only.md','[[./notes/target.md#^missing]]\n');
+		if (kit) for (const [file,text] of Object.entries(checkKitFiles())) await put(file,text);
+		const selected = ['links','anchors','portability','bases','properties','canvas'];
+		const report = await runDiagnostics({...options,selected});
+		const excluded = id => result(report,id).templateExcludedSources;
+		assert.deepEqual(excluded('links'),[
+			{file:'Guide/nested/target.md',matches:['folders:Guide']},
+			{file:'Guide/plain.md',matches:['folders:Guide']},
+			{file:'Guide/sample.md',matches:['files:Guide/sample.md','folders:Guide']},
+			{file:'Links only.md',matches:['files:Links only.md']},
+		]);
+		assert.equal(result(report,'links').coverage.skipped, excluded('links').length + Number(kit));
+		assert.deepEqual(result(report,'links').diagnostics.map(row => row.file),['Guide-other/keep.md']);
+		assert.ok(result(report,'anchors').checkedItems.some(row => row.file === 'name.md' && row.subject.includes('Guide heading')));
+		assert.ok(result(report,'anchors').checkedItems.some(row => row.file === 'name.md' && row.subject.includes('Example')));
+		assert.deepEqual(result(report,'anchors').diagnostics.map(row => [row.file,row.code]),[['Links only.md','missing-anchor']]);
+		assert.ok(excluded('portability').some(row => row.file === 'Guide/Bad.canvas'));
+		assert.ok(!result(report,'portability').diagnostics.some(row => row.file === 'Guide/Bad.canvas'));
+		assert.deepEqual(excluded('bases'),[
+			{file:'Guide/sample.md',matches:['files:Guide/sample.md','folders:Guide']},
+			{file:'Standalone.base',matches:['files:Standalone.base']},
+		]);
+		assert.deepEqual(result(report,'bases').diagnostics.map(row => row.file),['Regular.base']);
+		assert.ok(result(report,'properties').diagnostics.some(row => row.file === 'Guide/sample.md'));
+		assert.ok(result(report,'canvas').diagnostics.some(row => row.file === 'Guide/Bad.canvas'));
+		assert.equal(excluded('properties'),undefined);
+		assert.equal(excluded('canvas'),undefined);
+
+		await put('name.md','[[target]]\n');
+		const visited = [];
+		const desktop = await runDiagnostics({...options,selected:['portability'],
+			collectLinks:source => {
+				visited.push(source);
+				return source === `${relative}/name.md` ? [{target:'target',kind:'link'}] : [];
+			},
+			resolveLink:() => ({status:'resolved',path:`${relative}/notes/target.md`})});
+		assert.ok(!visited.some(source => source.includes('/Guide/')));
+		const candidates = result(desktop,'portability').diagnostics.find(row => row.code === 'same-name-candidates');
+		assert.ok(candidates.evidence.includes(`${relative}/Guide/nested/target.md`));
+
+		if (kit) {
+			const argv = [path.join(root,'checks','kb-check.cjs'),'--library',root,'--vault-root',vault,'--checks','links'];
+			let output;
+			try {output = execFileSync(process.execPath,argv,{encoding:'utf8'});}
+			catch (error) {assert.equal(error.status,1); output = error.stdout;}
+			const cliLinks = result(JSON.parse(output),'links');
+			assert.deepEqual(cliLinks.templateExcludedSources,excluded('links'));
+			assert.equal(cliLinks.rule.engine,'bundled');
+		}
+	});
+});
+
+test('all excluded sources skip while unavailable targets, Markdown with unverified Base content, and directories remain unknown', async t => {
+	const {options,put,root} = await fixture(t);
+	const diagnosticExclusions = [
+		{checks:['links','anchors','portability'],files:['name.md'],folders:['notes','templates']},
+		{checks:['bases'],folders:['notes'],files:['View.base']},
+	];
+	await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions}));
+	await put('name.md','[[./missing.md]]\n');
+	await put('notes/unreadable.md',Buffer.from([0xff]));
+	await put('View.base','views: invalid\n');
+	const selected = ['links','anchors','portability','bases'];
+	const full = await runDiagnostics({...options,selected,linkCandidateScope:'registered'});
+	for (const id of ['links','anchors','portability']) {
+		const check = result(full,id);
+		assert.equal(check.status,'skipped');
+		assert.deepEqual(check.coverage,{checked:0,unknown:0,skipped:4});
+		assert.deepEqual(check.diagnostics,[]);
+	}
+	assert.equal(result(full,'bases').status,'partial');
+	assert.deepEqual(codes(result(full,'bases')),['unreadable-note']);
+	assert.deepEqual(result(full,'bases').templateExcludedSources,[{file:'View.base',matches:['files:View.base']}]);
+	await put('Reference.md','[[./notes/target.md#Local heading]]\n[[./notes/unreadable.md#Heading]]\n');
+	const anchors = result(await runDiagnostics({...options,selected:['anchors']}),'anchors');
+	assert.equal(anchors.coverage.checked,1, 'an excluded Markdown source is loaded as an anchor target when needed');
+	assert.equal(anchors.coverage.unknown,1);
+	assert.deepEqual(codes(anchors),['unverified-anchor']);
+	await put('notes/hidden/target.md','# Inside an unreadable directory\n');
+	const inaccessible = await withUnscannableDirectory(t,path.join(root,'notes','hidden'),() => runDiagnostics({...options,selected:['links']}));
+	assert.ok(codes(result(inaccessible,'links')).includes('unreadable-directory'));
+});
+
+test('approved edited rules receive filtered sources and invalid exclusions identify the declaration field', async t => {
+	const {options,put} = await fixture(t);
+	for (const [file,text] of Object.entries(checkKitFiles())) await put(file,text);
+	const edited = `export default ({result,notes},{recordChecked}) => {
+		for (const {file} of notes) recordChecked(result,file,"Edited rule","Source supplied");
+		return result;
+	};`;
+	await put('checks/common/links.mjs',edited);
+	const diagnosticExclusions = [{checks:['links'],folders:['notes','templates']}];
+	await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions}));
+	const trusted = {...options,trustedDigests:[digest(edited)]};
+	const report = result(await runDiagnostics({...trusted,selected:['links']}),'links');
+	assert.equal(report.rule.engine,'node');
+	assert.deepEqual(report.checkedItems.map(item => item.file),['name.md']);
+	assert.equal(report.templateExcludedSources.length,2);
+	await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions:[{...diagnosticExclusions[0],files:['name.md']}]}));
+	const skipped = result(await runDiagnostics({...trusted,selected:['links']}),'links');
+	assert.equal(skipped.status,'skipped');
+	assert.equal(skipped.templateExcludedSources.length,3);
+	await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions:[{checks:['links'],files:['../bad.md']}]}));
+	const invalid = await runDiagnostics({...trusted,selected:['links','manifest','properties']});
+	assert.equal(result(invalid,'links').status,'partial');
+	assert.match(result(invalid,'links').reason,/diagnosticExclusions\.0\.files\.0/u);
+	assert.match(result(invalid,'manifest').diagnostics.find(row => row.code === 'invalid-template').message,/diagnosticExclusions\.0\.files\.0/u);
+	assert.equal(result(invalid,'properties').status,'passed');
+});
+
 test('only common rules with matching official paths and digests run without a local Node executable', async t => {
 	const {options,root,put} = await fixture(t);
 	const {['checks/common/manifest.mjs']:officialManifest,['checks/common/properties.mjs']:officialProperties} = checkKitFiles();
