@@ -1,70 +1,148 @@
 # Knowledge Base Manager
 
-Manage several knowledge bases in one Obsidian vault, each with its own templates, diagnostics, and Git history. For example, you can commit changes to a research project while leaving your reading notes untouched. Start with an empty vault or register folders you already use.
+Keep research, reading notes and project work in one Obsidian vault. Each library has its own folder, templates, checks and Git history. You can commit changes to one project while leaving the other libraries untouched. Start with an empty vault or register an existing library.
 
 [简体中文使用指南](README.zh-CN.md)
 
 ## Install on desktop
 
-Use Obsidian 1.15.1 or later. Install Git for repository operations. Install Node.js to run template-specific checks, approved edits to general rules, or the command-line runner.
+Version `3.5.1` requires Obsidian desktop `1.15.1` or later. Install system Git for repository operations. The desktop plugin can run its bundled general checks on its own. Template-specific checks, approved edits to general rules and the offline CLI also require Node.js on your system `PATH`.
 
-In **Settings → Community plugins → Browse**, search for **Knowledge Base Manager**, then select **Install** and **Enable**. You can also open the plugin directly from the [Obsidian community directory](https://community.obsidian.md/plugins/knowledge-base-manager).
+In **Settings → Community plugins → Browse**, search for **Knowledge Base Manager**, then select **Install** and **Enable**. You can also open the plugin from the [Obsidian community directory](https://community.obsidian.md/plugins/knowledge-base-manager).
 
-For a manual installation from GitHub:
+To install manually from GitHub, use the files from a single release.
 
-1. Open the release you want and download `main.js`, `manifest.json`, and `styles.css` from **Assets**. [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases/latest)
-2. Create a folder named `knowledge-base-manager` under `<vault>/.obsidian/plugins/` and place all three files directly inside it. If your vault uses a different configuration folder, substitute that folder for `.obsidian`.
+1. Open [GitHub Releases](https://github.com/psiQAQ/obsidian-kb-manager/releases/latest) and download `main.js`, `manifest.json`, and `styles.css` from **Assets**.
+2. Create `<vault>/.obsidian/plugins/knowledge-base-manager/` and place all three files directly inside it. If your vault uses a custom configuration folder, substitute that folder for `.obsidian`.
 3. Reload Obsidian and enable **Knowledge Base Manager** under **Settings → Community plugins**.
 
-## Create your first library
+## Create, register, and use libraries
 
-1. Run **Open knowledge base manager** from the command palette. In the sidebar, select **Create**.
-2. Choose a use case and a template. The 18 built-in templates cover research, reading, project management, writing, and other workflows. [Template catalog and upstream credits](docs/template-catalog.md)
-3. Choose the vault root or another parent folder, enter the library folder name, and review the Git identity. You can change the initial branch and commit message. Leave the remote URL blank to work locally.
-4. Review the files and suggested search exclusions. Excluding a folder may hide its page templates from Bases views. Adjust the options and confirm, then select **Run first check** on the desktop success screen when you are ready to check the new library. With the default Git options, the first commit is `Initial commit` on `main`.
+1. Run **Open knowledge base manager** from the command palette. In the sidebar, select **Create**, choose a use case and a template, then select **Enter library details**.
+2. Choose a parent folder (the vault root is available) and enter the new folder name. Under **Advanced Git options**, check the name and email that will appear in commits. Leave the remote URL blank to work locally.
+3. Select **Preview** to review the destination, initial commit and folders to hide from Obsidian search and graph. Excluding a folder can also hide its notes in Bases. Kepano leaves `Templates` visible by default so you can browse its template views. The preview also flags any diagnostic exclusion that points to a missing file or folder.
+4. Select **Create library**. With the default settings, Git records `Initial commit` on `main` and includes the library’s offline runner. Select **Run first check** to see the results immediately. [First library walkthrough](docs/getting-started.md)
 
-Click a library card to open it. Hover over an action icon to see its name. Open a note in the library to insert one of its page templates. In the sidebar you can review file changes, stage a file or a hunk, and commit to that library. To work with an existing library, use the registration action in the sidebar to preview its registration. Each instance carries its own `kb.toml` identity file.
+Click a library card to open it. Hover over an icon to see its action. With a note from that library open, run **Insert library template** to preview the insertion. Existing note properties keep their values.
 
-Registered paths are stored in the plugin’s `data.json` alongside its language and Git defaults. If your vault is in Git, check whether `data.json` is already tracked before sharing it. It now contains your library folder names.
+For an existing library, use **Register existing libraries** and select its `kb.toml` or scan a parent folder. Use **Clone** to bring in a remote repository. [Registration and recovery](docs/library-lifecycle.md)
 
-## Read a library’s Git history
+### Choose a template
 
-Open **Git workspace → History** and click a commit. Its details and changed files open directly below that row. Green marks added files, red marks deleted files, and `(+10|-5)` beside a modified file means ten lines were added and five removed. Click a file to read its diff. For a merge, you can choose which parent to compare.
+The 18 built-in templates cover nine use cases. Each entry below names the template, its stable ID and what its specialized check looks for. [Template sources and licenses](docs/template-catalog.md)
 
-To compare two commits, click the first, then Ctrl-click another (Cmd-click on macOS). The panel stays with the first commit. Ctrl/Cmd-click a third commit to replace the second, or Ctrl/Cmd-click the second again to return to the first commit’s details. The header shows the direction, from the lower row in the graph to the upper row. Use **Swap comparison direction** to reverse it.
+| Use case (`purpose`) | First template (`id` · default check) | Second template (`id` · default check) |
+| --- | --- | --- |
+| **Starter and daily notes** (`starter`) | **First week of notes** (`minimal-first-week` · daily entry and date) | **Journal and knowledge notes** (`minimal-journal` · note archive year) |
+| **Collections** (`collections`) | **Kepano (with examples)** (`kepano` · category links) | **Media tracker** (`media-tracker` · media progress, ratings, and completion dates) |
+| **Research** (`research`) | **Research project** (`research-project` · finding evidence) | **Research evidence map** (`research-evidence` · evidence source types) |
+| **Reading** (`reading`) | **Zettelkasten** (`zettelkasten` · permanent note provenance) | **Topic reading and spaced review** (`domain-reading` · review card Q&A) |
+| **Learning** (`learning`) | **Coursework** (`coursework` · valid courses and due dates) | **Exam practice and error review** (`exam-practice` · retry history for mastered items) |
+| **Engineering and knowledge sharing** (`engineering`) | **Knowledge garden** (`knowledge-garden` · visibility and private references in shared notes) | **Technology radar** (`technology-radar` · adoption evidence and status) |
+| **Projects and actions** (`projects`) | **Projects and weekly reviews** (`project-review` · open tasks before archiving) | **Action lists and GTD** (`gtd` · waiting item location and follow-up date) |
+| **Writing and worldbuilding** (`writing`) | **Long-form manuscript** (`manuscript` · chapter numbering within a manuscript) | **Worldbuilding and timelines** (`worldbuilding` · event dates and locations) |
+| **AI workflows** (`ai-workflows`) | **Integrated LLM Wiki** (`llm-wiki` · wiki index and analysis evidence) | **AI collaboration work log** (`ai-worklog` · decision supersession links) |
 
-## Check a library
+For example, Knowledge garden flags a private note marked as ready to share. Worldbuilding checks calendar dates such as `2026-02-30` while allowing fictional dates. You can also register a personal folder template or make one that declares its variables, managed files and checks in `kb-template.json`. [Template authoring guide](docs/template-authoring.md)
 
-Select the **Check library** icon on the library card. You can check properties, links, attachments, Canvas files, and Bases, or run the checks declared by its template. Use **Choose individual checks** and select **Portability** to find dependencies on other libraries and inspect same-name link targets. The desktop plugin uses Obsidian’s link resolution to identify the file that actually opens.
+## Per-library Git workflow and history graph
 
-Each result includes findings and coverage. A partial result means something could not be checked, even if there are no findings. New libraries carry their own runner and editable rules. From the library root, with Node.js installed, run:
+Open **Git workspace** on a library card. In **Changes**, click a file to read its diff and stage a file or an individual hunk. If you stage a file and then edit it again, committing the staged changes saves the earlier snapshot. You can make a local commit before configuring a remote. [Git workflow, credentials and automation](docs/library-git.md)
+
+Open **History** and click a commit. By default, its metadata and changed files expand **under that row**. A merge opens against its first parent; you can select another parent. Click a file to open its red-and-green line diff, side by side or unified.
+
+To compare two commits, click one, then **Ctrl-click** another (**Cmd-click** on macOS). The panel stays at the first row. The comparison runs from the lower row to the upper row; **Swap comparison direction** reverses it. Ctrl/Cmd-click a third row to change the comparison, or click the second again with the modifier to go back. Scroll down to load older commits, or press Ctrl/Cmd+F to search. [History graph controls](docs/git-graph-compatibility.md)
+
+## Check a library and run the offline CLI
+
+On the library card, select **Check library → Start check** to run the general checks and template-specific rules. To see what would be left behind if you moved the library on its own, select **Choose individual checks → Portability**. Obsidian supplies the target it actually opens. By default, the same-name candidate search covers this library and other registered libraries; you can expand that search to the whole vault.
+
+Expand an item under **Coverage by check** to see which files were checked, skipped or left unverified and why. For example, a Base can have valid YAML and still contain a dynamic filter whose results need to be viewed in Obsidian. Click a file and line to see the current source, for example the directory filter in `Views/Courses.base`. A `partial` report with zero findings can still contain unverified items.
+
+Template authors can set `diagnosticExclusions` in `kb-template.json` to skip selected checks for named source files or folders. Other notes linking **to** an excluded file still have their links checked. Obsidian’s search and graph exclusions are configured separately.
+
+New libraries carry `checks/kb-check.cjs` and editable rules in `checks/common/`. In **Tools → Review version and changes**, you can update eligible files and inspect local edits for manual merging. Existing Kepano libraries can update `Attachments.base` and `Everything.base` individually. For a personal or edited rule, choose **Review script**, inspect its source and approve its SHA-256 fingerprint. An edit requires fresh approval. Older libraries without a runner can export one from **Tools**.
+
+With Node.js installed, run these commands from the library root, even when Obsidian is closed:
 
 ```sh
+node ./checks/kb-check.cjs --library . --list
 node ./checks/kb-check.cjs --library . --checks all
 ```
 
-For libraries created before 3.2.0, the **Tools** tab lets you export the offline runner. Review changes to local rules before trusting them in Obsidian. These scripts execute with your account’s permissions.
+`--checks all` runs the regular and template checks. To check portability separately, use `--checks portability` and pass `--vault-root` with the actual vault path. Offline runs may leave short links unverified. The CLI prints JSON and saves a report to `.log/`. Read `status`, each check’s `coverage` and its `diagnostics` together, even if the exit code is zero. [Checks, exit codes and log format](docs/diagnostics.md)
 
-The CLI writes JSON to standard output. Read `status`, each check’s `coverage`, and its `diagnostics` together. Offline checks can report a short link as unverified when its actual destination depends on Obsidian’s metadata cache.
+## Move or rename a library
 
-## Files, processes, and privacy
+Select **Move** on the library card, choose a destination and preview the change. To rename the library in place, keep its current parent and change the folder name.
 
-| Capability | When it is used |
+The preview lists affected inbound links and recognizable path filters in standalone and embedded Bases, including views you created yourself. For example, moving `Lab` to `Archive/Lab` can require changing `file.inFolder("Lab/Courses")`. A relative link such as `[[../Course index]]` stays out of the preview if it will still open the same file. Review ambiguous links, unsaved edits and changes outside the library before confirming. Interrupted moves can be reviewed and resumed. [Moving a library](docs/library-lifecycle.md)
+
+## Settings, storage, and privacy
+
+| Where | What it holds or accesses |
 | --- | --- |
-| Filesystem access | Creating and moving a library, reading its Git metadata, and saving diagnostic logs in its `.log/` folder require direct access to local files. The desktop plugin uses Node.js filesystem APIs to check paths and filesystem links before managed operations. |
-| Local processes | The plugin starts system Git for repository operations and OpenSSH for SSH connections. It selects executables outside the vault and passes arguments directly. General rules whose path and SHA-256 match the installed plugin run from its bundle. Edited general rules and template-specific checks run in a separate local Node.js process with your operating-system account’s file and network permissions. Review personal scripts and approve their current SHA-256 fingerprint before running them. |
-| Vault paths and note contents | Select a manifest by path or scan a folder to register libraries. Portability checks look for same-name candidates in the current and registered libraries by default. Choose the whole-vault option to include other folders. Obsidian resolves actual link destinations across the vault in both modes. |
-| Git history and clipboard | Choosing a Copy action writes the selected commit SHA, subject, reference name or file path to the clipboard. |
-| Move previews | The plugin checks file paths across the vault to find inbound links affected by the move. Changes to a reference are shown in the preview. |
-| Diagnostic JSON | Open the report or debug information to inspect the JSON. You can select the text and use your system’s Copy command. |
-| Network and credentials | Git clone, fetch, pull, and push contact the remote you configure. A push sends the library’s commits, including their author information. Automatic sync requires authorization for that library. Desktop Git can use your system credential helper or SSH configuration. |
+| Plugin `data.json` | Language, default Git preferences and registered vault-relative library paths. Check whether this file is tracked before sharing a vault configuration. |
+| Library and device settings | `kb.toml` stores the library’s UUID, template and per-library preferences. It is ignored by the library’s Git repository; keep it with the folder when moving it. Git identity and remotes use `.git/config`. Favorites, script approvals, automation grants and move recovery records stay on the device. Optional HTTPS fallback credentials use Obsidian SecretStorage. |
+| Local files and processes | Desktop operations use filesystem APIs for library management, Git metadata and logs. Move previews inspect vault paths for affected inbound links. Git operations use system Git and can use OpenSSH for SSH remotes. Approved custom checks and template checks run in a local Node.js process with your account’s file and network permissions. |
+| Network and clipboard | Clone, fetch, pull and push contact your chosen remote. Pushing shares commits and their authors. Automatic sync requires per-library authorization. Choosing a copy action in Git history writes the selected SHA, subject, reference or file path to the clipboard. |
 
-## Build and contribute
+## Build, verify, and contribute
 
-Use Node.js 24 and npm in the repository root. Run `npm ci`, then `npm run build` to generate `main.js` and `dist/kb-check.cjs`. To make a local ZIP with the plugin, CLI, and license notices, run `python scripts/package_plugin.py`. The archive is written to `dist/knowledge-base-manager.zip`.
+Use Node.js 24, npm, system Git, and Python 3 in the repository root:
 
-The Chinese guides cover the [Git workflow](docs/library-git.md), [desktop history graph and Git Graph feature comparison](docs/git-graph-compatibility.md), [library lifecycle](docs/library-lifecycle.md), [diagnostic report format](docs/diagnostics.md), [template authoring](docs/template-authoring.md), and [build and verification commands](docs/development.md).
+```sh
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+node scripts/verify-mobile.mjs
+python scripts/package_plugin.py
+```
+
+The build produces `main.js` and `dist/kb-check.cjs`. The packaging script audits bundled dependencies and licenses and produces `dist/knowledge-base-manager.zip` with the plugin, CLI and notices. GitHub Releases distribute the three plugin files individually. CI validates the build on Windows, macOS and Ubuntu.
+
+Detailed guides (in Simplified Chinese)
+
+- [Getting started and first library walkthrough](docs/getting-started.md)
+- [Per-library Git workflow and credentials](docs/library-git.md)
+- [Desktop history graph and VS Code Git Graph comparison](docs/git-graph-compatibility.md)
+- [Obsidian Git feature and command mapping](docs/git-compatibility.md)
+- [Library lifecycle, registration, move, and recovery](docs/library-lifecycle.md)
+- [Running and interpreting library diagnostics](docs/diagnostics.md)
+- [Built-in template catalog and upstream credits](docs/template-catalog.md)
+- [Template authoring and diagnostic script protocol](docs/template-authoring.md)
+- [Build, verification, and platform support](docs/development.md)
+
+<details>
+<summary>Repository source and architecture guide</summary>
+
+```text
+obsidian-kb-manager/
+├── manifest.json / versions.json / package.json / tsconfig.json / styles.css
+├── esbuild.config.mjs               # Builds plugin main.js + standalone CLI dist/kb-check.cjs
+├── src/
+│   ├── main.ts                      # Desktop lifecycle, per-library mutex, commands, views
+│   ├── settings.ts / preferences.ts / i18n.ts
+│   ├── kb/                          # Catalog discovery, kb.toml identity, create/clone/move, bindings, check kit updates
+│   ├── git/                         # Per-library native Git & isomorphic-git services, history graph, blame, hunks, sync
+│   ├── diagnostics/                 # Shared diagnostic engine, bundled/Node common rules, template checks, CLI entry (cli.ts)
+│   ├── fs/ & registry/              # Vault boundary validation, atomic writes, data.json registry & discovery
+│   ├── ui/                          # Sidebar manager, wizards, Git workspace/history/diff tabs, health & script review dialogs
+│   └── mobile/                      # Mobile entry split via Platform.isMobile (verified by verify-mobile.mjs; release isDesktopOnly)
+├── assets/
+│   ├── checks/common/*.mjs          # Distributed common check rules (manifest, properties, links, anchors, canvas, bases, bindings, portability)
+│   ├── templates/<purpose>/<id>/    # 18 built-in templates across 9 categories (kb-template.json, checks/*.mjs, LICENSES.md)
+│   └── licenses/obsidian-git.txt    # Upstream Obsidian Git MIT license notice
+├── scripts/                         # template-catalog.mjs, build-check-kit.mjs, prepare-test-kit.mjs, verify-mobile.mjs, package_plugin.py
+├── tests/                           # Node test runner suites (*.test.mjs) and isolated fixtures
+├── docs/                            # Operational, compatibility, diagnostic, template authoring, and development guides
+└── .github/workflows/               # Cross-platform validation (lint.yml) and tag draft release with provenance (release.yml)
+```
+
+</details>
 
 ## License and credits
 
-Knowledge Base Manager uses the [0BSD license](LICENSE). Its Git interface includes code adapted from [Obsidian Git 2.43.0](https://github.com/Vinzent03/obsidian-git) under the [MIT license](assets/licenses/obsidian-git.txt). Each built-in template credits its authors and records its upstream source and license in the [template catalog](docs/template-catalog.md).
+Knowledge Base Manager is released under the [0BSD license](LICENSE). Its Git interface includes code adapted from [Obsidian Git 2.43.0](https://github.com/Vinzent03/obsidian-git) under the [MIT license](assets/licenses/obsidian-git.txt). For the templates, see the authors and upstream licenses in the [template catalog](docs/template-catalog.md). The local ZIP includes `THIRD_PARTY_NOTICES.md`.
