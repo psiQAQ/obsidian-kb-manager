@@ -139,6 +139,8 @@ node ./checks/kb-check.cjs --library . --checks all
 
 ---
 
+移动预览会在 Vault 中查找受影响的入链。Git 历史中的复制命令会把所选提交 SHA、标题、引用名称或文件路径写入剪贴板。
+
 **网络、凭据与本机访问。** 本地建库和检验可离线使用。克隆、获取、拉取、推送会访问你配置的 Git 远端；推送会发送待推的提交及其历史。后台同步须按库授权。桌面从 Vault 外选择 Git 和 OpenSSH 可执行文件，以独立参数启动程序，并使用系统 Git 配置、凭据助手或 SSH 代理，也可为指定 HTTPS 目标选用 SecretStorage 中的令牌。新库的通用规则和模板专项会查找 Vault 外的 Node.js 可执行文件，并将所需笔记上下文交给已授信的脚本；该进程具有当前账号的文件和网络权限。[逐库 Git 与凭据](docs/library-git.md) · [迁移、恢复与设置存储](docs/library-lifecycle.md)
 
 ## 二、开发者指南（Developers）

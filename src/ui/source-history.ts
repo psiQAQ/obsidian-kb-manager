@@ -146,8 +146,13 @@ class SourceHistory extends ItemView {
 			list.setCssProps({'--kb-history-author-width':options.authorWidth+'ch',
 				'--kb-history-date-width':options.dateWidth+'ch','--kb-history-sha-width':options.shaWidth+'ch'});
 			const inline=options.detailLayout==='inline';
-			const inlinePanel=inline?list.doc.createElement('div'):undefined;
-			if(inlinePanel){inlinePanel.addClass('kb-history-inline');inlinePanel.id=this.detailId;}
+			const detached=list.doc.createDocumentFragment();
+			const inlinePanel=inline?detached.createDiv():undefined;
+			if(inlinePanel){
+				inlinePanel.addClass('kb-history-inline');
+				inlinePanel.toggleClass('kb-history-inline-with-graph',options.graph);
+				inlinePanel.id=this.detailId;
+			}
 			const detail=(inlinePanel??panels).createDiv({cls:'kb-history-detail'});
 			if(!inline)detail.id=this.detailId;
 			const empty=list.createEl('p',{text:scopedRefs?t('所选引用没有可显示的提交','No commits to show for the selected refs'):
@@ -284,8 +289,7 @@ class SourceHistory extends ItemView {
 				const primary=entries.find(ref=>scopedRefs?.has(historyRefKey(ref)))??entries.find(ref=>ref.ref===currentRef);
 				const refs=primary?[primary,...entries.filter(ref=>ref!==primary)]:entries;
 				const title=working?workLabel:commit.message.split('\n')[0]||t('无提交说明','No commit message');
-				const button=list.doc.createElement('button');
-				button.addClass('kb-history-row');
+				const button=detached.createEl('button',{cls:'kb-history-row'});
 				button.type='button';button.dataset.oid=oid;
 				const node=working?'worktree':oid===snapshot.head?'head':refs.some(ref=>ref.kind==='stash')?'stash':
 					commit.parents.length>1?'merge':'commit';

@@ -86,7 +86,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		return step;
 	});
 	const pages=frame.createDiv();
-	const newPage=()=>wizard.contentEl.doc.createElement('fieldset');
+	const newPage=()=>wizard.contentEl.doc.createDocumentFragment().createEl('fieldset');
 	const templatePage=newPage(),detailsPage=newPage();
 	detailsPage.addClass('kb-wizard-fields');
 	const libraryOptions=panelGroup(detailsPage);
@@ -143,6 +143,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		page.setAttribute('aria-label',stepLabels[index]!);
 		page.tabIndex=-1;
 		pages.replaceChildren(page);
+		wizard.modalEl.toggleClass('kb-dialog-with-primary-footer',index===2);
 		for(const [position,step] of steps.entries()){
 			if(position===index)step.setAttribute('aria-current','step');
 			else step.removeAttribute('aria-current');
@@ -155,6 +156,7 @@ export async function createWizard(plugin:KnowledgeBaseManager,refresh:()=>Promi
 		wizard.setTitle(title);
 		progress.hidden=true;
 		pages.replaceChildren(page);
+		wizard.modalEl.removeClass('kb-dialog-with-primary-footer');
 		wizard.contentEl.scrollTop=0;
 		if(!wizard.containerEl.isConnected)wizard.open();
 		wizard.titleEl.tabIndex=-1;

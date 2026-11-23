@@ -9,6 +9,9 @@ export function panelGroup(parent:HTMLElement,title?:string):HTMLElement {
 
 export function changeActions(parent:HTMLElement,actions:readonly {label:string;run:(origin:HTMLButtonElement)=>Promise<void>;primary?:boolean}[]) {
 	const footer=parent.createDiv({cls:'kb-change-actions'});
+	const hasPrimary=actions.some(action=>action.primary);
+	footer.toggleClass('kb-change-actions-with-primary',hasPrimary);
+	if(parent.matches('.kb-dialog > .modal-content'))parent.parentElement?.toggleClass('kb-dialog-with-primary-footer',hasPrimary);
 	const controls=footer.createDiv({cls:'kb-change-action-buttons'});
 	const errorEl=footer.createDiv({cls:'kb-action-error',attr:{role:'alert'}});
 	errorEl.hidden=true;
@@ -22,11 +25,13 @@ export function changeActions(parent:HTMLElement,actions:readonly {label:string;
 			busy=true;
 			controls.setAttribute('aria-busy','true');
 			updateButtons();
+			footer.removeClass('kb-change-actions-with-error');
 			errorEl.hidden=true;
 			errorEl.empty();
 			try { await run(button.buttonEl); }
 			catch(error){
 				if(errorEl.isConnected){
+					footer.addClass('kb-change-actions-with-error');
 					errorEl.hidden=false;
 					errorEl.setText(String(error));
 				} else new Notice(String(error),8000).messageEl.addClass('kb-notice-text');
