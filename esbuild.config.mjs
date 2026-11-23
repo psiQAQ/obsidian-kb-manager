@@ -19,7 +19,7 @@ if you want to view the source, please visit the github repository of this plugi
 const prod = process.argv[2] === 'production';
 
 const {packs,digests}=templateCatalog(fileURLToPath(new URL('./assets/templates/',import.meta.url)));
-let kit = await buildCheckKit(digests);
+let kit = await buildCheckKit({packs,digests});
 const defines={KB_TEMPLATE_PACKS:JSON.stringify(packs),KB_CHECK_DIGESTS:JSON.stringify(digests),...(prod?kit.defines:{})};
 if (prod) {
 	mkdirSync('dist',{recursive:true});
@@ -46,7 +46,7 @@ module.exports = platform.isMobile ? require('./src/mobile/plugin.ts').default :
 		{name:'watch-check-kit',setup(build){
 			if(prod)return;
 			const directory=fileURLToPath(new URL('./assets/checks/common/',import.meta.url));
-			build.onStart(async()=>{kit=await buildCheckKit(digests);});
+			build.onStart(async()=>{kit=await buildCheckKit({packs,digests});});
 			build.onLoad({filter:/[\\/]kb[\\/](?:check-kit|common-rules)\.ts$/},async({path})=>{
 				const module=await esbuild.transform(readFileSync(path,'utf8'),{loader:'ts',define:kit.defines});
 				return {contents:module.code,loader:'js',resolveDir:dirname(path),watchDirs:[directory],

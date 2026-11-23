@@ -1,7 +1,9 @@
 import {tr} from '../i18n.ts';
 import {recordChecked} from './checked-items.ts';
 import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
-import {dynamicTarget, linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
+import {linkRequest, linkResolver, missingLink, staticOccurrences} from './links.ts';
+import {recordLinkPlaceholder} from './common-tools.ts';
+import {dynamicTarget, isTemplateSource, linkPlaceholder} from './placeholders.ts';
 import {inspectPdfFragment} from './references.ts';
 import type {EvidenceOptions, InputTrace} from './provenance.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
@@ -129,7 +131,7 @@ const color = (value: unknown) => value === undefined || typeof value === 'strin
 const optionalEnum = (value: unknown, domain: Set<string>) => value === undefined || typeof value === 'string' && domain.has(value);
 
 export async function inspectCanvas({canvas, portability: portabilityCheck}: {canvas?: DiagnosticCheckResult; portability?: DiagnosticCheckResult},
-	root: string, inventory: Inventory, options: EvidenceOptions, location: string, includes: SourceInclusion) {
+	root: string, inventory: Inventory, options: EvidenceOptions, location: string, includes: SourceInclusion, templateDirs: readonly string[]) {
 	const check = canvas ?? portabilityCheck;
 	if (!check) return;
 	const checkpoint = diagnosticCheckpoint(options.signal);
@@ -172,18 +174,26 @@ export async function inspectCanvas({canvas, portability: portabilityCheck}: {ca
 		}
 		if (data.edges !== undefined && !Array.isArray(data.edges)) fail('canvas-structure', structureMessage);
 		const source = vaultPath(file);
+		const inTemplate = isTemplateSource(file,templateDirs);
 		const inspectReference = async (link: LinkRequest, details: string) => {
 			const exact = link.canvasPath;
-			if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
-				for (const item of fileChecks) {item.coverage.skipped++; deferred.add(item);}
-				check.diagnostics.push({file,evidence:details,severity:'info',code:'template-link-deferred',message:tr('Canvas 中的模板链接待实例化后检查。','Check the Canvas template link after its variables are filled in.')});
+			const placeholder = linkPlaceholder(link,inTemplate,true);
+			if (placeholder) {
+				for (const item of fileChecks) {
+					recordLinkPlaceholder(item,placeholder,{file,evidence:details},item === check);
+					if (placeholder.coverage === 'skipped') deferred.add(item);
+					if (placeholder.coverage === 'unknown') {
+						if (item === canvas) unresolvedCanvas = true;
+						else unresolvedPortability = true;
+					}
+				}
 				return;
 			}
 			const found = await resolve(file, link);
 			const evidence = [found.path ?? (relativePath(link.target) ? link.target : undefined), details].filter(Boolean).join(' · ');
 			const cross = outsideTarget(found);
 			if (portability) await inspectPortability(portability, {file}, link, found, details);
-			else if (!portabilityCheck && cross) check.diagnostics.push({file,evidence:[cross.evidence, details].join(' · '), severity:'info',code:'cross-library-link',
+			else if (cross) check.diagnostics.push({file,evidence:[cross.evidence, details].join(' · '), severity:'info',code:'cross-library-link',
 				message:tr('Canvas 引用解析到当前知识库之外的 Vault 文件。','The Canvas reference resolves to a vault file outside this library.')});
 			const unknownBefore = canvas?.coverage.unknown ?? 0;
 			const pdf = canvas && inspectPdfFragment(canvas, link, found, {file,evidence}, details);
@@ -220,7 +230,7 @@ export async function inspectCanvas({canvas, portability: portabilityCheck}: {ca
 			if (canvas && canvas.coverage.unknown > unknownBefore) unresolvedCanvas = true;
 		};
 		async function target(value: unknown, details: string, fragment?: string) {
-			if (!relativePath(value)) {uninspectable('canvas-file-path', tr('Canvas 文件路径不是有效的 Vault 相对路径。','Use a valid vault-relative path for the Canvas file reference.'),details); return;}
+			if (typeof value !== 'string' || !dynamicTarget(value) && !relativePath(value)) {uninspectable('canvas-file-path', tr('Canvas 文件路径不是有效的 Vault 相对路径。','Use a valid vault-relative path for the Canvas file reference.'),details); return;}
 			await inspectReference({source,target:value,fragment,kind:'embed',syntax:'wiki',canvasPath:true}, details);
 		}
 		async function textLinks(body: string, node: string) {

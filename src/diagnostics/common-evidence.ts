@@ -5,7 +5,8 @@ import {bindingEvidence} from './binding-evidence.ts';
 import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
-import {dynamicTarget, linkRequest, linkResolver, maskLiterals, staticOccurrences} from './links.ts';
+import {linkRequest, linkResolver, maskLiterals, staticOccurrences} from './links.ts';
+import {dynamicTarget, isTemplateSource, linkPlaceholder} from './placeholders.ts';
 import {footnoteEvidence} from './references.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, readRelative, relativePath} from './snapshot.ts';
@@ -32,15 +33,18 @@ async function* readStructured(root: string, inventory: Inventory, extension: st
 }
 
 export function commonEvidence(options: EvidenceOptions, location: Location, inventory: Inventory,
-	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>, includes: SourceInclusion) {
+	manifest: Manifest, template: TemplateSnapshot, templateDirs: string[], selected: ReadonlySet<string>,
+	cooperating: ReadonlySet<string>, includes: SourceInclusion) {
 	const {root, relative, vault, identifiedVault} = location;
 	const {signal} = options;
 	const checkpoint = diagnosticCheckpoint(signal);
+	const includesPeer = (id: string, file: string) => cooperating.has(id) && includes(id,file);
 	let resolver: ReturnType<typeof linkResolver> | undefined;
 	const getResolver = () => resolver ??= linkResolver({...options,vaultRoot:identifiedVault ? vault : undefined}, inventory, root, relative);
 
 	async function reference(file: string, link: LinkRequest, line?: number) {
-		if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) return {kind:'template' as const, link, line};
+		const placeholder = linkPlaceholder(link,isTemplateSource(file,templateDirs),file.toLowerCase().endsWith('.canvas'));
+		if (placeholder) return {kind:'template' as const, link, line, placeholder};
 		const {resolve,outsideTarget} = getResolver();
 		const found = await resolve(file, link);
 		return {kind:'local' as const, link, found, line, cross:outsideTarget(found),
@@ -74,7 +78,8 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 				references.push(await occurrence(file,item));
 			}
 			const footnotes = body.includes('[^') || body.includes('^[') ? footnoteEvidence(maskLiterals(prose(body)),lineOffset) : undefined;
-			notes.push({file, lineOffset, problem, dynamic, footnotes, references, cacheUnavailable:!!options.collectLinks && native === undefined});
+			notes.push({file, lineOffset, problem, dynamic, footnotes, references, linksIncluded:includesPeer('links',file),
+				anchorsIncluded:includesPeer('anchors',file), cacheUnavailable:!!options.collectLinks && native === undefined});
 		}
 		return notes;
 	}
@@ -97,7 +102,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 					continue;
 				}
 				const target = node.type === 'file' ? node.file : node.type === 'group' ? node.background : undefined;
-				if (!relativePath(target)) {references.push([]); continue;}
+				if (typeof target !== 'string' || !dynamicTarget(target) && !relativePath(target)) {references.push([]); continue;}
 				const fragment = node.type === 'file' && typeof node.subpath === 'string' && node.subpath.startsWith('#') ? node.subpath : undefined;
 				references.push([await reference(file,{source:vaultPath(file),target,fragment,kind:'embed',syntax:'wiki',canvasPath:true})]);
 			}
@@ -127,7 +132,8 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 		case 'links': case 'anchors':
 			return {result:check, notes:(await getLinks()).filter(note => includesSource(note.file)),
 				linksSelected:selected.has('links'), anchorsSelected:selected.has('anchors'), desktop:!!options.resolveLink};
-		case 'canvas': return {result:check, canvases:await getCanvases(), portabilitySelected:selected.has('portability')};
+		case 'canvas': return {result:check, canvases:(await getCanvases()).map(canvas =>
+			({...canvas,portabilityIncluded:includesPeer('portability',canvas.file)})), portabilitySelected:selected.has('portability')};
 		case 'portability': {
 			const scope = options.linkCandidateScope;
 			if (scope) {
@@ -156,7 +162,7 @@ export function commonEvidence(options: EvidenceOptions, location: Location, inv
 				}
 				canvasMatches.push(nodes);
 			}
-			return {result:check, notes, canvases:canvasFiles, candidateMatches, canvasMatches, canvasSelected:selected.has('canvas')};
+			return {result:check, notes, canvases:canvasFiles, candidateMatches, canvasMatches, canvasSelected:selected.has('canvas'), canvasIncluded:cooperating.has('canvas')};
 		}
 		default: throw new Error('unknown-common-rule');
 		}

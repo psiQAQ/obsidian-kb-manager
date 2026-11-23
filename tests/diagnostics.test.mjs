@@ -12,6 +12,7 @@ import {saveDiagnosticReport} from '../src/diagnostics/history.ts';
 import {setLanguage} from '../src/i18n.ts';
 import {checkKitFiles,checkKitVersion} from '../src/kb/check-kit.ts';
 import {writeCheckKit} from '../src/kb/identity-core.ts';
+import {builtinPacks,packText} from '../src/kb/template-pack.ts';
 
 const id = '81079855-d3ba-4c76-b59a-042412ba624a';
 const relative = 'libraries/示例库';
@@ -202,6 +203,172 @@ test('template exclusions filter each source check while preserving resolved tar
 			const cliLinks = result(JSON.parse(output),'links');
 			assert.deepEqual(cliLinks.templateExcludedSources,excluded('links'));
 			assert.equal(cliLinks.rule.engine,'bundled');
+		}
+	});
+});
+
+function readCliReport(root, checks, args = []) {
+	const command = [path.join(root,'checks/kb-check.cjs'),'--library',root,'--checks',checks,...args];
+	try {return {code:0,report:JSON.parse(execFileSync(process.execPath,command,{encoding:'utf8'}))};}
+	catch (error) {
+		assert.ok(error.status === 1 || error.status === 2,error.message);
+		return {code:error.status,report:JSON.parse(error.stdout)};
+	}
+}
+
+test('cooperating rules retain findings for sources excluded from the other rule', async t => {
+	for (const kit of [false,true]) await t.test(kit ? 'distributed rules' : 'legacy rules',async t => {
+		const {options,put,root,vault} = await fixture(t);
+		if (kit) for (const [file,source] of Object.entries(checkKitFiles())) await put(file,source);
+		await put('kb-template.json',JSON.stringify({...declaration,diagnosticExclusions:[
+			{checks:['anchors'],files:['PDF.md']},
+			{checks:['links'],files:['Footnote.md']},
+			{checks:['links','anchors'],files:['Excluded.md']},
+			{checks:['portability'],files:['Map.canvas']},
+		]}));
+		await put('doc.pdf','PDF');
+		await put('PDF.md','[[./doc.pdf#page=0]]\n');
+		await put('Footnote.md','A footnote [^missing].\n');
+		await put('Both.md','[[./doc.pdf#page=0]]\nA footnote [^missing].\n');
+		await put('Excluded.md','[[./doc.pdf#page=0]]\nA footnote [^missing].\n');
+		await put('Map.canvas',JSON.stringify({nodes:[{id:'target',type:'file',file:'Neighbor/Paper.md',x:0,y:0,width:100,height:100}]}));
+		const selected = ['links','anchors','canvas','portability'];
+		const desktop = {...options,resolveLink:({canvasPath}) => canvasPath ? {status:'resolved',path:'Neighbor/Paper.md'} : {status:'unavailable'}};
+		const combined = await runDiagnostics({...desktop,selected});
+		const shared = (report,id) => result(report,id).diagnostics.filter(item =>
+			['invalid-pdf-page','missing-footnote-definition','cross-library-link'].includes(item.code));
+		const findings = (report,id) => shared(report,id).map(({file,code}) => [file,code]);
+		assert.deepEqual(findings(combined,'links'),[['Both.md','missing-footnote-definition'],['PDF.md','invalid-pdf-page']]);
+		assert.deepEqual(findings(combined,'anchors'),[['Both.md','invalid-pdf-page'],['Footnote.md','missing-footnote-definition']]);
+		assert.deepEqual(findings(combined,'canvas'),[['Map.canvas','cross-library-link']]);
+		assert.ok(!result(combined,'portability').diagnostics.some(item => item.file === 'Map.canvas'));
+		for (const [id,file] of [['links','PDF.md'],['anchors','Footnote.md'],['canvas','Map.canvas']]) {
+			const single = await runDiagnostics({...desktop,selected:[id]});
+			assert.deepEqual(shared(combined,id).filter(item => item.file === file),shared(single,id).filter(item => item.file === file));
+		}
+		if (kit) {
+			const args = ['--vault-root',vault,'--config-dir','.settings'];
+			const cli = readCliReport(root,selected.join(','),args);
+			assert.equal(cli.code,1);
+			assert.deepEqual(findings(cli.report,'links'),findings(combined,'links'));
+			assert.deepEqual(findings(cli.report,'anchors'),findings(combined,'anchors'));
+			assert.ok(codes(result(cli.report,'canvas')).includes('canvas-target-unverified'));
+			assert.ok(!codes(result(cli.report,'canvas')).includes('cross-library-link'));
+			const edited = 'export default ({result}) => result;';
+			await put('checks/common/anchors.mjs',edited);
+			const editedOptions = {...desktop,selected:['links','anchors']};
+			const untrusted = await runDiagnostics(editedOptions);
+			assert.ok(codes(result(untrusted,'anchors')).includes('checker-untrusted'));
+			const trusted = await runDiagnostics({...editedOptions,trustedDigests:[digest(edited)]});
+			assert.equal(result(trusted,'anchors').rule.engine,'node');
+			assert.deepEqual(findings(untrusted,'links'),[
+				['Both.md','missing-footnote-definition'],['Both.md','invalid-pdf-page'],['PDF.md','invalid-pdf-page'],
+			]);
+			assert.deepEqual(findings(trusted,'links'),findings(untrusted,'links'));
+		}
+	});
+});
+
+test('lost template checks and exclusion coverage are reported only when evidence warrants them',async t => {
+	const {options,root,put} = await fixture(t);
+	for (const [file,source] of Object.entries(checkKitFiles())) await put(file,source);
+	const file = path.join(root,'kb-template.json');
+	const inspect = async (selected = 'all', overrides = {}) => runDiagnostics({...options,selected,...overrides});
+	const issue = (report,id,code) => {
+		const check = result(report,id);
+		assert.equal(check.status,'partial',id);
+		assert.ok(check.coverage.unknown > 0,id);
+		assert.ok(codes(check).includes(code),id);
+	};
+
+	await fs.unlink(file);
+	await put('checks/personal.mjs','export default () => []');
+	const old = await inspect();
+	assert.equal(result(old,'manifest').status,'passed');
+	assert.equal(result(old,'fixture.check'),undefined);
+	assert.ok(!codes(result(old,'links')).includes('missing-template-declaration'));
+	const knownTemplateChecks = declaration.checks;
+	issue(await inspect('all',{knownTemplateChecks}),'fixture.check','missing-template-declaration');
+
+	const course = builtinPacks().find(pack => pack.id === 'coursework');
+	await put('kb.toml',manifest.replace('id="fixture"','id="coursework"').replace('version="2"','version="'+course.version+'"'));
+	const lost = await inspect();
+	for (const id of ['manifest','links','workflow']) issue(lost,id,'missing-template-declaration');
+	assert.match((await listSpecialChecks(root)).reason,/缺少 kb-template\.json/u);
+	const off = readCliReport(root,'all');
+	assert.equal(off.code,1);
+	issue(off.report,'workflow','missing-template-declaration');
+
+	// An older source version with recognized official script bytes is also evidence.
+	await put('kb.toml',manifest.replace('id="fixture"','id="coursework"').replace('version="2"','version="1"'));
+	await put('checks/workflow.mjs',packText('project-review')['checks/workflow.mjs']);
+	assert.equal(result(await inspect(),'workflow'),undefined,'official bytes for another template at the same path do not count');
+	const earlierCourse = (await fs.readFile(new URL('./fixtures/coursework-v1.mjs',import.meta.url),'utf8')).replace(/\r\n/gu,'\n');
+	await put('checks/workflow.mjs',earlierCourse);
+	issue(await inspect(),'workflow','missing-template-declaration');
+
+	await put('kb-template.json','{');
+	const invalid = await inspect(['links']);
+	issue(invalid,'links','invalid-template');
+	assert.match(result(invalid,'links').reason,/排除范围/u);
+	await fs.unlink(file);
+	await fs.mkdir(file);
+	issue(await inspect(['manifest']),'manifest','unreadable-template-declaration');
+	await fs.rmdir(file);
+
+	// Valid declarations can omit either optional section or intentionally supply an empty array.
+	for (const extra of [{},{checks:[],diagnosticExclusions:[]}]) {
+		await put('kb-template.json',JSON.stringify({id:'coursework',version:'1',...extra}));
+		const valid = await inspect();
+		assert.equal(result(valid,'manifest').status,'passed');
+		assert.equal(result(valid,'workflow'),undefined);
+		assert.ok(!codes(result(valid,'links')).some(code => /template-declaration|invalid-template/u.test(code)));
+	}
+});
+
+test('copied link and Base placeholders identify needed input without treating runtime expressions as instance variables',async t => {
+	for (const kit of [false,true]) await t.test(kit ? 'distributed rules' : 'legacy rules',async t => {
+		const {options,put,root} = await fixture(t);
+		if (kit) for (const [file,source] of Object.entries(checkKitFiles())) await put(file,source);
+		const text = '---\nrelated: "[[{{kb_root}}/Reference]]"\n---\n![[{{base_path}}]]\n[Fragment](./name.md#{{kb_name}})\n[[{{date}}]]\n[[<% tp.file.title %>]]\n';
+		await put('templates/source.md',text);
+		await put('templates-copy/instance.md',text);
+		await put('templates-copy/instance.canvas',JSON.stringify({nodes:[
+			{id:'embed',type:'file',file:'{{base_path}}',x:0,y:0,width:100,height:100},
+			{id:'runtime',type:'text',text:'[[{{date}}]]',x:0,y:0,width:100,height:100},
+		]}));
+		await put('templates-copy/instance.base','filters:\n  and:\n    - file.inFolder("{{kb_root}}/notes")\n    - file.inFolder("{{date}}/notes")\n');
+		const selected = ['links','anchors','canvas','portability','bases'];
+		const report = await runDiagnostics({...options,selected});
+		const links = result(report,'links').diagnostics;
+		assert.deepEqual(links.filter(item => item.file === 'templates-copy/instance.md').map(({code,line,evidence})=>[code,line,evidence]),[
+			['link-placeholder-unfilled',4,'{{base_path}}'],
+			['link-placeholder-unfilled',5,'{{kb_name}}'],
+			['runtime-link-unverified',6,undefined],
+			['runtime-link-unverified',7,undefined],
+			['link-placeholder-unfilled',undefined,'{{kb_root}}'],
+		]);
+		assert.ok(links.filter(item => item.file === 'templates/source.md').every(item => item.code === 'template-link-deferred'));
+		const desktop = await runDiagnostics({...options,selected:['links'],resolveLink:() => ({status:'unavailable'}),
+			collectLinks:source => source.endsWith('/templates-copy/instance.md') ? [
+				{target:'{{base_path}}',kind:'embed',syntax:'wiki',line:4},
+				{target:'./name.md#{{kb_name}}',kind:'link',syntax:'markdown',line:5},
+				{target:'{{date}}',kind:'link',syntax:'wiki',line:6},
+			] : []});
+		assert.deepEqual(result(desktop,'links').diagnostics.map(({code,line,evidence})=>[code,line,evidence]),[
+			['link-placeholder-unfilled',4,'{{base_path}}'],['link-placeholder-unfilled',5,'{{kb_name}}'],['runtime-link-unverified',6,undefined],
+		]);
+		assert.ok(result(report,'anchors').diagnostics.some(item => item.code === 'link-placeholder-unfilled' && item.line === 5));
+		assert.deepEqual(codes(result(report,'canvas')),['link-placeholder-unfilled','runtime-link-unverified']);
+		assert.deepEqual(result(report,'bases').diagnostics.filter(item => item.code === 'base-path-unverified').map(({line,message})=>[line,message]),[
+			[3,'实例路径尚未填写。'],
+			[4,'此过滤条件的路径无法静态确认。'],
+		]);
+		if (kit) {
+			const cli = readCliReport(root,'links,canvas');
+			assert.equal(cli.code,1);
+			assert.deepEqual(result(cli.report,'links').diagnostics,JSON.parse(JSON.stringify(links)));
+			assert.deepEqual(codes(result(cli.report,'canvas')),codes(result(report,'canvas')));
 		}
 	});
 });
@@ -604,23 +771,23 @@ test('Canvas retains ordinary exclusions and reports deferred template links sep
 	const inspect = async text => {
 		const {options,put} = await fixture(t);
 		await put('checks/ignored.canvas','not JSON');
-		await put('sample.canvas',JSON.stringify({nodes:[{x:0,y:0,width:150,height:100,id:'text',type:'text',text}]}));
+		await put('templates/sample.canvas',JSON.stringify({nodes:[{x:0,y:0,width:150,height:100,id:'text',type:'text',text}]}));
 		return result(await runDiagnostics({...options,selected:['canvas']}),'canvas');
 	};
-	const ordinary = '[Fixed](./notes/target.md) [Web](https://example.com)';
+	const ordinary = '[Fixed](../notes/target.md) [Web](https://example.com)';
 	const ordinaryCheck = await inspect(ordinary);
 	assert.equal(ordinaryCheck.status,'passed');
 	assert.deepEqual(ordinaryCheck.coverage,{checked:2,skipped:2,unknown:0});
 	assert.equal(ordinaryCheck.reason,undefined);
 	assert.deepEqual(codes(ordinaryCheck),[]);
 
-	const dynamic = `${ordinary} [[{{date}}]] [Heading](./notes/target.md#{{title}})`;
+	const dynamic = `${ordinary} [[{{date}}]] [Heading](../notes/target.md#{{title}})`;
 	const deferredCheck = await inspect(dynamic);
 	assert.equal(deferredCheck.status,'findings');
 	assert.deepEqual(deferredCheck.coverage,{checked:2,skipped:4,unknown:0});
 	assert.match(deferredCheck.reason,/待实例化/u);
 	assert.deepEqual(deferredCheck.diagnostics.map(({file,severity,code}) => [file,severity,code]),[
-		['sample.canvas','info','template-link-deferred'],['sample.canvas','info','template-link-deferred'],
+		['templates/sample.canvas','info','template-link-deferred'],['templates/sample.canvas','info','template-link-deferred'],
 	]);
 
 	const partialCheck = await inspect(`${dynamic} [[Short title]]`);

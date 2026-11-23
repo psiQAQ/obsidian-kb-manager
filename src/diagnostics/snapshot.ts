@@ -24,7 +24,7 @@ export interface TemplateSnapshot {
 	diagnosticExclusions?: Declaration['diagnosticExclusions'];
 	sourceExclusionError?: string;
 	reason?: string;
-	missing?: boolean;
+	state?: 'missing' | 'unreadable' | 'invalid';
 }
 const bytesPerFile = 2 * 1024 * 1024;
 const bytesPerLibrary = 24 * 1024 * 1024;
@@ -170,15 +170,17 @@ function readDeclaration(raw: string): TemplateSnapshot {
 }
 
 export async function templateSnapshot(root: string, withScripts: boolean, signal?: AbortSignal, trace?: InputTrace): Promise<TemplateSnapshot> {
-	try {
-		const snapshot = readDeclaration(decode(await readRelative(root, templateFile, undefined, signal, trace)));
-		if (withScripts) await readSelectedTemplateScripts(root, snapshot, snapshot.checks.map(check => check.id), signal, trace);
-		return snapshot;
-	} catch (error) {
+	let bytes: Buffer;
+	try {bytes = await readRelative(root, templateFile, undefined, signal, trace);}
+	catch (error) {
 		signal?.throwIfAborted();
-		if (isRecord(error) && error.code === 'ENOENT') return {checks:[],missing:true};
-		return {checks: [], reason: tr('模板声明或专项检查列表无效。','Review the template declaration and its check list. They contain an invalid field.')};
+		return {checks:[],state:isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'unreadable'};
 	}
+	let snapshot: TemplateSnapshot;
+	try {snapshot = readDeclaration(decode(bytes));}
+	catch {return {checks:[],state:'invalid'};}
+	if (withScripts) await readSelectedTemplateScripts(root, snapshot, snapshot.checks.map(check => check.id), signal, trace);
+	return snapshot;
 }
 
 export async function readSelectedTemplateScripts(root: string, snapshot: TemplateSnapshot, selected: readonly string[], signal?: AbortSignal, trace?: InputTrace) {

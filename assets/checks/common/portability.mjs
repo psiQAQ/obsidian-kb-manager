@@ -28,8 +28,8 @@ function noteLinkCoverage(check, {tr, addReason}) {
 		addReason(check, tr('部分结果需要 Obsidian 索引、受支持的链接语法或可读文件才能确认。','Some results need the Obsidian index, supported link syntax, or readable files to be verified.'));
 }
 
-export default function checkPortability({result: check, notes, canvases, candidateMatches, canvasMatches, canvasSelected}, tools) {
-	const {tr, addReason, validText, recordChecked} = tools;
+export default function checkPortability({result: check, notes, canvases, candidateMatches, canvasMatches, canvasIncluded}, tools) {
+	const {tr, addReason, validText, recordChecked, recordLinkPlaceholder} = tools;
 	function inspect({link, found, cross}, matches, position, details) {
 		const matching = matches.length > 1 && tr('同名候选','Same-name candidates') + ' ' + matches.join(tr('、',', '));
 		if (found.status === 'unknown') check.coverage.unknown++;
@@ -57,10 +57,7 @@ export default function checkPortability({result: check, notes, canvases, candid
 		for (const [i,ref] of note.references.entries()) {
 			const position = {file:note.file,line:ref.line};
 			if (ref.kind === 'local') inspect(ref,candidateMatches[index][i],position);
-			else if (ref.kind === 'template') {
-				check.coverage.skipped++;
-				check.diagnostics.push({...position,severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
-			}
+			else if (ref.kind === 'template') recordLinkPlaceholder(check,ref.placeholder,position);
 		}
 	}
 	noteLinkCoverage(check,tools);
@@ -103,9 +100,9 @@ export default function checkPortability({result: check, notes, canvases, candid
 					continue;
 				}
 				if (ref.kind === 'template') {
-					check.coverage.skipped++;
-					deferred = true;
-					if (!canvasSelected) check.diagnostics.push({file,evidence:details,severity:'info',code:'template-link-deferred',message:tr('Canvas 中的模板链接待实例化后检查。','Check the Canvas template link after its variables are filled in.')});
+					recordLinkPlaceholder(check,ref.placeholder,{file,evidence:details},!canvasIncluded);
+					if (ref.placeholder.coverage === 'skipped') deferred = true;
+					if (ref.placeholder.coverage === 'unknown') unresolved = true;
 					continue;
 				}
 				inspect(ref,canvasMatches[i][n][r],{file},details);

@@ -2,8 +2,10 @@ import esbuild from 'esbuild';
 import {createHash} from 'node:crypto';
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {courseworkScript,courseworkTemplate,previousCourseworkDigests} from '../src/kb/coursework-check.ts';
+import {previousTemplateCheckDigests} from '../src/kb/template-check-digests.ts';
 
-export async function buildCheckKit(specialDigests) {
+export async function buildCheckKit({packs,digests:specialDigests}) {
 	const directory=new URL('../assets/checks/common/',import.meta.url);
 	const sources={}, digests={};
 	const ruleFiles=[];
@@ -15,7 +17,15 @@ export async function buildCheckKit(specialDigests) {
 		sources[file]=readFileSync(path,'utf8').replace(/\r\n/gu,'\n');
 		digests[file]=createHash('sha256').update(sources[file]).digest('hex');
 	}
-	const define={KB_COMMON_RULES:JSON.stringify(sources),KB_COMMON_DIGESTS:JSON.stringify(digests),
+	const templateChecks=Object.values(packs).filter(pack=>pack.descriptor.checks?.length).map(({descriptor,text})=>({
+		id:descriptor.id,version:descriptor.version,checks:descriptor.checks.map(({id,name,path})=>{
+			const current=createHash('sha256').update(text[path]).digest('hex');
+			const known=descriptor.id===courseworkTemplate && path===courseworkScript ? previousCourseworkDigests :
+				[].concat(previousTemplateCheckDigests[descriptor.id]?.[path] ?? []);
+			return {id,name,path,digests:[current,...known]};
+		}),
+	}));
+	const define={KB_COMMON_RULES:JSON.stringify(sources),KB_COMMON_DIGESTS:JSON.stringify(digests),KB_TEMPLATE_CHECKS:JSON.stringify(templateChecks),
 		KB_CHECK_DIGESTS:JSON.stringify(specialDigests)};
 	const cli=await esbuild.build({entryPoints:['src/diagnostics/cli.ts'],bundle:true,platform:'node',target:'node20',
 		format:'cjs',outfile:'dist/kb-check.cjs',write:false,metafile:true,minify:true,define});

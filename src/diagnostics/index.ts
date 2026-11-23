@@ -19,6 +19,7 @@ import {checkContext, inventory, libraryLocation, manifestSnapshot, readSelected
 import {excludedDiagnosticSources, supportsSourceExclusions, templateSourceMatches} from './source-exclusions.ts';
 import {runSpecial, specialCheckTrusted} from './special.ts';
 import {inspectCanvas, inspectManifest, inspectProperties} from './structures.ts';
+import {templateDeclarationIssue} from './template-status.ts';
 import {generalChecks, generalIds, portabilityCheck, result, settle} from './types.ts';
 import type {DiagnosticCheckResult, DiagnosticOptions, DiagnosticReport, DiagnosticRuleVersion, DiagnosticStatus, SpecialCheck, TemplateIdentity} from './types.ts';
 
@@ -35,8 +36,10 @@ export async function listSpecialChecks(libraryRoot: string, signal?: AbortSigna
 		const {root} = await libraryLocation({libraryRoot, signal});
 		const list = await templateSnapshot(root, true, signal);
 		const template = list.template ? {id: list.template.id, version: list.template.version} : undefined;
+		const identity = list.state && (await manifestSnapshot(root,signal)).parsed?.identity?.template;
+		const issue = await templateDeclarationIssue(root,list.state,identity || undefined,[],signal);
 		return {template, checks: list.checks.map(({id,name,path,description,digest,reason}) => ({id,name,path,description,digest,reason})),
-			reason: list.reason ?? (list.missing ? tr('本库未配置模板专项检查。','This library has no template checks configured.') : undefined)};
+			reason: issue?.message ?? list.reason ?? (list.state === 'missing' ? tr('未找到模板专项声明。','No template check declaration was found.') : undefined)};
 	} catch {
 		signal?.throwIfAborted();
 		return {checks: [], reason: tr('无法访问知识库根目录。','Could not access the library folder.')};
@@ -80,13 +83,15 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const {root, relative, vault, configDir, identifiedVault} = located;
 		const needsScripts = all || selected.some(id => !generalIds.has(id));
 		const template = await templateSnapshot(root, false, signal, trace);
-		readTemplate = true;
 		const specials = new Map(template.checks.map(check => [check.id,check]));
 		for (const check of specials.values()) names.set(check.id,check.name);
-		if (all) active.push(...specials.keys());
-		if (needsScripts) await readSelectedTemplateScripts(root, template, active, signal, trace);
 		const manifest = await manifestSnapshot(root, signal, trace);
 		const identity = manifest.parsed?.identity;
+		const declarationIssue = await templateDeclarationIssue(root,template.state,identity?.template,listedTemplateChecks,signal,trace);
+		for (const check of declarationIssue?.checks ?? []) names.set(check.id,check.name);
+		if (all) active.push(...specials.keys(),...(declarationIssue?.checks.map(check => check.id) ?? []));
+		readTemplate = true;
+		if (needsScripts) await readSelectedTemplateScripts(root, template, active, signal, trace);
 		report.library = {id:identity?.id, template:template.template ? {id:template.template.id, version:template.template.version} : identity?.template};
 		const dirs = new Set(template.template?.pageTemplates ?? []);
 		if (manifest.parsed?.mapping?.templates) dirs.add(manifest.parsed.mapping.templates);
@@ -128,6 +133,10 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 		const found = await inventory(root, configDir, needsNotes ? 'notes' : needsPaths ? 'paths' : 'none', signal, trace, shouldReadNote);
 		const sources = await excludedDiagnosticSources(found,availableGeneral,matches,signal);
 		const available = new Set(availableGeneral);
+		const cooperating = new Set(availableGeneral.filter(id => {
+			const rule = commonRules.get(id);
+			return rule && bundledCommonRule(rule);
+		}));
 		const includes = (id: string, file: string) => available.has(id) && !sources.get(id)?.files.has(file);
 		let readCommonEvidence: ReturnType<typeof commonEvidence> | undefined;
 		const linkOptions = {...options,vaultRoot:identifiedVault ? vault : undefined,trace};
@@ -149,6 +158,13 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				check.diagnostics.push({severity:'error', code:'invalid-diagnostic-exclusions', file:'kb-template.json', message:template.sourceExclusionError});
 				addReason(check,template.sourceExclusionError);
 			}
+			if (declarationIssue && (check.id === 'manifest' || supportsSourceExclusions(check.id) || !generalIds.has(check.id))) {
+				const message = supportsSourceExclusions(check.id) ? `${declarationIssue.message} ${declarationIssue.scope}` : declarationIssue.message;
+				check.coverage.unknown++;
+				if (check.status === 'skipped') check.status = 'partial';
+				check.diagnostics.push({severity:'error',code:declarationIssue.code,file:'kb-template.json',message});
+				addReason(check,message);
+			}
 			report.checks.push({...settle(check),rule:ruleVersion(check.id)});
 		};
 		if (!common) {
@@ -163,7 +179,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				if (options.linkCandidateScope === 'registered' && !options.registeredPaths) links.portability.coverage.unknown++;
 			}
 			if (Object.values(links).some(Boolean)) {
-				try {await inspectLinks(linkOptions, found, root, relative, links, includes);}
+				try {await inspectLinks(linkOptions, found, root, relative, links, includes, templateDirs);}
 				catch {
 					signal?.throwIfAborted();
 					for (const check of Object.values(links)) if (check) failure(check, 'link-run-failed', tr('链接检查未能完成。','Could not complete the link check.'));
@@ -173,7 +189,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 			}
 			const canvas = {canvas:checks.get('canvas'), portability:links.portability};
 			if (canvas.canvas || canvas.portability) {
-				try {await inspectCanvas(canvas, root, found, linkOptions, relative, includes);}
+				try {await inspectCanvas(canvas, root, found, linkOptions, relative, includes, templateDirs);}
 				catch {
 					signal?.throwIfAborted();
 					for (const check of Object.values(canvas)) if (check) failure(check, 'canvas-run-failed', tr('Canvas 检查未能完成。','Could not complete the Canvas check.'));
@@ -197,7 +213,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				}
 				if (rule) {
 					push(await runCommon(rule, check, options, vault, () => {
-						readCommonEvidence ??= commonEvidence(linkOptions,located,found,manifest,template,templateDirs,new Set(commonRules.keys()),includes);
+						readCommonEvidence ??= commonEvidence(linkOptions,located,found,manifest,template,templateDirs,available,cooperating,includes);
 						return readCommonEvidence(check,!!bundledCommonRule(rule));
 					}));
 					continue;
@@ -215,7 +231,7 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 					checkBases(await readBaseEvidence(linkOptions,located,found,check,templateDirs,file => includes(check.id,file)),{tr,addReason,recordChecked});
 					break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
-			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
+			default: if (!declarationIssue) failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;
 				}
 			} catch {
 				signal?.throwIfAborted();

@@ -98,7 +98,7 @@ export interface DiagnosticOptions {
 	nodeExecutable?: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
-	/** Previously listed template checks for a cancellation before the declaration can be read. */
+	/** Evidence of template checks seen before a declaration was lost or a run was cancelled. */
 	knownTemplateChecks?: readonly Pick<SpecialCheck,'id'|'name'>[];
 }
 

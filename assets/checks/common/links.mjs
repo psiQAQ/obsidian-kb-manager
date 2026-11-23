@@ -70,12 +70,12 @@ function missingLink(target, kind, tr) {
 	return {severity:'info',code:'uncreated-note',message:tr('链接指向尚未创建的笔记。','The link points to a note that has not been created yet.')};
 }
 
-export default function checkLinks({result: check, notes, anchorsSelected, desktop}, tools) {
-	const {tr, validText, recordChecked} = tools;
+export default function checkLinks({result: check, notes, desktop}, tools) {
+	const {tr, validText, recordChecked, recordLinkPlaceholder} = tools;
 	for (const note of notes) {
 		footnotes(check,note,tools);
 		noteCoverage(check,note,tools);
-		for (const {kind, line, link, found, evidence, cross} of note.references) {
+		for (const {kind, line, link, found, evidence, cross, placeholder} of note.references) {
 			const position = {file:note.file,line};
 			if (kind === 'invalid-encoding') {
 				recordChecked(check,note.file,tr('链接 URL 转义','Link URL encoding'),tr('包含无效的 URL 转义。','Contains invalid URL encoding.'),line);
@@ -84,8 +84,7 @@ export default function checkLinks({result: check, notes, anchorsSelected, deskt
 			}
 			if (kind === 'external') {check.coverage.skipped++; continue;}
 			if (kind === 'template') {
-				check.coverage.skipped++;
-				check.diagnostics.push({...position,severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
+				recordLinkPlaceholder(check,placeholder,position);
 				continue;
 			}
 			if (found.status === 'unknown') check.coverage.unknown++;
@@ -101,7 +100,7 @@ export default function checkLinks({result: check, notes, anchorsSelected, deskt
 				message:validText(found.reason,512) ? found.reason : desktop ?
 					tr('目前无法确认 Obsidian 链接目标。','Obsidian could not resolve this link yet.') :
 					tr('离线环境无法确认 Obsidian 的实际链接目标。','Run this check in Obsidian to confirm where the link resolves.')});
-			if (!anchorsSelected) pdfFragment(check,link,found,{...position,evidence},tools);
+			if (!note.anchorsIncluded) pdfFragment(check,link,found,{...position,evidence},tools);
 		}
 	}
 	noteLinkCoverage(check,tools);

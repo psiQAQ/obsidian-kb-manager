@@ -5,6 +5,8 @@ import {baseViewNames} from './base-view.ts';
 import {recordChecked} from './checked-items.ts';
 import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
+import {recordLinkPlaceholder} from './common-tools.ts';
+import {isTemplateSource, knownInstancePlaceholder, linkPlaceholder} from './placeholders.ts';
 import {inspectFootnotes, inspectPdfFragment} from './references.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, noteReader, readRelative, relativePath} from './snapshot.ts';
@@ -19,15 +21,15 @@ const attachment = (target: string) => /\.(?:apng|avif|bmp|gif|jpe?g|png|svg|web
 const image = /\.(?:apng|avif|bmp|gif|jpe?g|png|svg|webp|ico)(?:[|#]|$)/iu;
 const within = (target: string, folder: string) => !folder || target.startsWith(folder + '/');
 const normalize = (value: string) => value.normalize('NFC').toLowerCase();
-export const dynamicTarget = (value: string) => /\{\{|<%|__(?:KB_ROOT|WIKI_PATH|NOTES_PATH|WIKI_DIR|TEMPLATES_DIR|CATEGORY_PATH)__/u.test(value);
+export {dynamicTarget} from './placeholders.ts';
 
-export function maskLiterals(body: string) {
+export function maskLiterals(body: string, keepInstancePlaceholders = false) {
 	return body.replace(/%%[\s\S]*?(?:%%|$)|\$\$[\s\S]*?\$\$|(?<![\\\w$])\$[^$\n]+\$(?![\w$])/gu, newlineOnly)
-		.replace(/\{\{[^{}\n]+\}\}|<%[\s\S]*?%>/gu, literal => '{{}}' + newlineOnly(literal));
+		.replace(/\{\{[^{}\n]+\}\}|<%[\s\S]*?%>/gu, literal => keepInstancePlaceholders && knownInstancePlaceholder(literal) === literal ? literal : '{{}}' + newlineOnly(literal));
 }
 
 export function staticOccurrences(note: NoteRecord): LinkOccurrence[] {
-	const {text, links} = parseMarkdown(maskLiterals(prose(note.body)));
+	const {text, links} = parseMarkdown(maskLiterals(prose(note.body),true));
 	const lines = text.split('\n');
 	const markdown = links.map(({target, line, label}): LinkOccurrence => ({target, line: line + note.lineOffset,
 		kind: lines[line - 1]?.includes(`![${label}]`) ? 'embed' : 'link', syntax: 'markdown'}));
@@ -233,7 +235,8 @@ function reasonForUnknown(check: DiagnosticCheckResult) {
 }
 
 export async function inspectLinks(options: EvidenceOptions, inventory: Inventory, root: string, location: string,
-	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}, includes: SourceInclusion) {
+	checks: {links?: DiagnosticCheckResult; anchors?: DiagnosticCheckResult; portability?: DiagnosticCheckResult}, includes: SourceInclusion,
+	templateDirs: readonly string[]) {
 	const checkpoint = diagnosticCheckpoint(options.signal);
 	const selected = Object.values(checks).filter((item): item is DiagnosticCheckResult => !!item);
 	const {resolve, vaultPath, outsideTarget, inspectPortability} = linkResolver(options, inventory, root, location);
@@ -249,7 +252,7 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 		const portability = includes('portability',note.path) ? checks.portability : undefined;
 		const all = [links, anchors, portability].filter((item): item is DiagnosticCheckResult => !!item);
 		if (!all.length) continue;
-		const footnotes = checks.links ? links : anchors;
+		const footnotes = links ?? anchors;
 		if (footnotes && (note.body.includes('[^') || note.body.includes('^[')))
 			inspectFootnotes(footnotes,maskLiterals(prose(note.body)),note.path,note.lineOffset);
 		const dynamic = fencedBlocks(note.body).filter(block => /^(?:base|dataview(?:js)?|tasks|meta-bind(?:-js-view)?|js quickadd)$/u.test(block.language));
@@ -261,6 +264,7 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 				file:note.path, line:block.line + note.lineOffset, evidence:block.language, message});
 		}
 		const source = vaultPath(note.path);
+		const inTemplate = isTemplateSource(note.path,templateDirs);
 		let native: LinkOccurrence[] | undefined;
 		if (options.collectLinks) {
 			try {native = await options.collectLinks(source);} catch {/* Treat a cache failure as partial. */}
@@ -292,12 +296,9 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 			if (!requestValue) {if (links) links.coverage.skipped++; continue;}
 			const link = requestValue;
 			const position = {file: note.path, line: occurrence.line};
-			if (dynamicTarget(link.target) || dynamicTarget(link.fragment ?? '')) {
-				for (const check of all) {
-					if (check === anchors && !link.fragment) continue;
-					check.coverage.skipped++;
-					check.diagnostics.push({...position, severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
-				}
+			const placeholder = linkPlaceholder(link,inTemplate);
+			if (placeholder) {
+				for (const check of all) if (check !== anchors || link.fragment) recordLinkPlaceholder(check,placeholder,position);
 				continue;
 			}
 			const found = await resolve(note.path, link);
@@ -315,7 +316,7 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 						tr('目前无法确认 Obsidian 链接目标。','Obsidian could not resolve this link yet.') :
 						tr('离线环境无法确认 Obsidian 的实际链接目标。','Run this check in Obsidian to confirm where the link resolves.')});
 			}
-			const media = checks.anchors ? anchors : links;
+			const media = anchors ?? links;
 			const pdf = media && inspectPdfFragment(media,link,found,{...position,evidence});
 			if (anchors && link.fragment && !pdf) {
 				if (found.status === 'missing') anchors.coverage.skipped++;

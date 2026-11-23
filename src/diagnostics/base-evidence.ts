@@ -6,6 +6,7 @@ import {diagnosticCheckpoint} from './checkpoint.ts';
 import {reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {linkResolver} from './links.ts';
+import {isTemplateSource, knownInstancePlaceholder} from './placeholders.ts';
 import type {EvidenceOptions} from './provenance.ts';
 import {decode, entryVersion, readRelative, relativeEntry, relativePath, unavailableVersion} from './snapshot.ts';
 import type {Inventory, libraryLocation} from './snapshot.ts';
@@ -64,7 +65,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 		const evidence = {kind,expression:expression.slice(0,512),field,line:line + lineOffset,column,value:value?.slice(0,2048)};
 		if (value === undefined) return {...evidence,status:'unverified'};
 		if (/\{\{[^{}]+\}\}|<%[\s\S]*?%>|__[A-Z][A-Z0-9_]*__/u.test(value))
-			return {...evidence,status:'unverified',placeholder:inTemplate ? 'deferred' : 'unsubstituted',wholeFilter};
+			return {...evidence,status:'unverified',placeholder:inTemplate ? 'deferred' : knownInstancePlaceholder(value) ? 'unsubstituted' : undefined,wholeFilter};
 		if (/^\.\.?\//u.test(value)) return {...evidence,status:'relative'};
 		if(kind==='link'){
 			if(!relativePath(value) || /[#%|?]/u.test(value) || value.endsWith('/'))return {...evidence,status:'unverified'};
@@ -82,7 +83,7 @@ export async function readBaseEvidence(options: EvidenceOptions, location: Locat
 	async function inspect(file: string, text: string, lineOffset: number) {
 		const paths = [];
 		const data = baseData(text);
-		const inTemplate = templateDirs.some(dir => file.startsWith(dir + '/'));
+		const inTemplate = isTemplateSource(file,templateDirs);
 		if (data !== undefined) for (const reference of scanBasePaths(text,'base')) {
 			const pause = checkpoint?.();
 			if (pause) await pause;

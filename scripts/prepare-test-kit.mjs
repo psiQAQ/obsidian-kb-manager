@@ -4,7 +4,7 @@ import {templateCatalog} from './template-catalog.mjs';
 import {buildCheckKit} from './build-check-kit.mjs';
 
 const {packs,digests}=templateCatalog(fileURLToPath(new URL('../assets/templates/',import.meta.url)));
-const {defines}=await buildCheckKit(digests);
+const {defines}=await buildCheckKit({packs,digests});
 mkdirSync('.tmp',{recursive:true});
 writeFileSync('.tmp/test-kit.json',JSON.stringify({KB_TEMPLATE_PACKS:packs,
 	...Object.fromEntries(Object.entries(defines).map(([key,value])=>[key,JSON.parse(value)]))}));

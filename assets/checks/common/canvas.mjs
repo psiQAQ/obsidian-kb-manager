@@ -41,11 +41,11 @@ function missingLink(target, kind, tr) {
 	return {severity:'info',code:'uncreated-note',message:tr('链接指向尚未创建的笔记。','The link points to a note that has not been created yet.')};
 }
 
-export default function checkCanvas({result: check, canvases, portabilitySelected}, tools) {
-	const {tr, addReason, validText, recordChecked} = tools;
+export default function checkCanvas({result: check, canvases}, tools) {
+	const {tr, addReason, validText, recordChecked, recordLinkPlaceholder} = tools;
 	let deferred = false;
 	let unresolved = false;
-	for (const {file, data, references, unreadable, malformed} of canvases) {
+	for (const {file, data, references, unreadable, malformed, portabilityIncluded} of canvases) {
 		function fail(code, message, evidence) {check.diagnostics.push({severity:'error',code,message,file,evidence});}
 		if (unreadable) {
 			check.coverage.unknown++;
@@ -79,15 +79,15 @@ export default function checkCanvas({result: check, canvases, portabilitySelecte
 				return;
 			}
 			if (ref.kind === 'template') {
-				check.coverage.skipped++;
-				deferred = true;
-				check.diagnostics.push({file,evidence:details,severity:'info',code:'template-link-deferred',message:tr('Canvas 中的模板链接待实例化后检查。','Check the Canvas template link after its variables are filled in.')});
+				recordLinkPlaceholder(check,ref.placeholder,{file,evidence:details});
+				if (ref.placeholder.coverage === 'skipped') deferred = true;
+				if (ref.placeholder.coverage === 'unknown') unresolved = true;
 				return;
 			}
 			const {link, found, cross} = ref;
 			const exact = link.canvasPath;
 			const evidence = [ref.evidence,details].filter(Boolean).join(' · ');
-			if (!portabilitySelected && cross) check.diagnostics.push({file,evidence:[cross.evidence,details].join(' · '),severity:'info',code:'cross-library-link',
+			if (!portabilityIncluded && cross) check.diagnostics.push({file,evidence:[cross.evidence,details].join(' · '),severity:'info',code:'cross-library-link',
 				message:tr('Canvas 引用解析到当前知识库之外的 Vault 文件。','The Canvas reference resolves to a vault file outside this library.')});
 			const unknownBefore = check.coverage.unknown;
 			const pdf = pdfFragment(check,link,found,{file,evidence},details,tools);

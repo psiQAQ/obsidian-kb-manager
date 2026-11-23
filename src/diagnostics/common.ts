@@ -5,7 +5,7 @@ import {entryVersion, libraryLocation, manifestSnapshot, readChecker, relativeEn
 import type {InputTrace} from './provenance.ts';
 import type {DeclaredCheck} from './snapshot.ts';
 import {readFindings, runChecker} from './special.ts';
-import {generalChecks, isRecord, portabilityCheck, printable, settle} from './types.ts';
+import {generalChecks, isRecord, portabilityCheck, printable} from './types.ts';
 import type {Coverage, DiagnosticCheckResult, DiagnosticOptions, SpecialCheck} from './types.ts';
 
 const invalidKit = () => tr('通用规则清单无效。请检查 kb.toml 中的 [checkKit]。','The check kit declaration is invalid. Review [checkKit] in kb.toml.');
@@ -117,5 +117,5 @@ export async function runCommon(rule: DeclaredCheck, result: DiagnosticCheckResu
 	result.coverage = counts;
 	result.diagnostics = findings;
 	result.reason = reason;
-	return settle(result);
+	return result;
 }

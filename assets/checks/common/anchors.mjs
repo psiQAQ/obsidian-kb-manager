@@ -62,17 +62,16 @@ function noteLinkCoverage(check, {tr, addReason}) {
 		addReason(check, tr('部分结果需要 Obsidian 索引、受支持的链接语法或可读文件才能确认。','Some results need the Obsidian index, supported link syntax, or readable files to be verified.'));
 }
 
-export default function checkAnchors({result: check, notes, linksSelected}, tools) {
-	const {tr, recordChecked} = tools;
+export default function checkAnchors({result: check, notes}, tools) {
+	const {tr, recordChecked, recordLinkPlaceholder} = tools;
 	for (const note of notes) {
-		if (!linksSelected) footnotes(check,note,tools);
+		if (!note.linksIncluded) footnotes(check,note,tools);
 		noteCoverage(check,note,tools);
-		for (const {kind, line, link, found, evidence} of note.references) {
+		for (const {kind, line, link, found, evidence, placeholder} of note.references) {
 			if (!link?.fragment) continue;
 			const position = {file:note.file,line,evidence};
 			if (kind === 'template') {
-				check.coverage.skipped++;
-				check.diagnostics.push({...position,severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
+				recordLinkPlaceholder(check,placeholder,position);
 				continue;
 			}
 			if (pdfFragment(check,link,found,position,tools)) continue;

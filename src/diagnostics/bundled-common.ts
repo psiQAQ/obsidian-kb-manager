@@ -9,6 +9,7 @@ import properties from '../../assets/checks/common/properties.mjs';
 import {commonRuleDigests} from '../kb/common-rules.ts';
 import {tr} from '../i18n.ts';
 import {recordChecked} from './checked-items.ts';
+import {recordLinkPlaceholder} from './common-tools.ts';
 import {addReason} from './coverage.ts';
 import {printable} from './types.ts';
 import type {SpecialCheck} from './types.ts';
@@ -24,10 +25,10 @@ const rules = new Map<string, (evidence: never, tools: typeof helpers) => unknow
 	['checks/common/properties.mjs',properties],
 ]);
 
-const helpers = {tr, addReason, validText:printable, recordChecked};
+const helpers = {tr, addReason, validText:printable, recordChecked, recordLinkPlaceholder};
 
 const previousBundledDigests = new Map([
-	['checks/common/anchors.mjs',['0c9a5753ecf988f5c9209eda8f350ac58eb07aa68968986cc16a2c3a244374e3']],
+	['checks/common/anchors.mjs',['0c9a5753ecf988f5c9209eda8f350ac58eb07aa68968986cc16a2c3a244374e3', '051282aa5ff0db4f027f1edb1a898b54caae6fa1c3593fe7495eb66de0b9b50c']],
 	['checks/common/bases.mjs',[
 		'bba90c5702efcd5c4fab4c99d62eebb1d7080c1b16faf5cb5affc9467b961a69',
 		'9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104',
@@ -36,10 +37,10 @@ const previousBundledDigests = new Map([
 		'1f665454154cb353561302183c0efdb9659d8cefa2e9f73ba1d1896189c73a3b',
 	]],
 	['checks/common/bindings.mjs',['6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49', '7600c8340602186f9434de740be2812218e20bc3b633e80f14f6876281460169']],
-	['checks/common/canvas.mjs',['211e4cacfae13a667f37ffeb69732f0922404af316e4b3d553fc2eb8dbc335cb']],
-	['checks/common/links.mjs',['9d6f8140618cea057357fd657c195b120ef59951be6188c1c24b71e8e815f1e3']],
+	['checks/common/canvas.mjs',['211e4cacfae13a667f37ffeb69732f0922404af316e4b3d553fc2eb8dbc335cb', 'c37564faf4034ca457f39ef4e3f39b48af4bb5555bae0433d8f8389f04e25559']],
+	['checks/common/links.mjs',['9d6f8140618cea057357fd657c195b120ef59951be6188c1c24b71e8e815f1e3', '5eeade553b2ee495a5fb1594d577d60fb725acb4d936c06a179937dc9f05ab2b']],
 	['checks/common/manifest.mjs',['3593541067b163c7562d29b1f36ec1af75a7de537e035a814321224a6bf7ac7e']],
-	['checks/common/portability.mjs',['86a03894093c781236388962a9127568b192e81a6ab37163936b9d96424ce7e7']],
+	['checks/common/portability.mjs',['86a03894093c781236388962a9127568b192e81a6ab37163936b9d96424ce7e7', '2f23453b25c6048dc688dd47c22fb1822a12a4ab4175d04d9602d05c4bbee8ce']],
 	['checks/common/properties.mjs',['ecd63c1bcbe0af5f3fe74779a66eba2d5cb06f6a7d6ef71d641aa3d613e4705b']],
 ]);
 
