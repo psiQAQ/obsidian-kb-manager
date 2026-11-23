@@ -80,11 +80,11 @@
 
 `suggestedExcludedFolders` 是模板作者给 Obsidian 搜索与图谱的建议，每项是实例内实际存在的相对目录。可包括页面模板和辅助目录，例如用于保存生成器的 `Integrations`。字段缺省时没有建议。建库人可逐项取消，选中的目录写入实例 `kb.toml` 的 `[manager].excludedFolders`。
 
-`diagnosticExclusions` 记录本库检验中仍待插入或实例化的模板源。每条规则的 `checks` 至少指定一项，可选 `links`（链接）、`anchors`（锚点）、`portability`（可移植性）和 `bases`（Bases）。`files` 按完整文件路径匹配，`folders` 匹配指定目录内各级子目录的文件，两者至少有一项包含路径。路径以实例根目录为起点，使用 `/` 并按实际大小写填写。路径不得使用绝对路径、`..` 或通配符。
+`diagnosticExclusions` 记录本库检验中仍待插入或实例化的模板源。每条规则的 `checks` 至少指定一项，可选 `links`（链接）、`anchors`（锚点）、`portability`（可移植性）和 `bases`（Bases）。`files` 按完整文件路径匹配，`folders` 匹配该目录及其子目录中的文件，两者至少有一项包含路径。路径以实例根目录为起点，使用 `/` 并按实际大小写填写。路径不得使用绝对路径、`..` 或通配符。
 
 整个目录只包含待插入的页面模板时，可用示例中的目录规则。目录混合了模板与正在用的资源时，逐个列出模板文件。例如 LLM Wiki 给 `Templates/分类入口模板.md` 跳过链接、锚点和可移植性检验，仅给 `Templates/Bases/分类专用模板.base` 跳过 Bases 检验。Kepano 的 `Templates/Bases/Everything.base` 和 `Templates/Bases/Shows.base` 在建库后直接使用，继续接受检验。
 
-命中的源文件仍会复制、纳入 Git，并可作为其他笔记的链接和锚点目标。属性、Canvas、清单、绑定和模板专项沿用各自的检查范围。每个库读取自己的 `kb-template.json`，省略该字段时沿用原来的检查范围。
+文件复制和 Git 跟踪沿用建库规则。其他笔记仍可链接到命中的源文件及其锚点。属性、Canvas、清单、绑定和模板专项沿用各自的检查范围。每个库读取自己的 `kb-template.json`，省略该字段时沿用原来的检查范围。
 
 首页可以写成下面这样。
 
