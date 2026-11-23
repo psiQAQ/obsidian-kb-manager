@@ -2,4 +2,4 @@
 
 通过示例：[读时间复杂度](../Practice/读时间复杂度.md) 处于 `mastered`，`attempts` 保存一次复做日期。
 
-触发示例：清空该练习的 `attempts` 列表并保留 `mastered`。`retry` 状态还可以继续练习。
+触发示例：保留 `mastered`，清空该练习的 `attempts` 列表，或只填不存在的日期（如 `2025-02-29`）。`retry` 状态还可以继续练习。

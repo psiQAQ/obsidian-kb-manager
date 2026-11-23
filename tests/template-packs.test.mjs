@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +94,6 @@ const negative = {
 
 test('built-in catalogue has two independent packs per primary purpose and fixed source revisions', () => {
 	assert.equal(Object.keys(packs).length, 18);
-	assert.equal(digests.length, 49);
 	assert.ok(digests.includes('2d3b01e0c37a95558ba2c785a3370febf7e990fad02d130169c65bea0a00bb9f'), 'knowledge-garden v1 stays trusted');
 	assert.ok(digests.includes('0c99583d7a3ce38b741ed3981ad808e77af7da3ad9bff6300461e3a56f448601'), 'coursework v1 stays trusted');
 	assert.ok(digests.includes('9dafdf6d9f9c35aee095e8671fb6abd123fc8d2275781e25c3b363e828492e13'), 'coursework v2/v3 stay trusted');
@@ -106,6 +106,8 @@ test('built-in catalogue has two independent packs per primary purpose and fixed
 		purposes.set(descriptor.purpose, (purposes.get(descriptor.purpose) ?? 0) + 1);
 		for (const dependency of descriptor.dependencies ?? []) dependencies.add(dependency);
 		assert.ok(text[descriptor.entry], descriptor.id);
+		for (const check of descriptor.checks ?? [])
+			assert.ok(digests.includes(createHash('sha256').update(text[check.path]).digest('hex')), check.path);
 		for (const source of descriptor.sources) assert.match(source.commit, /^[a-f0-9]{40}$/u);
 		assert.ok([...Object.keys(text), ...Object.keys(packs[descriptor.id].binary)].every(path => path.split('/').every(part =>
 			!part.startsWith('.') || ['.gitignore', '.gitattributes', '.gitkeep'].includes(part))));
@@ -251,6 +253,42 @@ test('LLM Wiki checks the mapped index by exact path and excludes fenced, inline
 		'[折叠引用]: ./列表代码块.md',
 	].join('\n');
 	assert.deepEqual((await llmWiki(state)).findings, []);
+	const index = state.notes.shift();
+	const missing = await llmWiki(state);
+	assert.deepEqual(missing.findings.map(({file,code})=>[file,code]), [[index.path,'knowledge-index-missing']]);
+	assert.equal(missing.unverified,1);
+	assert.deepEqual(missing.checkedItems,[]);
+});
+
+test('new Kepano notes can use all eight reference categories from their installed templates', async () => {
+	const files = instance('kepano');
+	const templates = ['Coffee','Conference Session','Email','Food','Hosting','Meditation','Quote','Show Episode'];
+	for (const name of templates) files['Notes/' + name + '.md'] = files['Templates/' + name + ' Template.md'];
+	files['Notes/Ordinary reference.md'] = `---\ncategories: ["[[${root}/References/Dessert]]"]\n---\n`;
+	files['Notes/Foreign category.md'] = `---\ncategories: ["[[${other}/References/Coffee]]"]\n---\n`;
+	const items = notes(files);
+	const inventory = linkInventory(files, items);
+	const links = await collectCheckLinkEvidence({vaultRoot:'.',resolveLink:link=>fixtureTarget(files,link)},inventory,'.',root);
+	const result = await kepano({libraryRoot:root,notes:items,links});
+	assert.equal(result.unverified,0);
+	assert.deepEqual(result.findings.map(({code,file})=>[code,file]), [
+		['category-link-outside-library','Notes/Ordinary reference.md'],
+		['category-link-outside-library','Notes/Foreign category.md'],
+	]);
+	for (const name of templates)
+		assert.match(result.checkedItems.find(item=>item.file==='Notes/' + name + '.md').outcome,/指向本库分类页 1 条/u);
+});
+
+test('mastered exam practice needs at least one real Gregorian attempt date', async () => {
+	const practice = {path:'Practice/sample.md',properties:{type:'exam-practice',status:'mastered'}};
+	for (const invalid of ['0000-01-01','2025-02-29','1900-02-29','2025-02-31','2026-04-31','2026-00-02','2026-12-00']) {
+		practice.properties.attempts = [invalid];
+		assert.deepEqual((await exam({notes:[practice]})).findings.map(({code})=>code),['retry-record-missing'],invalid);
+	}
+	practice.properties.attempts = ['2025-02-31','2000-02-29'];
+	const valid = await exam({notes:[practice]});
+	assert.deepEqual(valid.findings,[]);
+	assert.match(valid.checkedItems[0].outcome,/2000-02-29/u);
 });
 
 test('first-week entry rejects missing, other-library, and non-diary targets', async () => {

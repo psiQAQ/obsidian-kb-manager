@@ -30,9 +30,10 @@ export function checkCreationRequirements(template:Template, host:TemplateHost) 
 export const kepanoSource = 'builtin:kepano';
 type TemplateIdentity = Pick<Template,'id'|'version'>;
 export type BuiltinKind = 'llm-wiki' | 'kepano';
-const wikiVersion = '9';
-const kepanoVersion = '9';
-const builtinVersions = { 'llm-wiki': ['1','2','3','4','5','6','7','8',wikiVersion], kepano: ['1','2','3','4','5','6','7','8',kepanoVersion] };
+const wikiVersion = '10';
+const kepanoVersion = '10';
+const historicalVersions = ['1','2','3','4','5','6','7','8','9'];
+const builtinVersions = { 'llm-wiki': [...historicalVersions,wikiVersion], kepano: [...historicalVersions,kepanoVersion] };
 function isBuiltin(template:TemplateIdentity|undefined, id:BuiltinKind) {
 	return template?.id === id && builtinVersions[id].includes(template.version);
 }
@@ -59,7 +60,10 @@ export function kepanoBindingAssets(skeleton:Record<string,string>, version:stri
 	const previousPages = /^[1-5]$/u.test(version) && skeleton['Bindings.v5.json']
 		? JSON.parse(skeleton['Bindings.v5.json']) as Record<string,string>
 		: {};
-	return {...skeleton, ...previousBindings, ...previousShows, ...previousPages,
+	const previousAttachmentViews = historicalVersions.includes(version) && skeleton['Bindings.v9.json']
+		? JSON.parse(skeleton['Bindings.v9.json']) as Record<string,string>
+		: {};
+	return {...skeleton, ...previousBindings, ...previousShows, ...previousPages, ...previousAttachmentViews,
 		...(historical && (version === '1' || version === '2') && {'README.md':historical})};
 }
 export function kepanoBinding(skeleton:Record<string,string>, name:string) {
@@ -71,7 +75,7 @@ function bundledText(name:string,text:string){
 export function kepanoTemplate(skeleton:Record<string,string>, root:string):Template {
 	if (!skeleton['README.md'] || !Object.keys(skeleton).some(name=>name.startsWith('Templates/') && name.endsWith('.md')))
 		throw new Error(fromEnglish('Missing built-in Kepano template','内置 Kepano 模板缺失'));
-	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^(?:README\.v[12]\.md|Bindings\.v[568]\.json)$/u.test(name)));
+	const assets = Object.fromEntries(Object.entries(skeleton).filter(([name]) => !/^(?:README\.v[12]\.md|Bindings\.v[5689]\.json)$/u.test(name)));
 	const rootSlots:Record<string,number[]>={};
 	const files = Object.entries(renderKepano(assets,root)).map(([name,text]) => {
 		const content=bundledText(name,text);

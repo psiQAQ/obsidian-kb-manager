@@ -1,3 +1,15 @@
+const referenceCategories = new Set([
+	'References/Apps.md',
+	'References/Coffee.md',
+	'References/Conference sessions.md',
+	'References/Emails.md',
+	'References/Food.md',
+	'References/Hosting.md',
+	'References/Meditations.md',
+	'References/Quotes.md',
+	'References/Show episodes.md',
+]);
+
 function localTarget(value, file, { libraryRoot, links }) {
 	const raw = typeof value === 'string' && value.match(/^\[\[([^|\]\n]+)(?:\|[^\]\n]*)?\]\]$/u)?.[1].replace(/\\$/u, '').trim();
 	const target = raw && raw.split('#', 1)[0].trim();
@@ -13,7 +25,7 @@ function localTarget(value, file, { libraryRoot, links }) {
 
 export default async function check(context) {
 	const { notes } = context;
-	const categories = new Set(notes.filter(note => note.path.startsWith('Categories/') || note.path === 'References/Apps.md')
+	const categories = new Set(notes.filter(note => note.path.startsWith('Categories/') || referenceCategories.has(note.path))
 		.map(note => note.path.replace(/\.md$/u, '')));
 	let unverified = 0;
 	const findings = [];

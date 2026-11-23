@@ -168,6 +168,35 @@ test('first general and specialized checks find no errors in newly created libra
 				[page,'missing-attachment'],
 			]);
 			assert.ok(changed.some(row => row.file === page && row.evidence === wrongBase));
+
+			const index=path.join(libraryRoot,'wiki/index.md');
+			const originalIndex=await fs.readFile(index,'utf8');
+			await fs.mkdir(path.join(libraryRoot,'wiki/concepts'),{recursive:true});
+			await fs.mkdir(path.join(libraryRoot,'wiki/other'),{recursive:true});
+			const knowledge = '---\ntype: concept\nmanaged_by: agent\n---\n# Sample\n';
+			const local='wiki/concepts/Sample.md', homonym='wiki/other/Sample.md';
+			await fs.writeFile(path.join(libraryRoot,local),knowledge);
+			await fs.writeFile(path.join(libraryRoot,homonym),knowledge);
+			function offlineIndex(){
+				const cli=spawnSync(process.execPath,['./checks/kb-check.cjs','--library','.','--vault-root',vaultRoot,
+					'--config-dir',configDir,'--checks','analysis-evidence'],
+				{cwd:libraryRoot,encoding:'utf8',maxBuffer:8*1024*1024});
+				assert.ifError(cli.error);
+				return {exit:cli.status,result:JSON.parse(cli.stdout).checks[0]};
+			}
+			for(const link of ['[Sample](concepts/Sample.md)','[[./concepts/Sample]]','[Sample](./concepts/Sample.md "Title")']){
+				await fs.writeFile(index,originalIndex+'\n- '+link+'\n- [[Sample]]\n- [[Other/wiki/other/Sample]]\n');
+				const {result}=offlineIndex();
+				const uncovered=result.diagnostics.filter(row=>row.code==='knowledge-index-uncovered' && [local,homonym].includes(row.file));
+				assert.deepEqual(uncovered.map(row=>row.file),[homonym],link);
+				assert.ok(result.checkedItems.some(item=>item.file===local && item.outcome==='索引中有指向此页的链接。'),link);
+			}
+			await fs.unlink(index);
+			const missing=offlineIndex();
+			assert.equal(missing.exit,0);
+			assert.equal(missing.result.status,'partial');
+			assert.equal(missing.result.coverage.unknown,1);
+			assert.ok(missing.result.diagnostics.some(row=>row.code==='knowledge-index-missing' && row.file==='wiki/index.md'));
 		});
 	}
 });

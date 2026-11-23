@@ -16,7 +16,7 @@ views:
     name: Images
     filters:
       and:
-        - '!file.ext.containsAny("base", "canvas", "pdf", "md")'
+        - '["avif", "bmp", "gif", "jpeg", "jpg", "png", "svg", "webp"].contains(file.ext.lower())'
     order:
       - file.name
     sort:

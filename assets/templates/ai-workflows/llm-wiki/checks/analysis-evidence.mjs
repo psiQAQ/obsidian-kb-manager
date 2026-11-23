@@ -49,19 +49,23 @@ function indexedPaths(index, libraryRoot) {
 		if (!definitions.has(key)) definitions.set(key, destination);
 		return '';
 	});
-	const links = /(?<!!)\[([^\n[\]]*)\](?:\((<[^>\n]+>|[^\n)]+)\)|\[([^\n[\]]*)\])|(?<!!)\[\[([^\n\]#|]+)(?:[^\n\]]*)\]\]/gu;
+	const links = /(?<!!)\[([^\n[\]]*)\](?:\([ \t]*(<[^<>\n]*>|[^\s()]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\)|\[([^\n[\]]*)\])|(?<!!)\[\[([^\n\]#|]+)(?:[^\n\]]*)\]\]/gu;
+	const relative = path => posix.normalize(posix.join(posix.dirname(index.path), path));
 	for (const [, text, inline, reference, rawWiki] of prose.matchAll(links)) {
 		const rawMarkdown = inline ?? (reference !== undefined ? definitions.get(labelKey(reference || text)) : undefined);
 		if (rawMarkdown) {
-			const link = rawMarkdown.replace(/^<|>$/gu, '').split('#', 1)[0];
-			if (!/^\.{1,2}\//u.test(link)) continue;
+			const link = rawMarkdown.replace(/^<|>$/gu, '').split(/[?#]/u, 1)[0];
+			if (!link || /^(?:\/|[A-Za-z][\w+.-]*:)/u.test(link)) continue;
 			try {
-				indexed.add(posix.normalize(posix.join(posix.dirname(index.path), decodeURIComponent(link))));
+				const path = decodeURIComponent(link);
+				if (!posix.isAbsolute(path) && !path.includes('\\')) indexed.add(relative(path));
 			} catch {
 				// The general link check reports malformed links.
 			}
 		} else if (rawWiki?.includes('/')) {
-			const path = libraryRoot && rawWiki.startsWith(libraryRoot + '/') ? rawWiki.slice(libraryRoot.length + 1) : rawWiki;
+			const target = rawWiki.trim();
+			const path = /^\.{1,2}\//u.test(target) ? relative(target)
+				: libraryRoot && target.startsWith(libraryRoot + '/') ? target.slice(libraryRoot.length + 1) : target;
 			indexed.add(path.endsWith('.md') ? path : path + '.md');
 		}
 	}
@@ -75,6 +79,7 @@ export default async function check({ manifest, libraryRoot, notes }) {
 	const indexed = index && indexedPaths(index, libraryRoot);
 	const findings = [];
 	const checkedItems = [];
+	if (!index) findings.push({severity:'warning', code:'knowledge-index-missing', file:indexPath, message:'找不到本库索引，无法核对 Agent 管理知识页是否已收录。'});
 	for (const { path, properties } of notes) {
 		const { managed_by: managedBy, type, status, sources } = properties;
 		if (!path.startsWith(wiki + '/') || path === indexPath || managedBy !== 'agent' || !knowledgeTypes.has(type)) continue;
@@ -92,5 +97,5 @@ export default async function check({ manifest, libraryRoot, notes }) {
 			if (!declared) findings.push({severity:'warning', code:'analysis-evidence-missing', file:path, message});
 		}
 	}
-	return {findings, checkedItems};
+	return {findings, checkedItems, unverified:index ? 0 : 1};
 }

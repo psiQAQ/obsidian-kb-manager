@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { posix } from 'node:path';
 import { parse } from 'yaml';
+import { createContext, runInContext } from 'node:vm';
 import { renderKepano, rebindKepano } from '../src/kb/kepano.ts';
 import { kepanoBindingAssets, kepanoTemplate } from '../src/kb/template-core.ts';
 
@@ -27,7 +28,7 @@ test('built-in Kepano edition contains the pinned templates, categories, example
 	assert.equal(names.filter(n => /^Categories\/[^/]+\.md$/u.test(n)).length, 21);
 	assert.equal(names.filter(n => n.endsWith('.base')).length, 30);
 	assert.ok(['README.md','Clippings/Buy wisely.md','Daily/2023-09-12.md','Notes/2023 Japan Trip.md','References/Out of Control.md','Attachments/.gitkeep'].every(n => names.includes(n)));
-	assert.ok(names.every(n => ['Bindings.v5.json','Bindings.v6.json','Bindings.v8.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
+	assert.ok(names.every(n => ['Bindings.v5.json','Bindings.v6.json','Bindings.v8.json','Bindings.v9.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
 	assert.match(skeleton['LICENSE.md'], /Copyright \(c\) 2023 Steph Ango/u);
 	assert.match(skeleton['LICENSE.md'], /473697347a0eaac790a6596229c741b3915f3b77/u);
 	for (const [name, text] of Object.entries(skeleton)) {
@@ -81,19 +82,58 @@ test('old Kepano bindings retain scalar categories and historical month links af
 test('Kepano Shows keeps versioned filters while moving library paths', () => {
 	const name = 'Templates/Bases/Shows.base';
 	const lastSeen = text => parse(text).views.find(view => view.name === 'Last seen');
-	assert.equal(kepanoTemplate(skeleton, previous).version, '9');
+	assert.equal(kepanoTemplate(skeleton, previous).version, '10');
 	assert.deepEqual(lastSeen(rendered[name]).filters.and, ['!last.isEmpty()']);
 	assert.deepEqual(lastSeen(rendered[name]).sort, [{property:'last', direction:'DESC'}]);
 	assert.equal(lastSeen(rendered[name]).limit, 20);
 
-	for (const version of ['7','8','9']) {
+	for (const version of ['7','8','9','10']) {
 		const assets = kepanoBindingAssets(skeleton, version);
 		const before = renderKepano(assets, previous)[name];
 		const after = rebindKepano(name, before, previous, destination, assets);
 		assert.deepEqual(after.manual, []);
 		assert.equal(after.edits.length, 2);
 		assert.equal(after.content, before.replaceAll(previous, destination));
-		assert.deepEqual(lastSeen(after.content).filters.and, version === '9' ? ['!last.isEmpty()'] : ['not(empty(note.last))']);
+		assert.deepEqual(lastSeen(after.content).filters.and, ['9','10'].includes(version) ? ['!last.isEmpty()'] : ['not(empty(note.last))']);
+	}
+});
+
+test('Kepano image and unused attachment views filter real file types within the library', () => {
+	const attachmentsPath = 'Templates/Bases/Attachments.base';
+	const everythingPath = 'Templates/Bases/Everything.base';
+	assert.equal(kepanoTemplate(skeleton,previous).rootSlots[attachmentsPath],undefined);
+	const attachments = parse(rendered[attachmentsPath]), everything = parse(rendered[everythingPath]);
+	const rows = ['Attachments/photo.PNG','logo.svg','Notes/referenced.webp','Attachments/study.pdf','Audio/demo.mp3',
+		'checks/common/links.mjs','.log/report.json','kb-template.json','kb.toml','kb-manager.json','Notes/page.md',
+		'Attachments/.gitkeep','Elsewhere/other.gif'];
+	const referenced = 'Notes/referenced.webp';
+	// Evaluate the exact filters with the subset of Bases functions used by these views.
+	function select(base, name) {
+		const context = createContext({hostFile:{hasLink:file=>file.path===previous+'/'+referenced}});
+		runInContext('Array.prototype.contains = Array.prototype.includes; String.prototype.lower = String.prototype.toLowerCase;',context);
+		const view = base.views.find(view=>view.name===name);
+		return rows.filter(row=>{
+			const path = row==='Elsewhere/other.gif' ? row : previous+'/'+row;
+			const file = {path,name:posix.basename(path),folder:posix.dirname(path),ext:posix.extname(path).slice(1),
+				inFolder:folder=>path.startsWith(folder+'/'),backlinks:{isEmpty:()=>row!==referenced}};
+			Object.assign(context,{file,formula:{links:file.backlinks}});
+			if (base.formulas.isImage) context.formula.isImage = runInContext(base.formulas.isImage,context);
+			return [...base.filters.and,...view.filters.and].every(filter=>runInContext(filter.replaceAll('this.file','hostFile'),context));
+		});
+	}
+	const images = ['Attachments/photo.PNG','logo.svg',referenced];
+	assert.deepEqual(select(attachments,'Images'),[referenced]);
+	assert.deepEqual(select(attachments,'All images'),images);
+	assert.deepEqual(select(everything,'Images'),images);
+	assert.deepEqual(select(attachments,'Unused attachments'),['Attachments/photo.PNG','logo.svg','Attachments/study.pdf','Audio/demo.mp3']);
+	for (const version of ['9','10']) {
+		const assets = kepanoBindingAssets(skeleton,version);
+		for (const name of [attachmentsPath,everythingPath]) {
+			const before = renderKepano(assets,previous)[name];
+			const after = rebindKepano(name,before,previous,destination,assets);
+			assert.deepEqual(after.manual,[]);
+			assert.equal(after.content,before.replaceAll(previous,destination));
+		}
 	}
 });
 

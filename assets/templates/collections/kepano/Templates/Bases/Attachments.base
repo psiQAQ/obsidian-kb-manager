@@ -1,10 +1,10 @@
 filters:
   and:
     - file.path.startsWith("__KB_ROOT__/")
-    - '!file.ext.containsAny("base", "md", "pdf", "canvas")'
 formulas:
   Embeds: if(file.embeds[0].containsAny("jpg","gif","webp","jpeg","avif"), file.embeds[0])
   Date: if(created,created,if(start,start))
+  isImage: '["avif", "bmp", "gif", "jpeg", "jpg", "png", "svg", "webp"].contains(file.ext.lower())'
   links: file.backlinks
 properties:
   formula.links:
@@ -14,6 +14,7 @@ views:
     name: Images
     filters:
       and:
+        - formula.isImage
         - this.file.hasLink(file)
     order: []
     sort:
@@ -23,12 +24,19 @@ views:
     cardSize: 70
   - type: cards
     name: All images
+    filters:
+      and:
+        - formula.isImage
     image: file.file
     imageFit: ""
   - type: table
     name: Unused attachments
     filters:
       and:
+        - '!["base", "canvas", "md"].contains(file.ext.lower())'
+        - file.inFolder("__KB_ROOT__/checks") == false
+        - '!file.folder.split("/").contains(".log")'
+        - '!["kb.toml", "kb-template.json", "kb-manager.json", ".gitignore", ".gitattributes", ".gitkeep"].contains(file.name)'
         - formula.links.isEmpty()
     order:
       - file.name

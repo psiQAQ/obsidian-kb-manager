@@ -284,7 +284,7 @@ try {
 		return {obsidian:window.require('electron').ipcRenderer.sendSync('version'),plugin:window.app.plugins.getPlugin(id).manifest.version};
 	},pluginId);
 	evidence.created={kepano:await create('kepano','collections','builtin:kepano'), wiki:await create('llm-wiki','ai-workflows','')};
-	assert.equal(evidence.created.kepano.template.version,'9');
+	assert.equal(evidence.created.kepano.template.version,'10');
 	const paths=await seed();
 	evidence.fixture={paths,targetShows,allShows,wikiViews};
 	await verify('Before',paths);
