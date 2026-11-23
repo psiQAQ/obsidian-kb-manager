@@ -137,7 +137,7 @@ function coverage(parent:HTMLElement,value:Report['checks'][number]['coverage'])
 }
 
 function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseManager,lib:Library,closeReport:()=>void,history?:ReportHistory) {
-	function sourceLink(parent:HTMLElement,file:string,line?:number,detail?:BaseExpression|'excluded',column?:number) {
+	function sourceLink(parent:HTMLElement,file:string,line?:number,detail?:BaseExpression|'excluded'|'template-source',column?:number) {
 		const source=file+(line?' · '+tr('第 ','Line ')+line+tr(' 行',''):'')+(column?' · '+tr('列 ','Column ')+column:'');
 		const button=parent.createEl('button',{cls:'kb-check-source-link',text:source,attr:{type:'button'}});
 		button.addEventListener('click',()=>{
@@ -184,6 +184,19 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			} else if(!check.checkedItems?.length && (!check.reason || check.coverage.checked)){
 				body.createEl('p',{text:tr('本项没有记录诊断消息。','This check recorded no diagnostic messages.')});
 			}
+			if(check.templateExcludedSources?.length){
+				body.createEl('h5',{text:tr('按模板配置跳过','Skipped by template configuration')+' · '+check.templateExcludedSources.length});
+				const list=body.createEl('ul',{cls:'kb-template-excluded'});
+				for(const {file,matches} of check.templateExcludedSources){
+					const item=list.createEl('li');
+					sourceLink(item,file,undefined,'template-source');
+					for(const match of matches){
+						const folder=match.startsWith('folders:');
+						item.createDiv({cls:'kb-v3-muted',text:(folder ? tr('匹配目录','Matching folder') : tr('匹配文件','Matching file'))+
+							' · '+match.slice(match.indexOf(':')+1)});
+					}
+				}
+			}
 			if(check.excludedPaths?.length){
 				body.createEl('h5',{text:tr('扫描时排除的路径','Paths excluded from scanning')});
 				const paths=body.createEl('ul');
@@ -202,7 +215,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 				if(check.baseExpressionCount && check.baseExpressionCount>check.baseExpressions.length)
 					body.createEl('p',{text:tr('已列出前 40 项，共 ','Showing the first 40 of ')+check.baseExpressionCount+tr(' 项。',' expressions.')});
 			}
-			if(check.coverage.skipped && !check.excludedPaths?.length)
+			if(check.coverage.skipped && !check.excludedPaths?.length && !check.templateExcludedSources?.length)
 				body.createEl('p',{cls:'kb-v3-muted',text:tr('此报告未单独列出跳过的条目。','This report does not list skipped entries individually.')});
 		});
 	}

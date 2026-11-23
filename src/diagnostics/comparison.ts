@@ -10,6 +10,12 @@ function problemKey(item: Diagnostic) {
 	return JSON.stringify([item.code,item.file,item.evidence]);
 }
 
+function sameExcludedSources(before:DiagnosticCheckResult, after:DiagnosticCheckResult) {
+	const files=new Set(before.templateExcludedSources?.map(source=>source.file));
+	const current=after.templateExcludedSources ?? [];
+	return files.size===current.length && current.every(source=>files.has(source.file));
+}
+
 export function compareDiagnosticReports(previous: DiagnosticReport, current: DiagnosticReport) {
 	const introduced: ComparedFinding[] = [];
 	const resolved: ComparedFinding[] = [];
@@ -23,7 +29,7 @@ export function compareDiagnosticReports(previous: DiagnosticReport, current: Di
 	for (const checkId of new Set([...after.keys(),...before.keys()])) {
 		const oldCheck = before.get(checkId), newCheck = after.get(checkId);
 		if (oldCheck?.rule && newCheck?.rule && JSON.stringify(oldCheck.rule) !== JSON.stringify(newCheck.rule)) changedRules.push(checkId);
-		if (!sameEnvironment || !sameLibrary || !fullyChecked(oldCheck) || !fullyChecked(newCheck)) {
+		if (!sameEnvironment || !sameLibrary || !fullyChecked(oldCheck) || !fullyChecked(newCheck) || !sameExcludedSources(oldCheck,newCheck)) {
 			unavailableChecks.push(checkId);
 			continue;
 		}

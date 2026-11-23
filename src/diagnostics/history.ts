@@ -135,6 +135,11 @@ function reportFromLog(value: unknown, filename: string): DiagnosticReport | und
 		if (items && items.reduce((n,item)=>n+(item.count ?? 1),0) <= Number(row.coverage.checked)) row.checkedItems = items;
 		else delete row.checkedItems;
 		if (row.reason !== undefined && typeof row.reason !== 'string') delete row.reason;
+		if (!Array.isArray(row.templateExcludedSources) || row.templateExcludedSources.length > Number(row.coverage.skipped) ||
+			!row.templateExcludedSources.every((entry:unknown)=>isRecord(entry) && relativePath(entry.file) &&
+				Array.isArray(entry.matches) && entry.matches.length > 0 && entry.matches.every((match:unknown)=>
+					typeof match === 'string' && /^(?:files|folders):/u.test(match) && relativePath(match.slice(match.indexOf(':')+1)))))
+			delete row.templateExcludedSources;
 		if (!Array.isArray(row.excludedPaths) || row.excludedPaths.length > 40 ||
 			!row.excludedPaths.every(p => typeof p === 'string' && p.length <= 2048)) delete row.excludedPaths;
 		if (!Array.isArray(row.baseExpressions) || row.baseExpressions.length > 40 ||

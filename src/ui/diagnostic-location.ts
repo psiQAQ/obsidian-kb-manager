@@ -66,7 +66,7 @@ class SourceLocationDialog extends V3Dialog {
 }
 
 export async function openDiagnosticLocation(plugin:KnowledgeBaseManager,location:string,file:string,line:number|undefined,
-	origin:HTMLElement,closeReport:()=>void,detail?:BaseExpression|'excluded') {
+	origin:HTMLElement,closeReport:()=>void,detail?:BaseExpression|'excluded'|'template-source') {
 	if(detail==='excluded'){
 		// An excluded entry may itself be hidden, a symlink or a separate library.
 		// Locate its name in the validated parent without opening the entry.
@@ -120,7 +120,8 @@ export async function openDiagnosticLocation(plugin:KnowledgeBaseManager,locatio
 			'Could not read the source. Check that the file still exists and is readable UTF-8 text (up to 2 MiB).')+' · '+file);
 	}
 	if(!origin.isConnected)return;
-	const target=detail ? baseExpressionLine(text,detail) : line;
-	const message=detail && !target ? tr('当前源码中无法唯一定位报告中的表达式。','The reported expression has no unique match in the current source.') : undefined;
+	const expression=typeof detail==='object' ? detail : undefined;
+	const target=expression ? baseExpressionLine(text,expression) : line;
+	const message=expression && !target ? tr('当前源码中无法唯一定位报告中的表达式。','The reported expression has no unique match in the current source.') : undefined;
 	new SourceLocationDialog(plugin,file,text,target,origin,message).open();
 }
