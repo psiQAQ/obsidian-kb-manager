@@ -101,20 +101,23 @@ version = "1"
 		await until(()=>desktop.evaluate(()=>!window.kbDesktopPreviousHeading.isConnected),'manual refresh to replace the previous panel');
 		result.panelRefresh = await measurePanel();
 		if (size) {
-			await desktop.evaluate(name => {
+			await until(() => desktop.evaluate(name => {
 				const row = [...document.querySelectorAll('.kb-manager-sidebar .setting-item')]
 					.find(row => row.querySelector('.setting-item-name')?.textContent.trim() === name);
 				const control = row?.querySelector('button[aria-label="Check library"]');
-				if (!control) throw new Error('Library check action unavailable');
-				const card = row.closest('.kb-library-row'), bounds = card.getBoundingClientRect();
+				if (!control) return;
+				const card = row.closest('.kb-library-row');
+				card.scrollIntoView({block:'nearest',behavior:'instant'});
+				const bounds = card.getBoundingClientRect();
 				const hit = document.elementFromPoint(bounds.right - 12, bounds.top + 20);
-				if (hit !== card.querySelector('.kb-card-open')) throw new Error('Card background does not open the library');
+				if (hit !== card.querySelector('.kb-card-open')) return;
 				const actions = [...row.querySelectorAll('.kb-card-action')];
 				if (!actions.every((el, i) => el.offsetLeft === actions[0].offsetLeft && (!i || el.offsetTop > actions[i - 1].offsetTop)))
 					throw new Error('Library action icons are not in one left-aligned column');
 				window.kbDesktopMeasurements.begin();
 				control.click();
-			}, registered[0]);
+				return true;
+			}, registered[0]), 'clickable card background and check action after sidebar layout');
 			result.chooseCheck = await until(() => desktop.evaluate(() => {
 				const modal = document.querySelector('.modal.kb-v3-health');
 				const select = modal?.querySelector('select');
