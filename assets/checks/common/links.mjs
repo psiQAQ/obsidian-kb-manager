@@ -17,19 +17,21 @@ function noteCoverage(check, note, {tr, addReason}) {
 	}
 }
 
-function footnotes(check, note, tr) {
+function footnotes(check, note, {tr, recordChecked}) {
 	if (!note.footnotes) return;
 	const {inlineCount, references} = note.footnotes;
-	check.coverage.checked += inlineCount;
+	if (inlineCount) recordChecked(check,note.file,tr('内联脚注','Inline footnotes'),tr('已识别内联脚注。','Recognized inline footnotes.'),undefined,inlineCount);
 	for (const ref of references) {
 		if (!ref.defined && ref.ambiguous) {check.coverage.unknown++; continue;}
-		check.coverage.checked++;
+		recordChecked(check,note.file,`${tr('脚注引用','Footnote reference')} [^${ref.label}]`,ref.defined
+			? tr('本笔记包含对应定义。','This note contains the definition.')
+			: tr('本笔记缺少对应定义。','The definition is missing from this note.'),ref.line);
 		if (!ref.defined) check.diagnostics.push({severity:'error', code:'missing-footnote-definition', file:note.file, line:ref.line, evidence:ref.label,
 			message:tr('本笔记缺少对应的脚注定义。请补充定义或更新引用。','This note is missing the footnote definition. Add the definition or update the reference.')});
 	}
 }
 
-function pdfFragment(check, link, found, position, tr) {
+function pdfFragment(check, link, found, position, {tr, recordChecked}) {
 	if (!link.fragment || !/\.pdf$/iu.test(found.path ?? link.target)) return false;
 	const parts = link.fragment.slice(1).split('&');
 	const pages = parts.filter(part => /^page(?:=|$)/iu.test(part)).map(part => part.slice(5));
@@ -42,7 +44,8 @@ function pdfFragment(check, link, found, position, tr) {
 	if (!pages.length) {
 		if (!hasLocation || found.status === 'missing') check.coverage.skipped++;
 	} else if (pages.some(page => !/^\d+$/u.test(page) || !/[1-9]/u.test(page))) {
-		check.coverage.checked++;
+		recordChecked(check,position.file,`${tr('PDF 页码参数','PDF page parameter')} ${found.path ?? link.target}${link.fragment}`,
+			tr('页码不是正整数。','The page number is not a positive integer.'),position.line);
 		check.diagnostics.push({...position,severity:'error',code:'invalid-pdf-page',
 			message:tr('PDF 的 page 参数须为正整数，例如 #page=3。','Use a positive integer for the PDF page parameter, for example #page=3.')});
 	} else if (found.status === 'missing') check.coverage.skipped++;
@@ -68,14 +71,14 @@ function missingLink(target, kind, tr) {
 }
 
 export default function checkLinks({result: check, notes, anchorsSelected, desktop}, tools) {
-	const {tr, validText} = tools;
+	const {tr, validText, recordChecked} = tools;
 	for (const note of notes) {
-		footnotes(check,note,tr);
+		footnotes(check,note,tools);
 		noteCoverage(check,note,tools);
 		for (const {kind, line, link, found, evidence, cross} of note.references) {
 			const position = {file:note.file,line};
 			if (kind === 'invalid-encoding') {
-				check.coverage.checked++;
+				recordChecked(check,note.file,tr('链接 URL 转义','Link URL encoding'),tr('包含无效的 URL 转义。','Contains invalid URL encoding.'),line);
 				check.diagnostics.push({...position,severity:'error',code:'invalid-link-encoding',message:tr('链接包含无效的 URL 转义。','The link contains invalid URL encoding. Check any percent escapes.')});
 				continue;
 			}
@@ -85,14 +88,20 @@ export default function checkLinks({result: check, notes, anchorsSelected, deskt
 				check.diagnostics.push({...position,severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
 				continue;
 			}
-			check.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
+			if (found.status === 'unknown') check.coverage.unknown++;
+			else {
+				const subject = `${link.kind === 'embed' ? tr('嵌入目标','Embed target') : tr('链接目标','Link target')} ${link.target || link.source}${link.fragment ?? ''}`;
+				const outcome = found.status === 'missing' ? tr('目标文件不存在。','The target file is missing.')
+					: `${cross ? tr('已解析到库外文件','Resolved to a file outside this library') : tr('已解析到','Resolved to')} ${cross?.evidence ?? found.path}`;
+				recordChecked(check,note.file,subject,outcome,line);
+			}
 			if (found.status === 'missing') check.diagnostics.push({...position,evidence,...missingLink(link.target,link.kind,tr)});
 			else if (cross) check.diagnostics.push({...position,evidence,severity:'info',code:'cross-library-link',message:tr('链接解析到当前知识库之外的 Vault 文件。','The link resolves to a vault file outside this library.')});
 			else if (found.status === 'unknown') check.diagnostics.push({...position,evidence,severity:'info',code:'unverified-link',
 				message:validText(found.reason,512) ? found.reason : desktop ?
 					tr('目前无法确认 Obsidian 链接目标。','Obsidian could not resolve this link yet.') :
 					tr('离线环境无法确认 Obsidian 的实际链接目标。','Run this check in Obsidian to confirm where the link resolves.')});
-			if (!anchorsSelected) pdfFragment(check,link,found,{...position,evidence},tr);
+			if (!anchorsSelected) pdfFragment(check,link,found,{...position,evidence},tools);
 		}
 	}
 	noteLinkCoverage(check,tools);

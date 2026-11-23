@@ -1,5 +1,6 @@
 import {tr} from '../i18n.ts';
 import {wikiPattern} from '../kb/audit-markdown.ts';
+import {recordChecked} from './checked-items.ts';
 import type {Diagnostic, DiagnosticCheckResult, LinkRequest, LinkResolution} from './types.ts';
 
 const label = String.raw`([^\[\]\s\\]+)`;
@@ -43,17 +44,20 @@ export function footnoteEvidence(body: string, lineOffset: number) {
 
 export function inspectFootnotes(check: DiagnosticCheckResult, body: string, file: string, lineOffset: number) {
 	const {inlineCount,references} = footnoteEvidence(body,lineOffset);
-	check.coverage.checked += inlineCount;
+	if (inlineCount) recordChecked(check,file,tr('内联脚注 ^[…]','Inline footnotes ^[…]'),
+		tr('识别到内联定义。','Inline definitions recognized.'),undefined,inlineCount);
 	for (const ref of references) {
 		if (!ref.defined && ref.ambiguous) {check.coverage.unknown++; continue;}
-		check.coverage.checked++;
+		recordChecked(check,file,`[^${ref.label}]`,ref.defined
+			? tr('找到脚注定义。','Footnote definition found.')
+			: tr('缺少脚注定义。','Footnote definition is missing.'),ref.line);
 		if (!ref.defined) check.diagnostics.push({severity:'error',code:'missing-footnote-definition',file,line:ref.line,evidence:ref.label,
 			message:tr('本笔记缺少对应的脚注定义。请补充定义或更新引用。','This note is missing the footnote definition. Add the definition or update the reference.')});
 	}
 }
 
 export function inspectPdfFragment(check: DiagnosticCheckResult, link: LinkRequest, found: LinkResolution,
-	position: Pick<Diagnostic,'file'|'line'|'evidence'>) {
+	position: Pick<Diagnostic,'line'|'evidence'> & {file:string}, details?: string) {
 	if (!link.fragment || !/\.pdf$/iu.test(found.path ?? link.target)) return false;
 	const parts = link.fragment.slice(1).split('&');
 	const pages = parts.filter(part => /^page(?:=|$)/iu.test(part)).map(part => part.slice(5));
@@ -67,7 +71,8 @@ export function inspectPdfFragment(check: DiagnosticCheckResult, link: LinkReque
 		if (!hasLocation || found.status === 'missing') check.coverage.skipped++;
 	}
 	else if (pages.some(page => !/^\d+$/u.test(page) || !/[1-9]/u.test(page))) {
-		check.coverage.checked++;
+		const subject = [details,link.target + link.fragment].filter(Boolean).join(' · ');
+		recordChecked(check,position.file,subject,tr('PDF 页码参数无效。','The PDF page parameter is invalid.'),position.line);
 		check.diagnostics.push({...position,severity:'error',code:'invalid-pdf-page',
 			message:tr('PDF 的 page 参数须为正整数，例如 #page=3。','Use a positive integer for the PDF page parameter, for example #page=3.')});
 	} else if (found.status === 'missing') check.coverage.skipped++;

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import {statIfPresent} from '../fs/vault.ts';
 import {gitResult} from '../git/network-native.ts';
 import {tr} from '../i18n.ts';
+import {readCheckedItems} from './checked-items.ts';
 import {validInputVersion, validRuleVersion} from './provenance.ts';
 import {decode, libraryLocation, readRelative, relativePath} from './snapshot.ts';
 import {isRecord} from './types.ts';
@@ -130,6 +131,9 @@ function reportFromLog(value: unknown, filename: string): DiagnosticReport | und
 				return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0;
 			}) || !Array.isArray(row.diagnostics)) return;
 		if (!validRuleVersion(row.rule)) delete row.rule;
+		const items = readCheckedItems(row.checkedItems);
+		if (items && items.reduce((n,item)=>n+(item.count ?? 1),0) <= Number(row.coverage.checked)) row.checkedItems = items;
+		else delete row.checkedItems;
 		if (row.reason !== undefined && typeof row.reason !== 'string') delete row.reason;
 		if (!Array.isArray(row.excludedPaths) || row.excludedPaths.length > 40 ||
 			!row.excludedPaths.every(p => typeof p === 'string' && p.length <= 2048)) delete row.excludedPaths;

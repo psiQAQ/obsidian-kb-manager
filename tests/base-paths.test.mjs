@@ -132,6 +132,13 @@ test('Bases path findings match across legacy, installed common rule, and standa
 	assert.ok(saved);
 	assert.deepEqual(findings(saved),expected);
 	assert.deepEqual(saved.checks[0].baseExpressions,offline.checks[0].baseExpressions);
+	for (const report of [legacy,installed,offline,saved]) {
+		const check = report.checks[0];
+		assert.equal(check.coverage.checked,check.checkedItems.length);
+		assert.ok(check.checkedItems.some(row=>row.file==='index.base' && row.subject.includes('YAML')));
+		assert.ok(check.checkedItems.some(row=>row.file==='index.base' && row.line===3 && row.subject.includes('inFolder') && row.outcome.includes('Library/Notes')));
+		assert.ok(!check.checkedItems.some(row=>row.line===9 && row.file==='index.base'));
+	}
 	assert.equal(saved.checks[0].baseExpressionCount,4);
 	assert.ok(saved.checks[0].excludedPaths.includes('checks'));
 	assert.ok(saved.checks[0].baseExpressions.some(e=>e.file==='index.md' && e.line && e.expression.includes('./Notes/')));

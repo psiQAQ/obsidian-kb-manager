@@ -13,12 +13,14 @@ export interface Diagnostic {
 }
 
 export interface Coverage { checked: number; skipped: number; unknown: number }
+export interface CheckedItem { file: string; subject: string; outcome: string; line?: number; count?: number }
 export interface BaseExpression { file: string; scope: string; expression: string; line?: number }
 export interface DiagnosticCheckResult {
 	id: string;
 	name: string;
 	status: DiagnosticStatus;
 	coverage: Coverage;
+	checkedItems?: CheckedItem[];
 	diagnostics: Diagnostic[];
 	reason?: string;
 	excludedPaths?: string[];

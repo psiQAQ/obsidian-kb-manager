@@ -17,19 +17,21 @@ function noteCoverage(check, note, {tr, addReason}) {
 	}
 }
 
-function footnotes(check, note, tr) {
+function footnotes(check, note, {tr, recordChecked}) {
 	if (!note.footnotes) return;
 	const {inlineCount, references} = note.footnotes;
-	check.coverage.checked += inlineCount;
+	if (inlineCount) recordChecked(check,note.file,tr('内联脚注','Inline footnotes'),tr('已识别内联脚注。','Recognized inline footnotes.'),undefined,inlineCount);
 	for (const ref of references) {
 		if (!ref.defined && ref.ambiguous) {check.coverage.unknown++; continue;}
-		check.coverage.checked++;
+		recordChecked(check,note.file,`${tr('脚注引用','Footnote reference')} [^${ref.label}]`,ref.defined
+			? tr('本笔记包含对应定义。','This note contains the definition.')
+			: tr('本笔记缺少对应定义。','The definition is missing from this note.'),ref.line);
 		if (!ref.defined) check.diagnostics.push({severity:'error', code:'missing-footnote-definition', file:note.file, line:ref.line, evidence:ref.label,
 			message:tr('本笔记缺少对应的脚注定义。请补充定义或更新引用。','This note is missing the footnote definition. Add the definition or update the reference.')});
 	}
 }
 
-function pdfFragment(check, link, found, position, tr) {
+function pdfFragment(check, link, found, position, {tr, recordChecked}) {
 	if (!link.fragment || !/\.pdf$/iu.test(found.path ?? link.target)) return false;
 	const parts = link.fragment.slice(1).split('&');
 	const pages = parts.filter(part => /^page(?:=|$)/iu.test(part)).map(part => part.slice(5));
@@ -42,7 +44,8 @@ function pdfFragment(check, link, found, position, tr) {
 	if (!pages.length) {
 		if (!hasLocation || found.status === 'missing') check.coverage.skipped++;
 	} else if (pages.some(page => !/^\d+$/u.test(page) || !/[1-9]/u.test(page))) {
-		check.coverage.checked++;
+		recordChecked(check,position.file,`${tr('PDF 页码参数','PDF page parameter')} ${found.path ?? link.target}${link.fragment}`,
+			tr('页码不是正整数。','The page number is not a positive integer.'),position.line);
 		check.diagnostics.push({...position,severity:'error',code:'invalid-pdf-page',
 			message:tr('PDF 的 page 参数须为正整数，例如 #page=3。','Use a positive integer for the PDF page parameter, for example #page=3.')});
 	} else if (found.status === 'missing') check.coverage.skipped++;
@@ -60,9 +63,9 @@ function noteLinkCoverage(check, {tr, addReason}) {
 }
 
 export default function checkAnchors({result: check, notes, linksSelected}, tools) {
-	const {tr} = tools;
+	const {tr, recordChecked} = tools;
 	for (const note of notes) {
-		if (!linksSelected) footnotes(check,note,tr);
+		if (!linksSelected) footnotes(check,note,tools);
 		noteCoverage(check,note,tools);
 		for (const {kind, line, link, found, evidence} of note.references) {
 			if (!link?.fragment) continue;
@@ -72,15 +75,19 @@ export default function checkAnchors({result: check, notes, linksSelected}, tool
 				check.diagnostics.push({...position,severity:'info',code:'template-link-deferred',message:tr('模板链接待填入变量后检查。','Check this template link after its variables are filled in.')});
 				continue;
 			}
-			if (pdfFragment(check,link,found,position,tr)) continue;
+			if (pdfFragment(check,link,found,position,tools)) continue;
 			if (found.status === 'missing') check.coverage.skipped++;
 			else if (!found.anchor || found.anchor === 'unknown') {
 				check.coverage.unknown++;
 				check.diagnostics.push({...position,severity:'info',code:'unverified-anchor',message:tr('未能确认链接指定的标题、块或 Base 视图。','Could not verify the heading, block, or Base view referenced by the link.')});
 			} else {
-				check.coverage.checked++;
+				const target = found.path ?? (link.target || link.source);
+				const base = /\.base$/iu.test(target);
+				const kindLabel = base ? tr('Base 视图','Base view') : link.fragment.startsWith('#^') ? tr('块引用','Block reference') : tr('标题引用','Heading reference');
+				recordChecked(check,note.file,`${kindLabel} ${target}${link.fragment}`,found.anchor === 'missing'
+					? tr('目标文件中不存在此引用。','The target file does not contain this reference.')
+					: tr('已在目标文件中找到。','Found in the target file.'),line);
 				if (found.anchor === 'missing') {
-					const base = /\.base$/iu.test(found.path ?? link.target);
 					check.diagnostics.push({...position,severity:'error',code:base ? 'missing-base-view' : 'missing-anchor',message:base
 						? tr('目标 Base 中没有指定的视图。','The Base does not contain the named view. Check its name in the embed.')
 						: tr('目标文件不存在指定的标题或块。','The target file is missing the referenced heading or block. Check the link fragment.')});

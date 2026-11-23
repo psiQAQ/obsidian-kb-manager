@@ -491,6 +491,9 @@
 .kb-check-body :is(h5,p,ul) { margin-block: var(--size-4-2); }
 .kb-check-body ul { padding-inline-start: var(--size-4-5); }
 .kb-check-body li + li { margin-block-start: var(--size-4-1); }
+.kb-checked-items { padding-inline-start: var(--size-4-6); }
+.kb-checked-items > li { padding-block: var(--size-4-1); }
+.kb-checked-items > li > code { color: var(--text-muted); font-size: var(--font-ui-small); }
 .kb-v3-finding > strong { margin-inline-start: var(--size-4-2); }
 .kb-v3-finding > button { margin-inline-start: var(--size-4-2); }
 .kb-check-evidence { margin-block: var(--size-4-2); color: var(--text-muted); }

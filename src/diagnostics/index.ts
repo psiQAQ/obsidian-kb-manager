@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {tr} from '../i18n.ts';
 import {checkKitVersion} from '../kb/check-kit.ts';
+import {recordChecked} from './checked-items.ts';
 import {diagnosticEngineVersion} from '../kb/common-rules.ts';
 import checkBases from '../../assets/checks/common/bases.mjs';
 import checkBindings from '../../assets/checks/common/bindings.mjs';
@@ -180,10 +181,10 @@ export async function runDiagnostics(options: DiagnosticOptions): Promise<Diagno
 				switch (check.id) {
 				case 'manifest': inspectManifest(check, options, manifest, template, found); break;
 				case 'properties': inspectProperties(check, found, templateDirs); break;
-				case 'bindings': checkBindings({result:check,...await bindingEvidence(linkOptions,located,manifest)},{tr}); break;
+				case 'bindings': checkBindings({result:check,...await bindingEvidence(linkOptions,located,manifest)},{tr,recordChecked}); break;
 				case 'bases':
 					reportInventoryCoverage(check,found);
-					checkBases(await readBaseEvidence(linkOptions,located,found,check),{tr,addReason});
+					checkBases(await readBaseEvidence(linkOptions,located,found,check),{tr,addReason,recordChecked});
 					break;
 				case 'links': case 'anchors': case 'canvas': case 'portability': break;
 			default: failure(check, 'checker-not-configured', template.reason ?? tr('本库未声明该项专项检查。','This library does not declare that template check.')); break;

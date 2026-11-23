@@ -2,6 +2,7 @@ import {posix as path} from 'node:path';
 import {tr} from '../i18n.ts';
 import {parseMarkdown, prose, wikiPattern} from '../kb/audit-markdown.ts';
 import {baseViewNames} from './base-view.ts';
+import {recordChecked} from './checked-items.ts';
 import {addReason, reportInventoryCoverage, reportUnreadableNotes} from './coverage.ts';
 import {fencedBlocks} from './fences.ts';
 import {inspectFootnotes, inspectPdfFragment} from './references.ts';
@@ -192,12 +193,18 @@ export function linkResolver(options: EvidenceOptions, inventory: Inventory, roo
 		const library = registered?.find(other => within(target, other));
 		return {target, library, evidence: [target, library && `${tr('所属库','Owning library')} ${library}`].filter(Boolean).join(' · ')};
 	}
-	async function inspectPortability(check: DiagnosticCheckResult, position: Pick<Diagnostic,'file'|'line'>,
+	async function inspectPortability(check: DiagnosticCheckResult, position: Pick<Diagnostic,'line'> & {file:string},
 		link: LinkRequest, found: LinkResolution, details?: string) {
-		check.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
+		if (found.status === 'unknown') check.coverage.unknown++;
 		const matches = await candidates(check, link, found);
 		const matching = matches.length > 1 && `${tr('同名候选','Same-name candidates')} ${matches.join(tr('、',', '))}`;
 		const cross = outsideTarget(found);
+		if (found.status !== 'unknown') {
+			const subject = [details, link.target + (link.fragment ?? '') || position.file].filter(Boolean).join(' · ');
+			const outcome = found.status === 'missing' ? tr('目标文件不存在。','The target file is missing.') :
+				cross ? tr('依赖库外目标','Depends on a file outside this library') : tr('目标在库内','Target is inside this library');
+			recordChecked(check,position.file,subject,[outcome,found.path,matching].filter(Boolean).join(' · '),position.line);
+		}
 		if (cross) {
 			check.diagnostics.push({...position, evidence:[cross.evidence, details, matching].filter(Boolean).join(' · '),
 				severity: 'warning', code: 'external-library-dependency', message: cross.library
@@ -272,7 +279,7 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 			let requestValue: LinkRequest | undefined;
 			try {requestValue = linkRequest(source, occurrence);} catch {
 				if (links) {
-					links.coverage.checked++;
+					recordChecked(links,note.path,occurrence.target,tr('URL 转义无效。','Invalid URL encoding.'),line);
 					links.diagnostics.push({severity: 'error', code: 'invalid-link-encoding', file: note.path, line: occurrence.line, message: tr('链接包含无效的 URL 转义。','The link contains invalid URL encoding. Check any percent escapes.')});
 				}
 				continue;
@@ -292,7 +299,10 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 			const evidence = found.path ?? (relativePath(link.target) ? link.target : undefined);
 			const cross = outsideTarget(found);
 			if (links) {
-				links.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
+				if (found.status === 'unknown') links.coverage.unknown++;
+				else recordChecked(links,note.path,occurrence.target || note.path,found.status === 'missing'
+					? tr('目标文件不存在。','The target file is missing.')
+					: `${tr('目标文件','Target file')} · ${found.path}`,line);
 				if (found.status === 'missing') links.diagnostics.push({...position,evidence,...missingLink(link.target,link.kind)});
 				else if (cross) links.diagnostics.push({...position, evidence, severity: 'info', code: 'cross-library-link', message: tr('链接解析到当前知识库之外的 Vault 文件。','The link resolves to a vault file outside this library.')});
 				else if (found.status === 'unknown') links.diagnostics.push({...position,evidence,severity:'info',code:'unverified-link',
@@ -309,7 +319,9 @@ export async function inspectLinks(options: EvidenceOptions, inventory: Inventor
 					anchors.diagnostics.push({...position,evidence,severity:'info',code:'unverified-anchor',message:tr('未能确认链接指定的标题、块或 Base 视图。','Could not verify the heading, block, or Base view referenced by the link.')});
 				}
 				else {
-					anchors.coverage.checked++;
+					recordChecked(anchors,note.path,occurrence.target,found.anchor === 'missing'
+						? tr('目标缺少引用的标题、块或视图。','The target is missing the referenced heading, block, or view.')
+						: tr('找到引用的标题、块或视图。','The referenced heading, block, or view was found.'),line);
 					if (found.anchor === 'missing') {
 						const base = /\.base$/iu.test(found.path ?? link.target);
 						anchors.diagnostics.push({...position,evidence,severity:'error',code:base ? 'missing-base-view' : 'missing-anchor',

@@ -15,6 +15,7 @@ import { createPanelTabs } from './panel-tabs.ts';
 import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
+import {showCheckedItems} from './diagnostic-checked-items.ts';
 import { templateIdentityLabel } from './template-labels.ts';
 import type { ReportHistory } from './v3-diagnostic-report.ts';
 
@@ -172,11 +173,12 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			if(!row.open || row.childElementCount>1)return;
 			const body=row.createDiv({cls:'kb-check-body'});
 			if(check.reason)body.createEl('p',{text:check.reason});
+			showCheckedItems(body,check);
 			if(check.diagnostics.length){
 				for(const item of check.diagnostics)finding(body,item);
-			} else if(check.status==='passed'){
+			} else if(check.status==='passed' && !check.checkedItems?.length){
 				body.createEl('p',{text:tr('已检查的项目均通过。','All checked items passed.')});
-			} else if(!check.reason || check.coverage.checked){
+			} else if(!check.checkedItems?.length && (!check.reason || check.coverage.checked)){
 				body.createEl('p',{text:tr('本项没有记录诊断消息。','This check recorded no diagnostic messages.')});
 			}
 			if(check.excludedPaths?.length){

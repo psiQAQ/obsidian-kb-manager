@@ -30,7 +30,7 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 					if(rows.filter(r=>r.open).length!==1 || !row.querySelector('.kb-check-body')?.checkVisibility())
 						throw Error('The selected result should be the only open panel');
 				}
-				if(!['checks','Paths excluded from scanning','Global filter','List.base','file.ext == "md"'].every(text=>rows[1].innerText.includes(text)))
+				if(!['Checked items','Base YAML, view and filter structure','Valid structure','checks','Paths excluded from scanning','Global filter','List.base','file.ext == "md"'].every(text=>rows[1].innerText.includes(text)))
 					throw Error('Missing readable coverage details');
 				rows[1].querySelector('summary').click();
 				if(rows.some(r=>r.open))throw Error('Re-selecting the same check should collapse it');

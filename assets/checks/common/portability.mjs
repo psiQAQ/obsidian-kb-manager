@@ -29,10 +29,18 @@ function noteLinkCoverage(check, {tr, addReason}) {
 }
 
 export default function checkPortability({result: check, notes, canvases, candidateMatches, canvasMatches, canvasSelected}, tools) {
-	const {tr, addReason, validText} = tools;
-	function inspect({found, cross}, matches, position, details) {
-		check.coverage[found.status === 'unknown' ? 'unknown' : 'checked']++;
+	const {tr, addReason, validText, recordChecked} = tools;
+	function inspect({link, found, cross}, matches, position, details) {
 		const matching = matches.length > 1 && tr('同名候选','Same-name candidates') + ' ' + matches.join(tr('、',', '));
+		if (found.status === 'unknown') check.coverage.unknown++;
+		else {
+			const label = matches.length ? tr('引用目标归属与同名候选','Target location and same-name candidates') : tr('引用目标归属','Target location');
+			const reference = `${label} ${link.target || link.source}${link.fragment ?? ''}`;
+			const target = found.status === 'missing' ? tr('目标文件不存在。','The target file is missing.')
+				: cross ? `${tr('库外目标','Target outside this library')} ${cross.evidence}` : `${tr('库内目标','Target in this library')} ${found.path}`;
+			const candidates = matching || (matches.length === 1 && tr('只找到一个同名候选。','Found one same-name candidate.'));
+			recordChecked(check,position.file,[details,reference].filter(Boolean).join(' · '),[target,candidates].filter(Boolean).join(' · '),position.line);
+		}
 		if (cross) {
 			check.diagnostics.push({...position,evidence:[cross.evidence,details,matching].filter(Boolean).join(' · '),
 				severity:'warning',code:'external-library-dependency',message:cross.library

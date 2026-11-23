@@ -10,7 +10,7 @@ function validFilter(value, depth = 0) {
 	return ['and','or','not'].includes(operator) && Array.isArray(operands) && operands.every(item => validFilter(item, depth + 1));
 }
 
-export default function checkBases({result: check, files, notes, noteCoverage}, {tr, addReason}) {
+export default function checkBases({result: check, files, notes, noteCoverage}, {tr, addReason, recordChecked}) {
 	let dynamicExpressions = 0;
 	function recordExpression(file, line, scope, value) {
 		dynamicExpressions++;
@@ -48,7 +48,9 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 				addReason(check,tr('部分过滤器路径需要在 Vault 中确认。','Some filter paths need to be verified in the vault.'));
 				continue;
 			}
-			check.coverage.checked++;
+			const outcome = status === 'relative' ? tr('以 ./ 或 ../ 开头，不能按文件所在目录解析','Relative to the file rather than the vault root') :
+				status === 'missing' ? tr('Vault 中未找到目录','Folder not found in the vault') : tr('Vault 中的目录存在','Folder exists in the vault');
+			recordChecked(check,file,field + ' · ' + expression,outcome + ' · ' + value,line);
 			if (status === 'relative') check.diagnostics.push({...position,severity:'warning',code:'base-path-relative',message:tr(
 				'Bases 路径以 Vault 根目录为基准。请检查 ./ 或 ../ 开头的路径。','Bases paths are relative to the vault root. Review the path beginning with ./ or ../.')});
 			if (status === 'missing') check.diagnostics.push({...position,severity:'info',code:'base-path-missing-folder',message:kind === 'inFolder'
@@ -80,14 +82,21 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 				tr('视图筛选','View filter') + ' · ' + (typeof scope.name === 'string' ? scope.name : '—'),scope.filters);
 		}
 	}
+	function checkStructure(file, data, line) {
+		const before = check.diagnostics.length;
+		inspect(file,data,line);
+		const errors = check.diagnostics.slice(before);
+		const outcome = errors.length ? errors.map(item=>item.message).join(' ') :
+			tr('结构有效，视图数','Valid structure. Views') + ' · ' + (data?.views?.length ?? 0);
+		recordChecked(check,file,tr('Base 的 YAML、视图与筛选结构','Base YAML, view and filter structure'),outcome,line);
+	}
 	for (const {file, data, paths, unreadable} of files) {
 		if (unreadable) {
 			check.coverage.unknown++;
 			check.diagnostics.push({severity:'info', code:'unreadable-file', file, message:tr('文件不可读或超出检查范围限制。','Could not read the file within the scan limits.')});
 			addReason(check, tr('部分检查文件未能读取。','Some files for this check could not be read.'));
 		} else {
-			check.coverage.checked++;
-			inspect(file, data);
+			checkStructure(file, data);
 			inspectPaths(file, paths);
 		}
 	}
@@ -102,8 +111,7 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 			addReason(check, tr('部分 Markdown 正文无法与属性分开。','Some Markdown bodies could not be separated from their frontmatter.'));
 		}
 		for (const {data, line, paths} of blocks) {
-			check.coverage.checked++;
-			inspect(file, data, line);
+			checkStructure(file, data, line);
 			inspectPaths(file, paths);
 		}
 	}

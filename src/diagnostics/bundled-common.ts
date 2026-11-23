@@ -8,6 +8,7 @@ import portability from '../../assets/checks/common/portability.mjs';
 import properties from '../../assets/checks/common/properties.mjs';
 import {commonRuleDigests} from '../kb/common-rules.ts';
 import {tr} from '../i18n.ts';
+import {recordChecked} from './checked-items.ts';
 import {addReason} from './coverage.ts';
 import {printable} from './types.ts';
 import type {SpecialCheck} from './types.ts';
@@ -23,11 +24,17 @@ const rules = new Map<string, (evidence: never, tools: typeof helpers) => unknow
 	['checks/common/properties.mjs',properties],
 ]);
 
-const helpers = {tr, addReason, validText:printable};
+const helpers = {tr, addReason, validText:printable, recordChecked};
 
 const previousBundledDigests = new Map([
-	['checks/common/bindings.mjs',['6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49']],
-	['checks/common/bases.mjs',['9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104','66045471f46dcaef2782b6d73ba7632120618552b65abf735737327639392290']],
+	['checks/common/anchors.mjs',['0c9a5753ecf988f5c9209eda8f350ac58eb07aa68968986cc16a2c3a244374e3']],
+	['checks/common/bases.mjs',['9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104', '66045471f46dcaef2782b6d73ba7632120618552b65abf735737327639392290', '1dd512af43ebfb549ea3d01d605e1a5d871699409ab063ac980a1f6bd5f4d933']],
+	['checks/common/bindings.mjs',['6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49', '7600c8340602186f9434de740be2812218e20bc3b633e80f14f6876281460169']],
+	['checks/common/canvas.mjs',['211e4cacfae13a667f37ffeb69732f0922404af316e4b3d553fc2eb8dbc335cb']],
+	['checks/common/links.mjs',['9d6f8140618cea057357fd657c195b120ef59951be6188c1c24b71e8e815f1e3']],
+	['checks/common/manifest.mjs',['3593541067b163c7562d29b1f36ec1af75a7de537e035a814321224a6bf7ac7e']],
+	['checks/common/portability.mjs',['86a03894093c781236388962a9127568b192e81a6ab37163936b9d96424ce7e7']],
+	['checks/common/properties.mjs',['ecd63c1bcbe0af5f3fe74779a66eba2d5cb06f6a7d6ef71d641aa3d613e4705b']],
 ]);
 
 export function bundledCommonDigest(check: SpecialCheck) {

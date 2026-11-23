@@ -1,4 +1,5 @@
 import {tr} from '../i18n.ts';
+import {readCheckedItems} from './checked-items.ts';
 import {bundledCommonRule, runBundledCommon} from './bundled-common.ts';
 import {entryVersion, libraryLocation, manifestSnapshot, readChecker, relativeEntry, unavailableVersion} from './snapshot.ts';
 import type {InputTrace} from './provenance.ts';
@@ -108,6 +109,11 @@ export async function runCommon(rule: DeclaredCheck, result: DiagnosticCheckResu
 	const findings = readFindings(diagnostics, true);
 	const counts = readCoverage(coverage);
 	if (!findings || !counts || (reason !== undefined && !printable(reason, 100000))) return invalidResult();
+	if (!bundled && response.data.checkedItems !== undefined) {
+		const items = readCheckedItems(response.data.checkedItems);
+		if (!items || items.reduce((n,item)=>n+(item.count ?? 1),0) > counts.checked) return invalidResult();
+		result.checkedItems = items;
+	}
 	result.coverage = counts;
 	result.diagnostics = findings;
 	result.reason = reason;

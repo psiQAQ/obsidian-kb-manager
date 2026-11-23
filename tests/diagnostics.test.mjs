@@ -86,7 +86,7 @@ test('a library executes reviewed common and template sources and reports failur
 	}
 	const entry = 'checks/common/properties.mjs';
 	await put('fixture.base','views:\n  - type: table\n    name: Example\n');
-	const common = 'export default ({result}) => {result.coverage.checked++; result.diagnostics.push({code:"edited-common",severity:"warning",file:"name.md",line:1,message:"Common finding"}); return result;}';
+	const common = 'export default ({result},{recordChecked}) => {recordChecked(result,"name.md","Custom rule","Found a problem",1); result.diagnostics.push({code:"edited-common",severity:"warning",file:"name.md",line:1,message:"Common finding"}); return result;}';
 	const special = 'export default () => [{code:"edited-special",severity:"warning",file:"name.md",line:1,message:"Template finding"}];';
 	await put('kb.toml',writeCheckKit(manifest,{protocol:1,version:checkKitVersion,digests:hashes}));
 	await put(entry,common);
@@ -97,6 +97,7 @@ test('a library executes reviewed common and template sources and reports failur
 	const before = await run([]);
 	assert.deepEqual(before.checks.slice(0,2).map(codes),[['checker-untrusted'],['checker-untrusted']]);
 	const after = await run(approved);
+	assert.deepEqual(result(after,'properties').checkedItems,[{file:'name.md',subject:'Custom rule',outcome:'Found a problem',line:1}]);
 	assert.deepEqual(after.checks.slice(0,2).flatMap(c=>c.diagnostics.map(d=>[d.code,d.file,d.line])),[
 		['edited-common','name.md',1],['edited-special','name.md',1],
 	]);
@@ -110,6 +111,29 @@ test('a library executes reviewed common and template sources and reports failur
 	assert.deepEqual(codes(result(missing,'properties')),['checker-unavailable']);
 	assert.equal(result(missing,'properties').diagnostics[0].file,entry);
 	assert.equal(result(missing,'bases').status,'passed');
+});
+
+test('checked rows account for files and positive and negative results in new and legacy libraries', async t => {
+	const {options,put,root} = await fixture(t);
+	const selected = ['manifest','properties','links','anchors','bases','canvas','portability'];
+	await put('name.md','# Entry\n\n[[./notes/target.md#Local heading]]\n![[./missing.png]]\n');
+	await put('Example.base','views:\n  - name: Notes\n    type: table\n');
+	await put('Bad.canvas','{"nodes":[],"edges":[{"id":"x","fromNode":"missing","toNode":"missing"}]}');
+	for (const kit of [false,true]) {
+		if (kit) for (const [file,text] of Object.entries(checkKitFiles())) await put(file,text);
+		const report=await runDiagnostics({...options,selected});
+		for (const check of report.checks) {
+			assert.ok(check.coverage.checked>0,check.id);
+			assert.equal(check.checkedItems.reduce((n,row)=>n+(row.count??1),0),check.coverage.checked,check.id);
+			assert.ok(check.checkedItems.every(row=>row.file && row.subject && row.outcome),check.id);
+		}
+		assert.ok(result(report,'links').checkedItems.some(row=>row.file==='name.md' && row.subject.includes('missing.png')));
+		assert.ok(result(report,'anchors').checkedItems.some(row=>row.subject.includes('Local heading')));
+		assert.ok(result(report,'canvas').diagnostics.some(row=>row.code==='canvas-dangling-edge'));
+		assert.ok(result(report,'canvas').checkedItems.some(row=>row.file==='Bad.canvas'));
+		const saved=(await listDiagnosticHistory(root)).find(row=>row.runId===report.runId);
+		assert.deepEqual(saved.checks.map(c=>c.checkedItems),report.checks.map(c=>c.checkedItems));
+	}
 });
 
 test('only common rules with matching official paths and digests run without a local Node executable', async t => {
