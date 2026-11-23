@@ -3,9 +3,10 @@ import test from 'node:test';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { digest } from '../src/fs/vault.ts';
-import { discover, readManifest, writeIdentity } from '../src/kb/catalog.ts';
+import { discover, readManifest, writeIdentity, writeTemplateFileRecord } from '../src/kb/catalog.ts';
 import { createLibrary, previewCreate } from '../src/kb/create.ts';
 import { initialIdentityDefaults } from '../src/git/initial.ts';
+import { setLanguage } from '../src/i18n.ts';
 import { applyTemplateUpdate, previewTemplateUpdate } from '../src/kb/template-update.ts';
 import { vaultDisk } from './fixtures/vault-disk.mjs';
 
@@ -105,4 +106,78 @@ test('managed template updates render per instance and preserve edits, missing f
 	assert.equal(reintroduced.files.find(file=>file.path===removed).change,'conflict');
 	assert.equal(reintroduced.canApply,false);
 	assert.equal(await read(first,removed),'keep older copy in '+first.location+'\n');
+});
+
+test('managed README upgrades retain the installed check guide and protect local edits',async t=>{
+	const scratch=path.resolve('.tmp');
+	await fs.mkdir(scratch,{recursive:true});
+	const root=await fs.mkdtemp(path.join(scratch,'template-readme-'));
+	t.after(()=>fs.rm(root,{recursive:true,force:true}));
+	const disk=vaultDisk(root,'.settings'),source='template';
+	const config={parents:[],templates:[source]},host={version:'3.4.0',pluginVersion:()=>undefined};
+	const authorText='\uFEFF# {{kb_name}}\r\n\r\nAuthor introduction.\r\n';
+	const rendered=authorText.replace('{{kb_name}}','Book');
+	const updated=authorText+'\r\nUpdated introduction.\r\n';
+	const check={id:'reading',name:'Reading check',path:'checks/read.mjs'};
+	const sourceVersion=async (version,text,checks=[check])=>{
+		const spec={protocolVersion:1,id:'reading-template',version,managedFiles:['README.md'],text:{'README.md':['kb_name']},checks};
+		await fs.writeFile(path.join(root,source,'kb-template.json'),JSON.stringify(spec));
+		await fs.writeFile(path.join(root,source,'README.md'),text);
+	};
+	await fs.mkdir(path.join(root,source,'checks'),{recursive:true});
+	await fs.writeFile(path.join(root,source,check.path),'export default function check() {}\n');
+	await sourceVersion('1',authorText);
+	const git={defaults:await initialIdentityDefaults(),values:{name:'QA',email:'qa@example.invalid'},origin:''};
+	const input={parent:'',name:'book',displayName:'Book',description:'',source,git};
+	setLanguage('en');
+	t.after(()=>setLanguage('zh'));
+	try {await createLibrary(disk,config,await previewCreate(disk,config,input,{}),{});}
+	finally {setLanguage('zh');}
+	const readme=path.join(root,'book','README.md'),manifestPath=path.join(root,'book','kb.toml');
+	const read=()=>fs.readFile(readme,'utf8');
+	const preview=async()=>previewTemplateUpdate(disk,config,(await discover(disk,config)).find(lib=>lib.location==='book'),source,host);
+	const original=await read();
+	const guide=original.slice(rendered.length);
+	assert.ok(original.startsWith(rendered));
+	assert.match(guide,/^\r\n## Check this library\r\n/u);
+	assert.match(guide,/`reading` · Reading check/u);
+	await sourceVersion('2',authorText,[{...check,name:'New source check'}]);
+	const versionOnly=await preview();
+	assert.equal(versionOnly.files[0]?.change,'current');
+	assert.equal(versionOnly.canApply,true);
+	await applyTemplateUpdate(disk,config,versionOnly,host);
+	assert.equal(await read(),original);
+	assert.equal(readManifest(await fs.readFile(manifestPath,'utf8')).templateFiles.version,'2');
+
+	await sourceVersion('3',updated,[]);
+	const upgrade=await preview();
+	assert.equal(upgrade.files[0]?.change,'replace');
+	await applyTemplateUpdate(disk,config,upgrade,host);
+	const newREADME=updated.replace('{{kb_name}}','Book')+guide;
+	assert.equal(await read(),newREADME);
+	const manifest=await fs.readFile(manifestPath,'utf8');
+	assert.equal(readManifest(manifest).templateFiles.digests['README.md'],digest(newREADME));
+	assert.deepEqual(JSON.parse(await fs.readFile(path.join(root,'book','kb-template.json'),'utf8')).checks,[check]);
+
+	const local=newREADME+'Local reading notes.\r\n';
+	await fs.writeFile(readme,local);
+	await sourceVersion('4',authorText,[]);
+	const conflict=await preview();
+	assert.equal(conflict.files[0]?.change,'conflict');
+	assert.equal(conflict.canApply,false);
+	assert.equal(await read(),local);
+
+	// Reproduce an already-applied update from the older implementation,
+	// which recorded the author text alone after removing the guide.
+	const record=readManifest(manifest).templateFiles;
+	record.digests['README.md']=digest(rendered);
+	await fs.writeFile(manifestPath,writeTemplateFileRecord(manifest,record));
+	await fs.writeFile(readme,rendered);
+	const repair=await preview();
+	assert.equal(repair.files[0]?.change,'replace');
+	await applyTemplateUpdate(disk,config,repair,host);
+	const restored=await read();
+	assert.ok(restored.startsWith(rendered));
+	assert.match(restored,/\r\n## 检验本库\r\n/u);
+	assert.match(restored,/`reading` · Reading check/u);
 });

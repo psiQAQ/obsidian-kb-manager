@@ -7,6 +7,7 @@ import type { VaultDisk } from '../fs/vault.ts';
 import { tr } from '../i18n.ts';
 import { identityFile, readManifest, recheck, retireTemplateFiles, writeIdentity, writeTemplateFileRecord } from './catalog.ts';
 import type { Config, Identity, Library } from './catalog.ts';
+import { checkInstructions, composeCheckReadme, installedCheckInstructions, readmePath } from './check-readme.ts';
 import { instanceText } from './instance-text.ts';
 import {classifyLibraryBinding} from './maintenance.ts';
 import {classifyPathBinding,retirePathBindings} from './path-binding-ownership.ts';
@@ -56,6 +57,17 @@ async function snapshot(disk:VaultDisk,root:string,file:string){
 	} finally {await handle.close();}
 }
 
+async function renderManagedReadme(disk:VaultDisk,root:string,authorText:string,installed:string|undefined){
+	const instructions=installedCheckInstructions(installed);
+	if(instructions)return composeCheckReadme(authorText,instructions);
+	// A previous template update may already have removed the guide. Recover it
+	// from the library's own declaration, which the template update does not replace.
+	const checks=await snapshot(disk,root,'kb-template.json').then(file=>
+		file.text===undefined?undefined:declaration(file.text).checks??[]
+	).catch(()=>undefined);
+	return composeCheckReadme(authorText,checkInstructions(checks));
+}
+
 type Change='current'|'add'|'replace'|'conflict'|'missing'|'retained'|'unavailable';
 interface FileUpdate {
 	path:string; change:Change; before?:string; after?:string; installed?:string; target?:string;
@@ -75,7 +87,7 @@ function older(target:string,installed:string){
 export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expected:Library,source:string,host:TemplateHost){
 	const library=await recheck(disk,config,expected);
 	const manifest=await readManifestFile(await disk.path(library.location+'/'+identityFile));
-	const {identity,templateFiles}=readManifest(manifest.raw);
+	const {identity,templateFiles,checkKit}=readManifest(manifest.raw);
 	if(library.signature!==manifest.signature || !identity || identity.archived || !templateFiles)
 		throw new Error(tr('只有已记录受管模板文件的可写知识库可以应用此更新。','Template updates require a writable library with recorded managed files.'));
 	if(!config.templates.includes(source))
@@ -94,13 +106,18 @@ export async function previewTemplateUpdate(disk:VaultDisk,config:Config,expecte
 		if(original.text===undefined)throw new Error(tr('缺少声明的文件：','Missing declared file: ')+path);
 		const sourceText=path==='knowledge.base' && spec.managed?.length?renderBase(original.text,vars.destination):original.text;
 		const rendered=instanceText(path,sourceText,spec.text?.[path] ?? [],vars);
-		const after=rendered.content,target=digest(after);
+		let after=rendered.content,target=digest(after);
 		managedText(path,new TextEncoder().encode(after));
 		const offsets=rendered.offsets.length?rendered.offsets:undefined;
 		const binding=identity.managed.find(file=>file.path===path);
 		const recorded=templateFiles.digests[path];
 		try {
 			const file=await snapshot(disk,library.location,path);
+			if(path===readmePath && checkKit){
+				after=await renderManagedReadme(disk,library.location,after,file.text);
+				managedText(path,new TextEncoder().encode(after));
+				target=digest(after);
+			}
 			const ownership=binding && file.text!==undefined && await classifyLibraryBinding(disk,library,binding,file.text);
 			const scans=ownership && !ownership.opaque;
 			const base={path,before:file.text,after,installed:file.signature,target,offsets,retireBinding:scans && !offsets ? true : undefined};
