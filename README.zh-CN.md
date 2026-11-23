@@ -18,10 +18,20 @@
 
 ## 创建、登记与日常使用
 
-1. 在命令面板运行 **打开知识库管理器**。在侧栏点 **新建**，选择用途和模板，再点 **填写知识库信息**。
+在命令面板运行 **打开知识库管理器**，从侧栏点 **新建** 进入模板选择。本指南中的截图均可点击查看原图。
+
+| 在同一 Vault 中管理三个知识库 | 按用途选择研究模板 |
+| --- | --- |
+| [![知识库总览，列出同一 Vault 中的 Coastal Research、Design Decisions 和 Reading Notes。](docs/screenshots/01-libraries-overview.png)](docs/screenshots/01-libraries-overview.png) | [![Research 用途下的模板选择界面，已选中 Research project，并列展示 Research evidence map。](docs/screenshots/02-choose-research-template.png)](docs/screenshots/02-choose-research-template.png) |
+
+1. 选择用途和模板，再点 **填写知识库信息**。
 2. 选择父目录（也可选 Vault 根目录）并填写新目录名。在 **高级 Git 选项** 核对将写入提交记录的姓名和邮箱。只在本地工作时，远端地址可留空。
 3. 点 **预览**，核对目标路径、首提交和要从 Obsidian 搜索与图谱中隐藏的目录。排除目录也可能让其中的笔记从 Bases 视图消失。Kepano 默认显示 `Templates`，建好后即可浏览模板视图。如果检验排除配置指向不存在的文件或目录，预览也会标出路径。
 4. 点 **创建知识库**。采用默认设置时，Git 会在 `main` 分支生成 `Initial commit`，其中包含库内离线检验工具。点 **运行首次检验** 即可查看结果。[建库示例](docs/getting-started.md)
+
+| 填写目录、显示名和 Git 署名 | 创建前核对目标与搜索排除项 |
+| --- | --- |
+| [![Wetland Survey 知识库详情界面，显示目标目录与 Git 身份设置。](docs/screenshots/03-library-details.png)](docs/screenshots/03-library-details.png) | [![Wetland Survey 建库预览列出目标路径、.gitignore 变更，以及从搜索中隐藏模板目录的选项。](docs/screenshots/04-confirm-library-creation.png)](docs/screenshots/04-confirm-library-creation.png) |
 
 点击知识库卡片即可打开该库，鼠标悬停在图标上可查看操作名称。在库内笔记中运行 **插入本库页面模板** 可以预览插入结果，笔记已有的同名属性保留原值。
 
@@ -49,15 +59,41 @@
 
 在知识库卡片上打开 **Git 工作区**。进入 **更改**，点击文件查看差异，可暂存整个文件或单个差异块。如果暂存后又修改了同一文件，提交已暂存内容只会保存先前暂存的版本。即使没配置远端，也可以先在本地提交。[逐库 Git、凭据与自动化](docs/library-git.md)
 
+| 分别查看已暂存与工作区改动 | 并排查看工作区的逐行差异 |
+| --- | --- |
+| [![所选知识库的 Git 工作区视图，分别列出已暂存改动与工作区改动。](docs/screenshots/05-git-workspace.png)](docs/screenshots/05-git-workspace.png) | [![Index 与 Working tree 的逐行差异对比，以红色标出删除、绿色标出新增。](docs/screenshots/06-working-tree-diff.png)](docs/screenshots/06-working-tree-diff.png) |
+
+提交预览列出本次将提交的文件，图中只有 `Site notes.md` 已暂存。在本库的 Git 设置中，可以指定暂存区为空时是否自动暂存，并为以后的提交设置说明模板。
+
+| 提交前核对已暂存文件 | 配置当前库的提交选项 |
+| --- | --- |
+| [![提交预览显示仅包含一个已暂存文件，另两个改动文件仍留在工作区。](docs/screenshots/07-review-staged-commit.png)](docs/screenshots/07-review-staged-commit.png) | [![知识库 Git 默认值与覆盖项，用于设置索引为空时的自动暂存与提交信息格式。](docs/screenshots/08-library-commit-settings.png)](docs/screenshots/08-library-commit-settings.png) |
+
 打开 **历史** 并点击一条提交，默认在**该行下方**展开提交信息和变更文件。合并提交默认与第一父提交比较，也可改选其他父提交。点击文件可查看红绿标记的逐行差异，并切换双栏或统一视图。
 
+| 浏览分支与合并提交历史 | 在行内展开提交说明与变更文件 |
+| --- | --- |
+| [![提交历史图谱，展示 main 与 field-notes 的分支与合并记录。](docs/screenshots/15-history-graph.png)](docs/screenshots/15-history-graph.png) | [![提交历史列表中，所选提交在行内展开，显示提交说明与变更文件。](docs/screenshots/16-inline-commit-details.png)](docs/screenshots/16-inline-commit-details.png) |
+
 比较两条提交时，先点一条，再按住 **Ctrl** 点击另一条（macOS 用 **Cmd**）。面板留在第一次点击的行下，默认从图中靠下的提交比较到靠上的提交。点 **交换比较方向** 可反向查看。按住同一修饰键点击第三条可更换比较对象，再点第二条则回到单提交详情。向下滚动会加载更早的提交，Ctrl/Cmd+F 可查找提交。[历史图操作](docs/git-graph-compatibility.md)
+
+| 比较选中的两次提交 | 查看两次提交间的逐行差异 |
+| --- | --- |
+| [![两次提交的比较视图，选中两次提交后列出两者之间的变更文件。](docs/screenshots/17-compare-two-commits.png)](docs/screenshots/17-compare-two-commits.png) | [![两次提交之间 Field observations.md 的逐行差异视图。](docs/screenshots/18-compare-commits-line-diff.png)](docs/screenshots/18-compare-commits-line-diff.png) |
 
 ## 知识库检验与离线 CLI
 
 在知识库卡片点 **检验 → 开始检验**，运行通用规则和模板专项。想了解单独搬走这个库会遗漏哪些依赖，可选 **自选检查项 → 可移植性**。桌面端使用 Obsidian 实际打开的链接目标。同名候选默认在本库和其他已登记库中查找，也可扩大到整个 Vault。
 
-展开 **各项检查范围** 下的一项，就能看到已检、跳过及未验证的文件和原因。例如，一个 Base 的 YAML 结构可能正确，但动态筛选结果仍需打开视图核对。点击文件和行号可查看当前源码，例如 `Views/Courses.base` 中被检查的目录筛选。即便没有发现问题，`partial` 仍表示有内容未能验证。
+| 自选检查项与可移植性 | 查看已检、跳过与未验证的数量 |
+| --- | --- |
+| [![诊断检查选择界面，列出各项检查与可选的可移植性检查。](docs/screenshots/09-choose-diagnostic-checks.png)](docs/screenshots/09-choose-diagnostic-checks.png) | [![诊断报告汇总，结果显示为 Partial，包含 18 项已检、8 项跳过和 1 项未验证。](docs/screenshots/10-diagnostic-summary.png)](docs/screenshots/10-diagnostic-summary.png) |
+
+在 **各项检查范围** 中展开 **Bases**，可查看已检、跳过或未验证的文件和筛选条件。下图中，点击 `Views/Survey.base` 第 4 行，即可在源码中看到已检的目录筛选 `file.inFolder("Libraries/Coastal Research")`。即使 Base 的 YAML 结构正确，动态筛选的结果仍可能需要在 Obsidian 中打开视图核对。因此，报告显示 `partial` 时，发现的问题数可以为零。
+
+| 展开 Bases 查看已检的目录筛选 | 定位到 Survey.base 第 4 行 |
+| --- | --- |
+| [![展开的诊断明细，显示已核验 Base 结构与 file.inFolder("Libraries/Coastal Research")，并将动态结果标为未验证。](docs/screenshots/11-diagnostic-file-details.png)](docs/screenshots/11-diagnostic-file-details.png) | [![从诊断报告跳转打开的只读源码视图，定位到 Views/Survey.base 第 4 行。](docs/screenshots/12-diagnostic-source-location.png)](docs/screenshots/12-diagnostic-source-location.png) |
 
 模板作者可在 `kb-template.json` 的 `diagnosticExclusions` 中按源文件或目录跳过指定检查。其他笔记**指向**被排除文件的链接仍会检验。Obsidian 搜索与图谱的排除目录需要单独设置。
 
@@ -76,7 +112,11 @@ node ./checks/kb-check.cjs --library . --checks all
 
 在知识库卡片点 **移动**，选择目标并预览变更。只想改目录名时，保留当前父目录，填写新名称。
 
-预览列出受影响的入链，以及独立或内嵌 Base 中可识别的路径筛选，包括你后来新建的视图。例如把 `Lab` 移到 `Archive/Lab` 时，`file.inFolder("Lab/Courses")` 可能需要改写。如果 `[[../课程索引]]` 移动后仍会打开同一个文件，就不会出现在预览里。确认前可核对目标不明确的链接、尚未保存的编辑和库外改动。移动若中断，可复核并继续。[迁移与恢复](docs/library-lifecycle.md)
+预览列出受影响的入链，以及独立或内嵌 Base 中可识别的路径筛选，包括你后来新建的视图。右图是确认前的预览，可核对拟用的新名称，并选择要随之更新的 Base 路径。如果 `[[../课程索引]]` 移动后仍会打开同一个文件，就不会出现在预览里。确认前可核对目标不明确的链接、尚未保存的编辑和库外改动。移动若中断，可复核并继续。[迁移与恢复](docs/library-lifecycle.md)
+
+| 选择移动或重命名目标 | 确认前核对入链与 Base 路径 |
+| --- | --- |
+| [![目标路径选择界面，用于指定重命名或移动知识库后的新目录。](docs/screenshots/13-move-destination.png)](docs/screenshots/13-move-destination.png) | [![移动前核对视图，在尚未执行移动时列出新旧路径、受影响的入链与可选的 Base 修改。](docs/screenshots/14-review-move-and-references.png)](docs/screenshots/14-review-move-and-references.png) |
 
 ## 设置存储与隐私边界
 
