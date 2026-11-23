@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
 import {copyFile, mkdir, open, rename, rm} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 import {digest, statIfPresent} from '../fs/vault.ts';
 import type {VaultDisk} from '../fs/vault.ts';
 import {tr} from '../i18n.ts';
@@ -11,7 +12,9 @@ import {identityFile, readManifest, writeCheckKit} from './identity-core.ts';
 import {readManifestFile, replaceLibraryManifest} from './manifest-disk.ts';
 import {previousTemplateCheckDigests} from './template-check-digests.ts';
 import {declaration} from './template-declaration.ts';
+import type {Declaration, DiagnosticExclusion} from './template-declaration.ts';
 import {builtinPacks, officialCheckDigests, packText} from './template-pack.ts';
+import type {PackDescriptor} from './template-pack.ts';
 
 const byteLimit = 1024 * 1024;
 const templateDeclarationFile = 'kb-template.json';
@@ -58,6 +61,7 @@ interface KitFile {
 	installedDigest?: string;
 	targetDigest?: string;
 	reason?: string;
+	exclusionDiff?: {local: string; bundled: string};
 }
 type EligibleFile = KitFile & {change: 'current' | 'add' | 'replace'; after: string; targetDigest: string};
 
@@ -113,7 +117,40 @@ function candidate(file: KitFile, after: string, change: Change): KitFile {
 	return {...file,change,after,targetDigest};
 }
 
-async function previewCourseworkFiles(disk: VaultDisk, location: string, version: string): Promise<KitFile[]> {
+function withDiagnosticExclusions(raw: string, rules: DiagnosticExclusion[]) {
+	const [,newline,spaces] = /^\s*\{(\r?\n)([\t ]*)"/u.exec(raw) ?? [];
+	const json = JSON.stringify(rules, null, spaces);
+	const separator = newline ? newline + (spaces ?? '') : ' ';
+	// Insert before the validated object's closing brace to preserve the rest of the file.
+	const end = raw.trimEnd().slice(0,-1).trimEnd().length;
+	return raw.slice(0,end) + ',' + separator + '"diagnosticExclusions": ' +
+		json.replace(/\n/gu,separator) + raw.slice(end);
+}
+
+function previewExclusions(file: KitFile, bundled: PackDescriptor, version: string, updated = file.before): KitFile | undefined {
+	const rules = bundled.diagnosticExclusions;
+	if (!rules?.length) return;
+	let spec: Declaration | undefined;
+	try { if (file.before !== undefined) spec = declaration(file.before.replace(/^\uFEFF/u,'')); }
+	catch (error) { return {...file,reason:String(error)}; }
+	if (spec?.id !== bundled.id || spec.version !== version || updated === undefined)
+		return {...file,reason:file.reason ?? tr('请核对本地模板声明与已登记的模板版本。','Check that the local template declaration matches the registered template version.')};
+	if (spec.diagnosticExclusions === undefined) {
+		const merged = withDiagnosticExclusions(updated,rules);
+		declaration(merged.replace(/^\uFEFF/u,''));
+		return candidate(file,merged,'replace');
+	}
+	const next = candidate(file,updated,'replace');
+	if (isDeepStrictEqual(spec.diagnosticExclusions,rules)) return next;
+	return {...next,exclusionDiff:{local:JSON.stringify(spec.diagnosticExclusions,null,2),bundled:JSON.stringify(rules,null,2)}};
+}
+
+function blockedCompanion(file: KitFile, companion: string): KitFile {
+	if (file.change !== 'replace') return file;
+	return {...file,change:'blocked',reason:tr('请先检查配套文件','Review the companion file first') + ' · ' + companion};
+}
+
+async function previewCourseworkFiles(disk: VaultDisk, location: string, bundled: PackDescriptor, version: string): Promise<KitFile[]> {
 	const source = packText(courseworkTemplate)[courseworkScript];
 	if (!source || !officialCheckDigests().includes(digest(source))) return [];
 	const [script, descriptor] = await Promise.all([
@@ -126,39 +163,40 @@ async function previewCourseworkFiles(disk: VaultDisk, location: string, version
 		catch { /* The library's declaration needs manual review. */ }
 	}
 	const nextDescriptor = after === undefined ? descriptor : candidate(descriptor,after,'replace');
-	const files = [nextScript,nextDescriptor];
-	if (files.every(eligible)) return files;
-	return files.map(file => {
-		if (file.change !== 'replace') return file;
-		const paired = file === nextScript ? courseworkDeclaration : courseworkScript;
-		return {...file,change:'blocked',reason:tr('请先检查配套文件','Review the companion file first') + ' · ' + paired};
-	});
+	const paired = eligible(nextScript) && eligible(nextDescriptor);
+	const exclusions = previewExclusions(descriptor,bundled,version,paired ? after : descriptor.before);
+	const courseScript = paired ? nextScript : blockedCompanion(nextScript,courseworkDeclaration);
+	const courseDescriptor = paired ? nextDescriptor : blockedCompanion(nextDescriptor,courseworkScript);
+	if (!exclusions) return [courseScript,courseDescriptor];
+	if (!eligible(exclusions) || (exclusions.change === 'current' && exclusions.exclusionDiff))
+		return [courseScript,{...courseDescriptor,reason:courseDescriptor.reason ?? exclusions.reason,exclusionDiff:exclusions.exclusionDiff}];
+	return [courseScript,{...exclusions,reason:courseDescriptor.reason}];
 }
 
-async function previewTemplateFiles(disk: VaultDisk, location: string, template: string | undefined):
+async function previewTemplateFiles(disk: VaultDisk, location: string, bundled: PackDescriptor, version: string):
 	Promise<Pick<CheckKitUpdate,'templateFiles'|'templateDeclarationDigest'>> {
-	const none = {templateFiles: []};
-	if (!template || template === courseworkTemplate) return none;
+	const template = bundled.id;
 	const before = previousTemplateCheckDigests[template];
-	const bundled = builtinPacks().find(pack => pack.id === template);
-	if (!before || !bundled?.checks?.length) return none;
-
 	const descriptor = await inspectKitFile(disk,location,templateDeclarationFile);
-	if (descriptor.before === undefined) return none;
-	let spec: ReturnType<typeof declaration>;
-	try {spec = declaration(descriptor.before.replace(/^\uFEFF/u,''));}
-	catch {return none;}
-	if (spec.id !== template) return none;
-
+	const exclusions = previewExclusions(descriptor,bundled,version);
+	let localChecks: Declaration['checks'];
+	try {
+		if (descriptor.before !== undefined) {
+			const spec = declaration(descriptor.before.replace(/^\uFEFF/u,''));
+			if (spec.id === template) localChecks = spec.checks;
+		}
+	}
+	catch { /* An invalid local declaration needs manual review. */ }
 	const sources = packText(template);
 	const templateFiles: KitFile[] = [];
-	for (const {id,path} of bundled.checks) {
-		const previous = before[path], source = sources[path];
+	for (const {id,path} of bundled.checks ?? []) {
+		const previous = before?.[path], source = sources[path];
 		if (!previous || !source || !officialCheckDigests().includes(digest(source)) ||
-			!spec.checks?.some(check => check.id === id && check.path === path)) continue;
+			!localChecks?.some(check => check.id === id && check.path === path)) continue;
 		const file = await inspectKitFile(disk,location,path);
 		templateFiles.push(candidate(file,source,file.installedDigest === previous ? 'replace' : file.change));
 	}
+	if (exclusions) templateFiles.push(exclusions);
 	return {templateFiles,templateDeclarationDigest:templateFiles.length ? descriptor.installedDigest : undefined};
 }
 
@@ -168,6 +206,8 @@ export async function previewCheckKitUpdate(disk: VaultDisk, location: string): 
 	const manifest = await readManifestFile(filename);
 	const {checkKit:kit, identity} = readManifest(manifest.raw);
 	if (!kit) return;
+	const version = identity?.template.version ?? '';
+	const bundled = builtinPacks().find(pack => pack.id === identity?.template.id);
 	const [files, courseworkFiles, templateUpdate] = await Promise.all([
 		Promise.all(Object.entries(checkKitFiles()).map(async ([path, after]) => {
 			const file = await inspectKitFile(disk, location, path);
@@ -175,8 +215,8 @@ export async function previewCheckKitUpdate(disk: VaultDisk, location: string): 
 			return candidate(file,after,recorded && file.installedDigest === recorded ? 'replace' :
 				file.change === 'missing' && !recorded ? 'add' : file.change);
 		})),
-		identity?.template.id === courseworkTemplate ? previewCourseworkFiles(disk,location,identity.template.version) : [],
-		previewTemplateFiles(disk,location,identity?.template.id),
+		bundled?.id === courseworkTemplate ? previewCourseworkFiles(disk,location,bundled,version) : [],
+		bundled && bundled.id !== courseworkTemplate ? previewTemplateFiles(disk,location,bundled,version) : {templateFiles:[]},
 	]);
 	const downgrade = versionIsNewer(kit.version,checkKitVersion);
 	const canApply = !downgrade && (files.some(file => file.change === 'add' || file.change === 'replace') ||
@@ -213,15 +253,24 @@ async function assertFileDigest(disk: VaultDisk, location: string, file: KitFile
 	if ((await readKitFile(disk,location,file.path)).digest !== expected) throw changed(file.path);
 }
 
-async function applyCourseworkFiles(disk: VaultDisk, location: string, files: KitFile[]) {
+async function applyCourseworkFiles(disk: VaultDisk, location: string, files: KitFile[], checkManifest: () => Promise<void>) {
 	const [script, descriptor] = files;
-	if (!script || !descriptor || !eligible(script) || !eligible(descriptor)) return;
-	await assertFileDigest(disk,location,script,script.installedDigest);
+	if (!script || !descriptor || !eligible(descriptor)) return;
+	if (eligible(script)) await assertFileDigest(disk,location,script,script.installedDigest);
 	await assertFileDigest(disk,location,descriptor,descriptor.installedDigest);
-	if (script.change === 'replace') await publishKitFile(disk,location,script);
+	if (eligible(script) && script.change === 'replace') await publishKitFile(disk,location,script,async () => {
+		await checkManifest();
+		await assertFileDigest(disk,location,descriptor,descriptor.installedDigest);
+	});
+	const checkScript = async () => {
+		if (eligible(script)) await assertFileDigest(disk,location,script,script.targetDigest);
+	};
 	try {
-		await assertFileDigest(disk,location,script,script.targetDigest);
-		if (descriptor.change === 'replace') await publishKitFile(disk,location,descriptor);
+		await checkScript();
+		if (descriptor.change === 'replace') await publishKitFile(disk,location,descriptor,async () => {
+			await checkManifest();
+			await checkScript();
+		});
 	} catch (error) {
 		if (script.change === 'replace' && script.before !== undefined) {
 			try {
@@ -237,14 +286,15 @@ async function applyCourseworkFiles(disk: VaultDisk, location: string, files: Ki
 		}
 		throw error;
 	}
-	await assertFileDigest(disk,location,script,script.targetDigest);
+	await checkScript();
 	await assertFileDigest(disk,location,descriptor,descriptor.targetDigest);
 }
 
 function matchesApproval(files: KitFile[], approved: KitFile[]) {
 	return files.length === approved.length && files.every((file,index) => {
 		const seen = approved[index];
-		if (!seen || file.path !== seen.path || file.targetDigest !== seen.targetDigest) return false;
+		if (!seen || file.path !== seen.path || file.targetDigest !== seen.targetDigest ||
+			!isDeepStrictEqual(file.exclusionDiff,seen.exclusionDiff)) return false;
 		if (file.change === 'current' && (seen.change === 'replace' || seen.change === 'add')) return true;
 		return file.change === seen.change && file.installedDigest === seen.installedDigest;
 	});
@@ -253,10 +303,16 @@ function matchesApproval(files: KitFile[], approved: KitFile[]) {
 export async function applyCheckKitUpdate(disk: VaultDisk, location: string, approved: CheckKitUpdate) {
 	if (approved.location !== location || !approved.canApply) throw changed(location);
 	const plan = await previewCheckKitUpdate(disk, location);
+	const approvedDeclaration = approved.templateFiles.find(file => file.path === templateDeclarationFile && file.change === 'replace');
 	if (!plan || plan.downgrade || plan.manifestDigest !== approved.manifestDigest || plan.targetVersion !== approved.targetVersion ||
-		plan.templateDeclarationDigest !== approved.templateDeclarationDigest || !matchesApproval(plan.templateFiles,approved.templateFiles) ||
+		(plan.templateDeclarationDigest !== approved.templateDeclarationDigest &&
+			(!approvedDeclaration || plan.templateDeclarationDigest !== approvedDeclaration.targetDigest)) ||
+		!matchesApproval(plan.templateFiles,approved.templateFiles) ||
 		!matchesApproval(plan.files,approved.files) || !matchesApproval(plan.courseworkFiles,approved.courseworkFiles)) throw changed(location);
 	const readManifestNow = async () => readManifestFile(await disk.path(location + '/' + identityFile));
+	const checkManifest = async () => {
+		if ((await readManifestNow()).signature !== plan.manifestDigest) throw changed(identityFile);
+	};
 	const manifest = await readManifestNow();
 	const kit = readManifest(manifest.raw).checkKit;
 	if (!kit || plan.manifestDigest !== manifest.signature) throw changed(location);
@@ -267,14 +323,12 @@ export async function applyCheckKitUpdate(disk: VaultDisk, location: string, app
 	for (const file of managed) {
 		if (file.change === 'replace' || file.change === 'add') await publishKitFile(disk, location, file);
 	}
-	if (plan.courseworkFiles.some(file => file.change === 'replace')) {
-		if ((await readManifestNow()).signature !== plan.manifestDigest) throw changed(identityFile);
-		await applyCourseworkFiles(disk,location,plan.courseworkFiles);
-	}
+	if (plan.courseworkFiles.some(file => file.change === 'replace'))
+		await applyCourseworkFiles(disk,location,plan.courseworkFiles,checkManifest);
 	for (const file of plan.templateFiles.filter(eligible)) {
 		if (file.change !== 'replace') continue;
 		await publishKitFile(disk,location,file,async () => {
-			if ((await readManifestNow()).signature !== plan.manifestDigest) throw changed(identityFile);
+			await checkManifest();
 			if ((await readKitFile(disk,location,templateDeclarationFile)).digest !== plan.templateDeclarationDigest)
 				throw changed(templateDeclarationFile);
 		});

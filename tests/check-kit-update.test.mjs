@@ -12,7 +12,7 @@ import {applyCheckKitUpdate,previewCheckKitUpdate} from '../src/kb/check-kit-upd
 import {previousCourseworkDigests} from '../src/kb/coursework-check.ts';
 import {readManifest,writeCheckKit,writeIdentity} from '../src/kb/identity-core.ts';
 import {previousTemplateCheckDigests} from '../src/kb/template-check-digests.ts';
-import {officialCheckDigests,packText} from '../src/kb/template-pack.ts';
+import {builtinPacks,officialCheckDigests,packText} from '../src/kb/template-pack.ts';
 import {vaultDisk} from './fixtures/vault-disk.mjs';
 
 const runner = 'checks/kb-check.cjs';
@@ -26,6 +26,7 @@ const assignment = 'Courses/实验入门/Assignments/图表作业.md';
 const course = 'Courses/实验入门/课程索引.md';
 // Bundled template scripts were installed with LF on every platform.
 const originalCoursework = (await fs.readFile(new URL('./fixtures/coursework-v1.mjs',import.meta.url),'utf8')).replace(/\r\n/gu,'\n');
+const exclusionsFor = id => builtinPacks().find(pack=>pack.id===id).diagnosticExclusions;
 
 async function fixture(t,{version='3.1.0',hasKit=true}={}) {
 	const scratch = resolve('.tmp');
@@ -180,8 +181,10 @@ test('reviewed coursework update preserves declaration bytes, trusts the fixed b
 	const source = await read(coursework);
 	assert.equal(source,packText('coursework')[coursework]);
 	assert.ok(officialCheckDigests().includes(digest(source)));
-	assert.equal(await read(declaration),before.replace('"path": "checks/workflow.mjs"',
-		'"path": "checks/workflow.mjs",\r\n      "linkEvidence": true'));
+	const updatedDeclaration = await read(declaration);
+	assert.equal(updatedDeclaration.slice(0,updatedDeclaration.lastIndexOf(',\r\n  "diagnosticExclusions"'))+'\r\n}\r\n',
+		before.replace('"path": "checks/workflow.mjs"','"path": "checks/workflow.mjs",\r\n      "linkEvidence": true'));
+	assert.deepEqual(JSON.parse(updatedDeclaration).diagnosticExclusions,exclusionsFor('coursework'));
 	const {checkKit,identity} = readManifest(await read('kb.toml'));
 	assert.deepEqual(identity.template,{id:'coursework',version:'1'});
 	assert.equal(checkKit.version,checkKitVersion);
@@ -225,21 +228,24 @@ test('reviewed coursework update preserves declaration bytes, trusts the fixed b
 	]);
 });
 
-test('edited or missing coursework files block their companion and do not prevent independent check kit updates',async t=>{
+test('edited coursework scripts block the paired metadata change and allow independent diagnostic exclusions',async t=>{
 	const {apply,preview,put,read,before,root} = await courseworkFixture(t);
 	const reviewed = await preview();
 	const editedSource = originalCoursework + '// user edit\n';
 	await put(coursework,editedSource);
 	await assert.rejects(apply(reviewed),/重新预览|Preview again/u);
 	const plan = await preview();
-	assert.deepEqual(courseworkChanges(plan),{[coursework]:'modified',[declaration]:'blocked'});
+	assert.deepEqual(courseworkChanges(plan),{[coursework]:'modified',[declaration]:'replace'});
 	await apply(plan);
 	assert.equal(await read(coursework),editedSource);
-	assert.equal(await read(declaration),before);
+	const {diagnosticExclusions,...preserved} = JSON.parse(await read(declaration));
+	assert.deepEqual(diagnosticExclusions,exclusionsFor('coursework'));
+	assert.deepEqual(preserved,JSON.parse(before));
+	assert.equal(await read('checks/personal.mjs'),'// template special\n');
 	assert.equal(await read(runner),latest[runner]);
 	await put(coursework,originalCoursework);
-	await put(declaration,before.replace('有效课程和截止日','我的规则'));
-	assert.deepEqual(courseworkChanges(await preview()),{[coursework]:'blocked',[declaration]:'modified'});
+	await put(declaration,JSON.stringify({...preserved,diagnosticExclusions}).replace('有效课程和截止日','我的规则'));
+	assert.deepEqual(courseworkChanges(await preview()),{[coursework]:'blocked',[declaration]:'current'});
 	await fs.unlink(join(root,declaration));
 	assert.deepEqual(courseworkChanges(await preview()),{[coursework]:'blocked',[declaration]:'missing'});
 });
@@ -298,7 +304,7 @@ async function templateFixture(t) {
 	return {...item,identity,manifest,raw};
 }
 
-test('an approved original built-in template check can update independently of the common kit',async t=>{
+test('an approved original built-in template check and its exclusions can update independently of the common kit',async t=>{
 	const {apply,preview,read,put,manifest,raw} = await templateFixture(t);
 	assert.equal(digest(originalSpecial),previousTemplateCheckDigests[templateId][special]);
 	const plan = await preview();
@@ -308,9 +314,11 @@ test('an approved original built-in template check can update independently of t
 	assert.equal(plan.canApply,true);
 	assert.ok(plan.files.every(file=>file.change==='current'));
 	assert.deepEqual(plan.courseworkFiles,[]);
-	assert.deepEqual(plan.templateFiles.map(({path,change,before,after})=>({path,change,before,after})),[
+	assert.deepEqual(plan.templateFiles.slice(0,1).map(({path,change,before,after})=>({path,change,before,after})),[
 		{path:special,change:'replace',before:originalSpecial,after},
 	]);
+	assert.equal(plan.templateFiles[1].change,'replace');
+	assert.deepEqual(JSON.parse(plan.templateFiles[1].after),{...JSON.parse(raw),diagnosticExclusions:exclusionsFor(templateId)});
 	assert.equal(await read(special),originalSpecial);
 
 	await put(declaration,raw.replace('本库的模板说明','新模板说明'));
@@ -319,7 +327,7 @@ test('an approved original built-in template check can update independently of t
 	await put(declaration,raw);
 	await apply(await preview());
 	assert.equal(await read(special),after);
-	assert.equal(await read(declaration),raw);
+	assert.equal(await read(declaration),plan.templateFiles[1].after);
 	assert.equal(await read('kb.toml'),manifest);
 	assert.equal((await preview()).canApply,false);
 });
@@ -334,18 +342,105 @@ test('template check update preserves edits, missing files, and the same bytes o
 	assert.equal(await read(special),edited);
 	await fs.unlink(join(root,special));
 	assert.equal((await preview()).templateFiles[0].change,'missing');
-	assert.equal((await preview()).canApply,false);
+	assert.equal((await preview()).canApply,true);
 	await assert.rejects(read(special),{code:'ENOENT'});
 	await put(special,originalSpecial);
 	await put(declaration,raw.replace(special,'checks/local.mjs'));
-	assert.deepEqual((await preview()).templateFiles,[]);
+	assert.deepEqual((await preview()).templateFiles.map(file=>file.path),[declaration]);
 	await put(declaration,raw.replace('"workflow"','"local"'));
-	assert.deepEqual((await preview()).templateFiles,[]);
+	assert.deepEqual((await preview()).templateFiles.map(file=>file.path),[declaration]);
 	await put(declaration,raw.replace(templateId,'minimal-journal'));
-	assert.deepEqual((await preview()).templateFiles,[]);
+	assert.deepEqual((await preview()).templateFiles.map(file=>[file.path,file.change]),[[declaration,'modified']]);
 	await put('kb.toml',writeIdentity(manifest,{...identity,template:{id:'minimal-journal',version:'3'}}));
 	const anotherTemplate = await preview();
 	assert.equal(anotherTemplate.templateFiles[0].change,'modified');
-	assert.equal(anotherTemplate.canApply,false);
+	assert.equal(anotherTemplate.canApply,true);
 	assert.equal(await read(special),originalSpecial);
+});
+
+async function wikiFixture(t,diagnosticExclusions) {
+	const item = await fixture(t);
+	const id = 'llm-wiki', version = '6';
+	const script = 'checks/analysis-evidence.mjs';
+	const custom = '// local evidence check\n';
+	const raw = '\uFEFF' + JSON.stringify({id,version,name:'本地 Wiki',
+		checks:[{id:'analysis-evidence',name:'自定义分析证据',path:script}],
+		...(diagnosticExclusions === undefined ? {} : {diagnosticExclusions})},null,'\t').replace(/\n/gu,'\r\n') + '\r\n';
+	await item.put('kb.toml',writeIdentity(item.manifest,{schemaVersion:2,id:'4d29d18b-6d25-4099-9a94-e44d4c652300',
+		displayName:'Local Wiki',description:'',archived:false,template:{id,version},managed:[]}));
+	await item.put(declaration,raw);
+	await item.put(script,custom);
+	return {...item,raw,script,custom};
+}
+
+test('LLM Wiki adds missing exclusions without rewriting declaration bytes or its locally edited script',async t=>{
+	const {preview,apply,put,read,raw,script,custom} = await wikiFixture(t);
+	const plan = await preview();
+	const update = plan.templateFiles.find(file=>file.path===declaration);
+	assert.equal(update.change,'replace');
+	assert.equal(update.before,raw);
+	assert.equal(plan.templateFiles.find(file=>file.path===script).change,'modified');
+	const position = update.after.lastIndexOf(',\r\n\t"diagnosticExclusions"');
+	assert.equal(update.after.slice(0,position)+'\r\n}\r\n',raw);
+	assert.deepEqual(JSON.parse(update.after.slice(1)).diagnosticExclusions,exclusionsFor('llm-wiki'));
+	const changed = raw.replace('本地 Wiki','已修改');
+	await put(declaration,changed);
+	await assert.rejects(apply(plan),/重新预览|Preview again/u);
+	assert.equal(await read(declaration),changed);
+	await put(declaration,raw);
+	await apply(plan);
+	assert.equal(await read(declaration),update.after);
+	assert.equal(await read(script),custom);
+	assert.equal((await preview()).canApply,false);
+});
+
+for(const customRules of [[{checks:['bases'],files:['Local Templates/Custom.base']}],[]]){
+	test('existing LLM Wiki exclusions are compared and preserved: '+JSON.stringify(customRules),async t=>{
+		const {preview,apply,read,raw,script,custom} = await wikiFixture(t,customRules);
+		const plan = await preview();
+		const update = plan.templateFiles.find(file=>file.path===declaration);
+		assert.equal(update.change,'current');
+		assert.deepEqual(JSON.parse(update.exclusionDiff.local),customRules);
+		assert.deepEqual(JSON.parse(update.exclusionDiff.bundled),exclusionsFor('llm-wiki'));
+		await apply(plan);
+		assert.equal(await read(declaration),raw);
+		assert.equal(await read(script),custom);
+		assert.equal((await preview()).canApply,false);
+	});
+}
+
+test('a competing LLM Wiki declaration edit during publication survives and explicit retry finishes the kit',async t=>{
+	const {preview,apply,read,put,raw,root,manifestFile} = await wikiFixture(t);
+	const plan = await preview();
+	const changed = raw.replace('本地 Wiki','并发修改');
+	const open = fs.open;
+	const failure = new Error('Interrupted before manifest publication');
+	let interrupted = false;
+	const during = t.mock.method(fs,'open',async (file,...args)=>{
+		if (!interrupted && dirname(file)===root && file.includes('.kb-check-') && args[0]==='wx') {
+			interrupted = true;
+			await put(declaration,changed);
+		}
+		return open(file,...args);
+	});
+	syncBuiltinESMExports();
+	try {await assert.rejects(apply(plan),/重新预览|Preview again/u);}
+	finally {during.mock.restore();syncBuiltinESMExports();}
+	assert.equal(await read(declaration),changed);
+	assert.equal(await read(runner),latest[runner]);
+
+	await put(declaration,raw);
+	const rename = fs.rename;
+	const beforeManifest = t.mock.method(fs,'rename',async (file,to)=>{
+		if (to===manifestFile) throw failure;
+		return rename(file,to);
+	});
+	syncBuiltinESMExports();
+	try {await assert.rejects(apply(plan),failure);}
+	finally {beforeManifest.mock.restore();syncBuiltinESMExports();}
+	const expected = plan.templateFiles.find(file=>file.path===declaration).after;
+	assert.equal(await read(declaration),expected);
+	await apply(plan);
+	assert.equal(await read(declaration),expected);
+	assert.equal((await preview()).canApply,false);
 });

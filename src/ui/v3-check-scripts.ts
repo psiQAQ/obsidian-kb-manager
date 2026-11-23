@@ -87,7 +87,8 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 		const heading = entry.createEl('summary');
 		heading.createSpan({text:file.path});
 		const [zh,en] = updateLabels[file.change];
-		heading.createSpan({cls:'kb-v3-muted',text:' · ' + tr(zh,en)});
+		const exclusionLabel = file.exclusionDiff && tr('保留自定义诊断排除规则','Keep custom diagnostic exclusions');
+		heading.createSpan({cls:'kb-v3-muted',text:' · ' + (file.change === 'current' && exclusionLabel ? exclusionLabel : tr(zh,en))});
 		if (file.reason) entry.createEl('p',{text:file.reason});
 		const fingerprints: [string,string][] = [];
 		if (file.installedDigest) fingerprints.push([tr('本地 SHA-256','Local SHA-256'),file.installedDigest]);
@@ -98,10 +99,17 @@ export async function showCheckKitUpdate(plugin: KnowledgeBaseManager, location:
 			facts.createEl('dd',{text:value});
 		}
 		const after = file.after;
-		if (file.change === 'current' || after === undefined) continue;
+		const fileDiff = file.change !== 'current' && after !== undefined;
+		if (!fileDiff && !file.exclusionDiff) continue;
 		const reviewContents=()=>{
 			if (!entry.open) return;
 			entry.removeEventListener('toggle',reviewContents);
+			if (file.exclusionDiff) {
+				entry.createEl('p',{text:exclusionLabel});
+				showDifference(entry,file.exclusionDiff.local,file.exclusionDiff.bundled,
+					tr('自定义诊断排除规则','Custom diagnostic exclusions'),tr('官方诊断排除规则','Official diagnostic exclusions'));
+			}
+			if (!fileDiff) return;
 			const applies=plan.canApply && (file.change==='add' || file.change==='replace');
 			const before=file.before ?? (file.change==='unavailable'?tr('无法读取文件','File unavailable'):
 				file.installedDigest?tr('无法显示为 UTF-8 文本','Unavailable as UTF-8 text'):tr('文件缺失','File missing'));
