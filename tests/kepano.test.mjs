@@ -27,7 +27,7 @@ test('built-in Kepano edition contains the pinned templates, categories, example
 	assert.equal(names.filter(n => /^Categories\/[^/]+\.md$/u.test(n)).length, 21);
 	assert.equal(names.filter(n => n.endsWith('.base')).length, 30);
 	assert.ok(['README.md','Clippings/Buy wisely.md','Daily/2023-09-12.md','Notes/2023 Japan Trip.md','References/Out of Control.md','Attachments/.gitkeep'].every(n => names.includes(n)));
-	assert.ok(names.every(n => ['Bindings.v5.json','Bindings.v6.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
+	assert.ok(names.every(n => ['Bindings.v5.json','Bindings.v6.json','Bindings.v8.json','kb-template.json','checks/category-links.mjs'].includes(n) || n.split('/').every(part => !part.startsWith('.') || part === '.gitkeep') && /(?:\.md|\.base|\.gitkeep)$/u.test(n)));
 	assert.match(skeleton['LICENSE.md'], /Copyright \(c\) 2023 Steph Ango/u);
 	assert.match(skeleton['LICENSE.md'], /473697347a0eaac790a6596229c741b3915f3b77/u);
 	for (const [name, text] of Object.entries(skeleton)) {
@@ -75,6 +75,25 @@ test('old Kepano bindings retain scalar categories and historical month links af
 			assert.deepEqual(after.manual, []);
 			assert.equal(after.content, before[file].replaceAll(previous, destination));
 		}
+	}
+});
+
+test('Kepano Shows keeps versioned filters while moving library paths', () => {
+	const name = 'Templates/Bases/Shows.base';
+	const lastSeen = text => parse(text).views.find(view => view.name === 'Last seen');
+	assert.equal(kepanoTemplate(skeleton, previous).version, '9');
+	assert.deepEqual(lastSeen(rendered[name]).filters.and, ['!last.isEmpty()']);
+	assert.deepEqual(lastSeen(rendered[name]).sort, [{property:'last', direction:'DESC'}]);
+	assert.equal(lastSeen(rendered[name]).limit, 20);
+
+	for (const version of ['7','8','9']) {
+		const assets = kepanoBindingAssets(skeleton, version);
+		const before = renderKepano(assets, previous)[name];
+		const after = rebindKepano(name, before, previous, destination, assets);
+		assert.deepEqual(after.manual, []);
+		assert.equal(after.edits.length, 2);
+		assert.equal(after.content, before.replaceAll(previous, destination));
+		assert.deepEqual(lastSeen(after.content).filters.and, version === '9' ? ['!last.isEmpty()'] : ['not(empty(note.last))']);
 	}
 });
 

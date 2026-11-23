@@ -51,7 +51,7 @@ views:
     name: Last seen
     filters:
       and:
-        - not(empty(note.last))
+        - "!last.isEmpty()"
     order:
       - file.name
       - year

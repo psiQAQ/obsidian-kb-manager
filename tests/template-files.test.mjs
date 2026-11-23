@@ -79,8 +79,9 @@ test('Fusion and Kepano bundle current resources and recognize previous template
 	assert.ok(!names(personal).some(name => name.startsWith('README.v') || name.startsWith('Bindings.v')));
 	for (const version of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) {
 		assert.ok(isBuiltinWiki({ id: fusion.id, version }));
-		assert.equal(isKepano({ id: personal.id, version }), version !== '9');
+		assert.ok(isKepano({ id: personal.id, version }));
 	}
+	assert.ok(!isKepano({ id: personal.id, version: '10' }));
 	assert.equal(sharedTemplateKind(fusion), undefined);
 	const old = instanceManifestSeed(JSON.parse(wiki['kb-template.json']),1).replace(/^templates = .*\r?\n/mu, '');
 	const v2 = { ...identity, template: { id: 'llm-wiki', version: '2' } };
