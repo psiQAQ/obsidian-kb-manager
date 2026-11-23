@@ -12,7 +12,7 @@ import type { Library } from '../kb/catalog.ts';
 import { readVaultRegistry } from '../registry/desktop.ts';
 import type KnowledgeBaseManager from '../main.ts';
 import { createPanelTabs } from './panel-tabs.ts';
-import { Dialog, V3Dialog, dialogContents, showJsonPreview } from './dialog.ts';
+import { Dialog, V3Dialog, dialogContents } from './dialog.ts';
 import { reviewDiagnosticScript, showCheckKitUpdate, trustedDigests } from './v3-check-scripts.ts';
 import { diagnosticReportDetails, reportDate } from './v3-diagnostic-report.ts';
 import { templateIdentityLabel } from './template-labels.ts';
@@ -161,12 +161,45 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 	const scope=results.createEl('details',{cls:'kb-v3-detail'});
 	scope.open=report.status==='cancelled'||report.checks.some(check=>check.status==='partial'||check.status==='failed');
 	scope.createEl('summary',{text:tr('各项检查范围','Coverage by check')});
+	const group = crypto.randomUUID();
 	for(const check of report.checks){
-		const row=scope.createDiv({cls:'kb-check-scope'});
-		row.createEl('strong',{text:checkName(check.id,check.name)});
-		badge(row,check.status);
-		row.createSpan({cls:'kb-v3-muted',text:tr('已检','Checked')+' '+check.coverage.checked+' · '+tr('跳过','Skipped')+' '+check.coverage.skipped+' · '+tr('未验证','Unverified')+' '+check.coverage.unknown});
-		if(check.reason)row.createEl('p',{text:check.reason});
+		const row=scope.createEl('details',{cls:'kb-check-result',attr:{name:group}});
+		const summary=row.createEl('summary');
+		summary.createEl('strong',{text:checkName(check.id,check.name)});
+		summaryStatus(summary,check.status,check.diagnostics);
+		summary.createSpan({cls:'kb-check-counts',text:tr('已检','Checked')+' '+check.coverage.checked+' · '+tr('跳过','Skipped')+' '+check.coverage.skipped+' · '+tr('未验证','Unverified')+' '+check.coverage.unknown});
+		row.addEventListener('toggle',()=>{
+			if(!row.open || row.childElementCount>1)return;
+			const body=row.createDiv({cls:'kb-check-body'});
+			if(check.reason)body.createEl('p',{text:check.reason});
+			if(check.diagnostics.length){
+				for(const item of check.diagnostics)finding(body,item);
+			} else if(check.status==='passed'){
+				body.createEl('p',{text:tr('已检查的项目均通过。','All checked items passed.')});
+			} else if(!check.reason || check.coverage.checked){
+				body.createEl('p',{text:tr('本项没有记录诊断消息。','This check recorded no diagnostic messages.')});
+			}
+			if(check.excludedPaths?.length){
+				body.createEl('h5',{text:tr('扫描时排除的路径','Paths excluded from scanning')});
+				const paths=body.createEl('ul');
+				for(const path of check.excludedPaths)paths.createEl('li',{text:path});
+				if(check.excludedPaths.length===40)body.createEl('p',{text:tr('最多列出 40 条路径。','Up to 40 paths are listed.')});
+			}
+			if(check.baseExpressions?.length){
+				body.createEl('h5',{text:tr('需在 Obsidian 查看结果的表达式','Expressions to verify in Obsidian')});
+				const entries=body.createEl('ul');
+				for(const entry of check.baseExpressions){
+					const li=entries.createEl('li');
+					li.createEl('strong',{text:entry.scope});
+					li.createSpan({text:' · '+entry.file+(entry.line ? ' · '+tr('第 ','Line ')+entry.line+tr(' 行','') : '')});
+					li.createEl('code',{cls:'kb-check-location',text:entry.expression});
+				}
+				if(check.baseExpressionCount && check.baseExpressionCount>check.baseExpressions.length)
+					body.createEl('p',{text:tr('已列出前 40 项，共 ','Showing the first 40 of ')+check.baseExpressionCount+tr(' 项。',' expressions.')});
+			}
+			if(check.coverage.skipped && !check.excludedPaths?.length)
+				body.createEl('p',{cls:'kb-v3-muted',text:tr('此报告未单独列出跳过的条目。','This report does not list skipped entries individually.')});
+		});
 	}
 	let severity:Severity|'' = '';
 	const findings=report.checks.flatMap(check=>check.diagnostics.map(item=>({item,name:checkName(check.id,check.name)})));
@@ -175,9 +208,7 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 		input.selectEl.setAttribute('aria-label',tr('严重程度','Severity'));
 		input.addOptions({'':tr('全部','All'),error:tr('错误','Errors'),warning:tr('警告','Warnings'),info:tr('提示','Info')})
 			.onChange(value=>{severity=value as Severity|'';render();});
-	}).addButton(button=>button.setButtonText(tr('查看报告 JSON','View report JSON')).onClick(()=>{
-		showJsonPreview(plugin.app,tr('检验报告','Check report'),report);
-	}));
+	});
 	results.append(list);
 	function render(){
 		list.empty();
@@ -186,25 +217,23 @@ function reportView(container:HTMLElement,report:Report,plugin:KnowledgeBaseMana
 			const group=findings.filter(({item})=>item.severity===level);
 			if(!group.length)continue;
 			const heading=list.createEl('h4');badge(heading,level);heading.createSpan({text:String(group.length)});
-			for(const {item,name} of group){
-				const finding=list.createDiv({cls:'kb-v3-finding'});
-				finding.createEl('p',{text:item.message});
-				const location=[item.file,item.line,item.column].filter(value=>value!==undefined).join(':');
-				if(item.file)finding.createEl('code',{cls:'kb-check-location',text:location});
-				const detail=finding.createEl('details',{cls:'kb-check-evidence'});
-				detail.createEl('summary',{text:tr('规则与证据','Rule and evidence')});
-				detail.createEl('code',{text:name+' · '+item.code});
-				if(item.field)detail.createEl('code',{text:item.field});
-				if(item.evidence)detail.createEl('p',{text:item.evidence});
-				if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile) {
-					finding.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button',
-						'aria-label':tr('定位文件','Open file')+' · '+location}}).addEventListener('click',()=>{
-						void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
-					});
-				}
-			}
+			for(const {item,name} of group)finding(list,item,name);
 		}
 		if(!list.childElementCount)list.createEl('p',{cls:'kb-v3-muted',text:tr('没有符合筛选条件的诊断。','No diagnostics match the filter.')});
+	}
+	function finding(parent:HTMLElement,item:Diagnostic,name?:string){
+		const card=parent.createDiv({cls:'kb-v3-finding'});
+		badge(card,item.severity);
+		card.createEl('strong',{text:item.message});
+		const location=[item.file,item.line,item.column].filter(v=>v!==undefined).join(':');
+		if(item.file)card.createEl('code',{cls:'kb-check-location',text:location});
+		if(item.field)card.createEl('p',{text:tr('字段','Field')+' · '+item.field});
+		if(item.evidence)card.createEl('p',{text:tr('依据','Evidence')+' · '+item.evidence});
+		card.createEl('small',{cls:'kb-v3-muted',text:[name,item.code].filter(Boolean).join(' · ')});
+		if(item.file && plugin.app.vault.getAbstractFileByPath(lib.location+'/'+item.file) instanceof TFile)
+			card.createEl('button',{text:tr('定位文件','Open file'),attr:{type:'button','aria-label':tr('定位文件','Open file')+' · '+location}}).addEventListener('click',()=>{
+				void openDiagnostic(plugin,lib,item).catch((error:unknown)=>new Notice(String(error)));
+			});
 	}
 	render();
 }

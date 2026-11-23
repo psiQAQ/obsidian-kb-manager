@@ -12,6 +12,29 @@ function validFilter(value, depth = 0) {
 
 export default function checkBases({result: check, files, notes, noteCoverage}, {tr, addReason}) {
 	let dynamicExpressions = 0;
+	function recordExpression(file, line, scope, value) {
+		dynamicExpressions++;
+		check.baseExpressionCount = dynamicExpressions;
+		const samples = check.baseExpressions ??= [];
+		if (samples.length >= 40) return;
+		// Keep grouped filters readable and preserve the meaning of nested and/or/not.
+		function* parts(filter) {
+			if (typeof filter === 'string') {yield filter; return;}
+			const [operator, children] = Object.entries(filter)[0];
+			yield operator + ' (';
+			for (const [index, child] of children.entries()) {
+				if (index) yield ', ';
+				yield* parts(child);
+			}
+			yield ')';
+		}
+		let expression = '';
+		for (const part of parts(value)) {
+			expression += part.slice(0,513 - expression.length);
+			if (expression.length > 512) {expression = expression.slice(0,511) + '…'; break;}
+		}
+		samples.push({file,line,scope:scope.slice(0,256),expression});
+	}
 	function inspectPaths(file, paths = []) {
 		for (const {status, kind, field, line, column, expression, value} of paths) {
 			const evidence = Array.from(value === undefined ? expression : JSON.stringify(value), character => {
@@ -48,12 +71,13 @@ export default function checkBases({result: check, files, notes, noteCoverage}, 
 			const value = base[field];
 			if (value === undefined) continue;
 			if (!isRecord(value) || !Object.values(value).every(nonempty)) fail('base-expression',tr('Base 表达式须为非空字符串。','Write each Base expression as a nonempty string.'));
-			else dynamicExpressions += Object.keys(value).length;
+			else for (const [name,expression] of Object.entries(value)) recordExpression(file,line,field + '.' + name,expression);
 		}
 		for (const scope of [base, ...views]) {
 			if (scope.filters === undefined) continue;
 			if (!validFilter(scope.filters)) fail('base-filter',tr('Base 过滤器须用语句或 and/or/not 的嵌套列表。','Use an expression or nested and/or/not lists for the Base filter.'));
-			else dynamicExpressions++;
+			else recordExpression(file,line,scope === base ? tr('全局筛选','Global filter') :
+				tr('视图筛选','View filter') + ' · ' + (typeof scope.name === 'string' ? scope.name : '—'),scope.filters);
 		}
 	}
 	for (const {file, data, paths, unreadable} of files) {

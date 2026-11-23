@@ -131,6 +131,11 @@ test('Bases path findings match across legacy, installed common rule, and standa
 	const saved = (await listDiagnosticHistory(root)).find(({runId}) => runId === offline.runId);
 	assert.ok(saved);
 	assert.deepEqual(findings(saved),expected);
+	assert.deepEqual(saved.checks[0].baseExpressions,offline.checks[0].baseExpressions);
+	assert.equal(saved.checks[0].baseExpressionCount,4);
+	assert.ok(saved.checks[0].excludedPaths.includes('checks'));
+	assert.ok(saved.checks[0].baseExpressions.some(e=>e.file==='index.md' && e.line && e.expression.includes('./Notes/')));
+	assert.ok(saved.checks[0].baseExpressions.some(e=>e.scope.includes('Recent') && e.expression.includes('Shared/Missing/')));
 	assert.equal(await readFile(path.join(root,'index.base'),'utf8'),baseBefore);
 	assert.equal(await readFile(note,'utf8'),noteBefore);
 });

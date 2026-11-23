@@ -130,6 +130,18 @@ function reportFromLog(value: unknown, filename: string): DiagnosticReport | und
 				return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0;
 			}) || !Array.isArray(row.diagnostics)) return;
 		if (!validRuleVersion(row.rule)) delete row.rule;
+		if (row.reason !== undefined && typeof row.reason !== 'string') delete row.reason;
+		if (!Array.isArray(row.excludedPaths) || row.excludedPaths.length > 40 ||
+			!row.excludedPaths.every(p => typeof p === 'string' && p.length <= 2048)) delete row.excludedPaths;
+		if (!Array.isArray(row.baseExpressions) || row.baseExpressions.length > 40 ||
+			typeof row.baseExpressionCount !== 'number' || !Number.isSafeInteger(row.baseExpressionCount) ||
+			row.baseExpressionCount < row.baseExpressions.length || !row.baseExpressions.every((e:unknown) =>
+				isRecord(e) && relativePath(e.file) && typeof e.scope === 'string' && e.scope.length <= 256 &&
+				typeof e.expression === 'string' && e.expression.length <= 512 &&
+				(e.line === undefined || (typeof e.line === 'number' && Number.isSafeInteger(e.line) && e.line > 0)))) {
+			delete row.baseExpressions;
+			delete row.baseExpressionCount;
+		}
 		for (const item of row.diagnostics as unknown[]) {
 			if (!isRecord(item) || typeof item.severity !== 'string' || !allowedSeverity.has(item.severity) || typeof item.code !== 'string' ||
 				typeof item.message !== 'string' || (item.file !== undefined && !relativePath(item.file)) ||

@@ -26,13 +26,13 @@ const rules = new Map<string, (evidence: never, tools: typeof helpers) => unknow
 const helpers = {tr, addReason, validText:printable};
 
 const previousBundledDigests = new Map([
-	['checks/common/bindings.mjs','6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49'],
-	['checks/common/bases.mjs','9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104'],
+	['checks/common/bindings.mjs',['6790d389efcf4140efe309cfa4a36ffffbe56dc210886ce44019b012c796bd49']],
+	['checks/common/bases.mjs',['9a301508ebad2ce27efee92063786709b1a7f30a0d9165cdd6da0ae088e53104','66045471f46dcaef2782b6d73ba7632120618552b65abf735737327639392290']],
 ]);
 
 export function bundledCommonDigest(check: SpecialCheck) {
 	const current = commonRuleDigests()[check.path];
-	if (check.digest && (current === check.digest || previousBundledDigests.get(check.path) === check.digest))
+	if (check.digest && (current === check.digest || previousBundledDigests.get(check.path)?.includes(check.digest)))
 		return current;
 	return undefined;
 }

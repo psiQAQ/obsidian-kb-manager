@@ -13,16 +13,39 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 			select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));
 			const checkbox=[...modal.querySelectorAll('.kb-v3-check-choice')].find(row=>row.textContent.includes('Manifest and registration'))?.querySelector('input');
 			if(!checkbox)return;
-			if(!checkbox.checked)checkbox.click();return true;
+			if(!checkbox.checked)checkbox.click();
+			const bases=[...modal.querySelectorAll('.kb-v3-check-choice')].find(row=>row.textContent.includes('Bases'))?.querySelector('input');
+			if(!bases)return;
+			if(!bases.checked)bases.click();return true;
 		});
+		async function verifyAccordion(){
+			await evaluate(async()=>{
+				const report=[...document.querySelectorAll('.modal .kb-v3-results')].find(el=>el.checkVisibility());
+				const rows=[...report.querySelectorAll('.kb-check-result')];
+				if(rows.length!==2)throw Error('Expected two check results');
+				rows[0].parentElement.open=true;
+				for(const row of rows){
+					row.querySelector('summary').click();
+					await new Promise(resolve=>row.addEventListener('toggle',resolve,{once:true}));
+					if(rows.filter(r=>r.open).length!==1 || !row.querySelector('.kb-check-body')?.checkVisibility())
+						throw Error('The selected result should be the only open panel');
+				}
+				if(!['checks','Paths excluded from scanning','Global filter','List.base','file.ext == "md"'].every(text=>rows[1].innerText.includes(text)))
+					throw Error('Missing readable coverage details');
+				rows[1].querySelector('summary').click();
+				if(rows.some(r=>r.open))throw Error('Re-selecting the same check should collapse it');
+			});
+		}
 		for(let count=0;count<2;count++){
 			if(count===1)await modalButton('Choose checks again');
 			await modalButton('Start check');
 			await observe('completed manifest report',()=>document.querySelector('.kb-v3-check-output')?.innerText.includes('Passed'));
+			await verifyAccordion();
 		}
 		await modalButton('History');
 		await modalButton('View report');
 		await observe('fresh report',()=>document.querySelector('.modal.kb-v3-health')?.textContent.includes('Recorded library inputs are current'));
+		await verifyAccordion();
 		const logs=join(fixture.vault,'Alpha','.log');
 		const reports=[];
 		for(const file of await readdir(logs)){
@@ -44,6 +67,6 @@ export async function verifyDiagnosticHistory({fixture,scenario,observe,modalBut
 		const current=createHash('sha256').update(await readFile(join(fixture.vault,'Alpha','kb.toml'))).digest('hex');
 		await observe('reloaded library manifest after history check',(id,signature)=>window.app.plugins.getPlugin(id).catalog.some(lib=>lib.location==='Alpha' && lib.signature===signature),pluginId,current);
 		await evaluate(()=>document.querySelector('.modal.kb-v3-health :is(.modal-header-button,.modal-close-button)').click());
-		return {reports,engine:'bundled',freshBeforeEdit:true,staleAfterEdit:true};
+		return {reports,engine:'bundled',freshBeforeEdit:true,staleAfterEdit:true,exclusiveAccordion:true,readableBaseDetails:true};
 	});
 }

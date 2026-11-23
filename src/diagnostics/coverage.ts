@@ -10,6 +10,13 @@ export function addReason(check: DiagnosticCheckResult, reason: string) {
 
 export function reportInventoryCoverage(check: DiagnosticCheckResult, inventory: Inventory) {
 	check.coverage.skipped += inventory.skipped;
+	if (inventory.excluded.size) {
+		check.excludedPaths = [];
+		for (const path of inventory.excluded) {
+			check.excludedPaths.push(path.length > 2048 ? path.slice(0,2047) + '…' : path);
+			if (check.excludedPaths.length === 40) break;
+		}
+	}
 	reportUnreadableDirectories(check, inventory);
 }
 

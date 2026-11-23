@@ -13,6 +13,7 @@ export interface Diagnostic {
 }
 
 export interface Coverage { checked: number; skipped: number; unknown: number }
+export interface BaseExpression { file: string; scope: string; expression: string; line?: number }
 export interface DiagnosticCheckResult {
 	id: string;
 	name: string;
@@ -20,6 +21,9 @@ export interface DiagnosticCheckResult {
 	coverage: Coverage;
 	diagnostics: Diagnostic[];
 	reason?: string;
+	excludedPaths?: string[];
+	baseExpressions?: BaseExpression[];
+	baseExpressionCount?: number;
 	rule?: DiagnosticRuleVersion;
 }
 
