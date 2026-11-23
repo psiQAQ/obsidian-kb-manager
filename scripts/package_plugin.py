@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
 metadata = json.loads((ROOT / "dist/build-inputs.json").read_text(encoding="utf-8"))
 allowed = {"obsidian", "@codemirror/view", "@codemirror/state", "crypto", "buffer", "process", "node:fs", "node:fs/promises",
-           "node:child_process", "node:https", "node:http", "node:os", "node:path", "node:crypto", "node:timers/promises", "node:timers"}
+           "node:child_process", "node:https", "node:http", "node:os", "node:path", "node:crypto", "node:timers/promises", "node:timers", "node:util"}
 unexpected = {item["path"] for item in metadata["outputs"]["main.js"]["imports"]} - allowed
 if unexpected:
     raise ValueError(f"Unverified runtime dependencies: {unexpected}")
